@@ -1,6 +1,5 @@
 import binascii
 import hashlib
-import json
 import logging
 import math
 import os
@@ -230,10 +229,10 @@ class Mega:
         response = requests.post(
             url,
             params=params,
-            data=json.dumps(data),
+            json=data,
             timeout=self.timeout,
         )
-        json_resp = json.loads(response.text)
+        json_resp = response.json()
         try:
             if isinstance(json_resp, list):
                 int_resp = json_resp[0] if isinstance(json_resp[0], int) else None
