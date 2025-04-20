@@ -700,11 +700,17 @@ class Mega:
     ) -> Path:
         if file is None:
             assert file_key
-            _file_key = base64_to_a32(file_key)
+
             if is_public:
-                file_data = self._api_request({"a": "g", "g": 1, "p": file_handle})
-            else:
-                file_data = self._api_request({"a": "g", "g": 1, "n": file_handle})
+                _file_key = base64_to_a32(file_key)
+
+            file_data = self._api_request(
+                {
+                    "a": "g",
+                    "g": 1,
+                    "p" if is_public else "n": file_handle,
+                },
+            )
 
             k: AnyArray = (
                 _file_key[0] ^ _file_key[4],
@@ -721,7 +727,7 @@ class Mega:
             meta_mac = file["meta_mac"]
 
         # Seems to happens sometime... When this occurs, files are
-        # inaccessible also in the official also in the official web app.
+        # inaccessible also in the official web app.
         # Strangely, files can come back later.
         if "g" not in file_data:
             raise RequestError("File not accessible anymore")
@@ -744,43 +750,48 @@ class Mega:
         else:
             dest_path += "/"
 
+        output_path = Path(dest_path + file_name)
+
         with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
             k_bytes = a32_to_bytes(k)
             counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
             aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
 
-            mac_str = "\0" * 16
-            mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_str.encode("utf8"))
+            # mega.nz improperly uses CBC as a MAC mode, so after each chunk, the computed mac_bytes are used as IV for the next chunk MAC accumulation
+            mac_bytes = b"\0" * 16
+            mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
             iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
 
             bytes_written: int = 0
             for _, chunk_size in get_chunks(file_size):
                 chunk = input_file.read(chunk_size)
                 chunk = aes.decrypt(chunk)
-                bytes_written += len(chunk)
+                actual_size = len(chunk)
+                bytes_written += actual_size
                 temp_output_file.write(chunk)
-
                 encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
-                for i in range(0, len(chunk) - 16, 16):
-                    block = chunk[i : i + 16]
-                    encryptor.encrypt(block)
 
-                # fix for files under 16 bytes failing
-                if file_size > 16:
-                    i += 16
+                # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
+                mem_view = memoryview(chunk)  # avoid copying memory for the entire chunk when slicing
+                modchunk = len(chunk) % 16
+                if modchunk == 0:
+                    # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
+                    modchunk = 16
+                    last_block = chunk[-modchunk:]  # fine to copy bytes here, they're only a few bytes
                 else:
-                    i = 0
+                    last_block = chunk[-modchunk:] + (b"\0" * (16 - modchunk))  # pad last block to 16 bytes
 
-                block = chunk[i : i + 16]
-                if len(block) % 16:
-                    block += b"\0" * (16 - (len(block) % 16))
-                mac_str = mac_encryptor.encrypt(encryptor.encrypt(block))
+                rest_of_chunk = mem_view[:-modchunk]
+                encryptor.encrypt(rest_of_chunk)
+                input_to_mac = encryptor.encrypt(last_block)
+                mac_bytes = mac_encryptor.encrypt(input_to_mac)
                 logger.info("%s of %s downloaded", bytes_written, file_size)
 
-            file_mac = str_to_a32(mac_str)
+            file_mac = str_to_a32(mac_bytes)
             # check mac integrity
             if (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]) != meta_mac:
-                raise ValueError("Mismatched mac")
+                raise RuntimeError("Mismatched mac")
+
             output_path = Path(dest_path + file_name)
             temp_output_file.close()
             shutil.move(temp_output_file.name, output_path)
