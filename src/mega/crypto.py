@@ -12,12 +12,12 @@ from typing import Any, TypeAlias
 from Crypto.Cipher import AES
 
 U32Int: TypeAlias = int
-TupleArray = tuple[U32Int, ...]
-ListArray = list[U32Int]
+TupleArray: TypeAlias = tuple[U32Int, ...]
+ListArray: TypeAlias = list[U32Int]
 Array: TypeAlias = TupleArray | ListArray
 AnyArray: TypeAlias = Sequence[U32Int]
 AnyDict: TypeAlias = dict[str, Any]
-Chunk = tuple[int, int]  # index, size
+Chunk: TypeAlias = tuple[int, int]  # index, size
 
 
 EMPTY_IV = b"\0" * 16
