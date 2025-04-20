@@ -1,107 +1,112 @@
-from Crypto.Cipher import AES
-import json
 import base64
-import struct
 import binascii
+import codecs
+import json
 import random
-import sys
+import struct
+from collections.abc import Generator, Sequence
+from typing import Any, TypeAlias
 
-# Python3 compatibility
-if sys.version_info < (3, ):
+from Crypto.Cipher import AES
 
-    def makebyte(x):
-        return x
-
-    def makestring(x):
-        return x
-else:
-    import codecs
-
-    def makebyte(x):
-        return codecs.latin_1_encode(x)[0]
-
-    def makestring(x):
-        return codecs.latin_1_decode(x)[0]
+U32Int: TypeAlias = int
+TupleArray = tuple[U32Int, ...]
+Array: TypeAlias = TupleArray | list[U32Int]
+AnyArray: TypeAlias = Sequence[U32Int]
+AnyDict: TypeAlias = dict[str, Any]
+Chunk = tuple[int, int]  # index, size
 
 
-def aes_cbc_encrypt(data, key):
-    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte('\0' * 16))
+def random_u32int() -> U32Int:
+    return random.randint(0, 0xFFFFFFFF)
+
+
+def makebyte(x: str) -> bytes:
+    return codecs.latin_1_encode(x)[0]
+
+
+def _makestring(x: bytes) -> str:
+    return codecs.latin_1_decode(x)[0]
+
+
+def _aes_cbc_encrypt(data: bytes, key: bytes) -> bytes:
+    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte("\0" * 16))
     return aes_cipher.encrypt(data)
 
 
-def aes_cbc_decrypt(data, key):
-    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte('\0' * 16))
+def _aes_cbc_decrypt(data: bytes, key: bytes) -> bytes:
+    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte("\0" * 16))
     return aes_cipher.decrypt(data)
 
 
-def aes_cbc_encrypt_a32(data, key):
-    return str_to_a32(aes_cbc_encrypt(a32_to_str(data), a32_to_str(key)))
+def _aes_cbc_encrypt_a32(data: AnyArray, key: AnyArray) -> TupleArray:
+    return str_to_a32(_aes_cbc_encrypt(a32_to_bytes(data), a32_to_bytes(key)))
 
 
-def aes_cbc_decrypt_a32(data, key):
-    return str_to_a32(aes_cbc_decrypt(a32_to_str(data), a32_to_str(key)))
+def _aes_cbc_decrypt_a32(data: AnyArray, key: AnyArray) -> TupleArray:
+    return str_to_a32(_aes_cbc_decrypt(a32_to_bytes(data), a32_to_bytes(key)))
 
 
-def stringhash(str, aeskey):
+def stringhash(str: str, aeskey: AnyArray) -> str:
     s32 = str_to_a32(str)
     h32 = [0, 0, 0, 0]
     for i in range(len(s32)):
         h32[i % 4] ^= s32[i]
-    for r in range(0x4000):
-        h32 = aes_cbc_encrypt_a32(h32, aeskey)
+    for _ in range(0x4000):
+        h32 = _aes_cbc_encrypt_a32(h32, aeskey)
     return a32_to_base64((h32[0], h32[2]))
 
 
-def prepare_key(arr):
-    pkey = [0x93C467E3, 0x7DB0C7A4, 0xD1BE3F81, 0x0152CB56]
-    for r in range(0x10000):
+def prepare_key(arr: Array) -> Array:
+    pkey: Array = [0x93C467E3, 0x7DB0C7A4, 0xD1BE3F81, 0x0152CB56]
+    for _ in range(0x10000):
         for j in range(0, len(arr), 4):
-            key = [0, 0, 0, 0]
+            key: Array = [0, 0, 0, 0]
             for i in range(4):
                 if i + j < len(arr):
                     key[i] = arr[i + j]
-            pkey = aes_cbc_encrypt_a32(pkey, key)
+            pkey = _aes_cbc_encrypt_a32(pkey, key)
     return pkey
 
 
-def encrypt_key(a, key):
-    return sum((aes_cbc_encrypt_a32(a[i:i + 4], key)
-                for i in range(0, len(a), 4)), ())
+def encrypt_key(a: AnyArray, key: AnyArray):
+    return sum((_aes_cbc_encrypt_a32(a[i : i + 4], key) for i in range(0, len(a), 4)), ())
 
 
-def decrypt_key(a, key):
-    return sum((aes_cbc_decrypt_a32(a[i:i + 4], key)
-                for i in range(0, len(a), 4)), ())
+def decrypt_key(a: AnyArray, key: AnyArray) -> TupleArray:
+    return sum((_aes_cbc_decrypt_a32(a[i : i + 4], key) for i in range(0, len(a), 4)), ())
 
 
-def encrypt_attr(attr, key):
-    attr = makebyte('MEGA' + json.dumps(attr))
+def encrypt_attr(attr_dict: dict, key: AnyArray) -> bytes:
+    attr: bytes = makebyte("MEGA" + json.dumps(attr_dict))
     if len(attr) % 16:
-        attr += b'\0' * (16 - len(attr) % 16)
-    return aes_cbc_encrypt(attr, a32_to_str(key))
+        attr += b"\0" * (16 - len(attr) % 16)
+    return _aes_cbc_encrypt(attr, a32_to_bytes(key))
 
 
-def decrypt_attr(attr, key):
-    attr = aes_cbc_decrypt(attr, a32_to_str(key))
-    attr = makestring(attr)
-    attr = attr.rstrip('\0')
-    return json.loads(attr[4:]) if attr[:6] == 'MEGA{"' else False
+def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
+    attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
+    attr_str = _makestring(attr_bytes).rstrip("\0")
+    return json.loads(attr_str[4:]) if attr_str[:6] == 'MEGA{"' else {}
 
 
-def a32_to_str(a):
-    return struct.pack('>%dI' % len(a), *a)
+def a32_to_bytes(a: AnyArray) -> bytes:
+    return struct.pack(f">{len(a):.0f}I", *a)
 
 
-def str_to_a32(b):
+def str_to_a32(b: str | bytes) -> TupleArray:
     if isinstance(b, str):
-        b = makebyte(b)
-    if len(b) % 4:
+        array = makebyte(b)
+    else:
+        array: bytes = b
+    if len(array) % 4:
         # pad to multiple of 4
-        b += b'\0' * (4 - len(b) % 4)
-    return struct.unpack('>%dI' % (len(b) / 4), b)
+        padding = b"\0" * (4 - len(array) % 4)
+        array += padding  # type: ignore
+    return struct.unpack(f">{(len(array) / 4):.0f}I", array)
 
 
-def mpi_to_int(s):
+def map_bytes_to_int(s: bytes) -> int:
     """
     A Multi-precision integer is encoded as a series of bytes in big-endian
     order. The first two bytes are a header which tell the number of bits in
@@ -110,59 +115,59 @@ def mpi_to_int(s):
     return int(binascii.hexlify(s[2:]), 16)
 
 
-def extended_gcd(a, b):
+def _extended_gcd(a: int, b: int) -> tuple[int, int, int]:
     if a == 0:
         return (b, 0, 1)
     else:
-        g, y, x = extended_gcd(b % a, a)
+        g, y, x = _extended_gcd(b % a, a)
         return (g, x - (b // a) * y, y)
 
 
-def modular_inverse(a, m):
-    g, x, y = extended_gcd(a, m)
+def modular_inverse(a: int, m: int) -> int:
+    g, x, y = _extended_gcd(a, m)
     if g != 1:
-        raise Exception('modular inverse does not exist')
+        raise Exception("modular inverse does not exist")
     else:
         return x % m
 
 
-def base64_url_decode(data):
-    data += '=='[(2 - len(data) * 3) % 4:]
-    for search, replace in (('-', '+'), ('_', '/'), (',', '')):
+def base64_url_decode(data: str) -> bytes:
+    data += "=="[(2 - len(data) * 3) % 4 :]
+    for search, replace in (("-", "+"), ("_", "/"), (",", "")):
         data = data.replace(search, replace)
     return base64.b64decode(data)
 
 
-def base64_to_a32(s):
+def base64_to_a32(s: str) -> TupleArray:
     return str_to_a32(base64_url_decode(s))
 
 
-def base64_url_encode(data):
-    data = base64.b64encode(data)
-    data = makestring(data)
-    for search, replace in (('+', '-'), ('/', '_'), ('=', '')):
-        data = data.replace(search, replace)
-    return data
+def base64_url_encode(data: bytes) -> str:
+    data_bytes = base64.b64encode(data)
+    data_str = _makestring(data_bytes)
+    for search, replace in (("+", "-"), ("/", "_"), ("=", "")):
+        data_str = data_str.replace(search, replace)
+    return data_str
 
 
-def a32_to_base64(a):
-    return base64_url_encode(a32_to_str(a))
+def a32_to_base64(a: AnyArray) -> str:
+    return base64_url_encode(a32_to_bytes(a))
 
 
-def get_chunks(size):
-    p = 0
-    s = 0x20000
-    while p + s < size:
-        yield (p, s)
-        p += s
-        if s < 0x100000:
-            s += 0x20000
-    yield (p, size - p)
+def get_chunks(size: int) -> Generator[Chunk]:
+    position = 0
+    current_size = 0x20000
+    while position + current_size < size:
+        yield (position, current_size)
+        position += current_size
+        if current_size < 0x100000:
+            current_size += 0x20000
+    yield (position, size - position)
 
 
-def make_id(length):
-    text = ''
+def make_id(length: int) -> str:
+    text = ""
     possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    for i in range(length):
+    for _ in range(length):
         text += random.choice(possible)
     return text
