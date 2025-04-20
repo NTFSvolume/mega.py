@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import binascii
 import hashlib
 import logging
@@ -36,12 +38,12 @@ from .crypto import (
     encrypt_attr,
     encrypt_key,
     get_chunks,
+    make_hash,
     map_bytes_to_int,
     modular_inverse,
     prepare_key,
     random_u32int,
     str_to_a32,
-    stringhash,
 )
 from .errors import RequestError, ValidationError
 
@@ -135,7 +137,7 @@ class Mega:
         except KeyError:
             # v1 user account
             password_aes = prepare_key(str_to_a32(password))
-            user_hash = stringhash(email, password_aes)
+            user_hash = make_hash(email, password_aes)
         else:
             # v2 user account
             pbkdf2_key = hashlib.pbkdf2_hmac(
@@ -173,7 +175,7 @@ class Mega:
             raise RequestError(resp)
         self._login_process(resp, password_key)
 
-    def _login_process(self, resp, password):
+    def _login_process(self, resp: AnyDict, password: Array):
         encrypted_master_key = base64_to_a32(resp["k"])
         self.master_key = decrypt_key(encrypted_master_key, password)
         if "tsid" in resp:
@@ -244,6 +246,7 @@ class Mega:
             json=data,
             timeout=self.timeout,
         )
+
         json_resp = response.json()
         try:
             if isinstance(json_resp, list):
