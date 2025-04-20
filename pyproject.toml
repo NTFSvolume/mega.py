@@ -1,0 +1,120 @@
+[project]
+name = "meganzpy"
+authors = [{name = "O'Dwyer Software", email = "hello@odwyer.software"}]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python",
+    "Topic :: Internet :: WWW/HTTP"
+]
+dependencies = [
+    "pycryptodome>=3.22.0",
+    "requests>=2.32.3",
+    "tenacity>=9.0.0"
+]
+description = "Python lib for the Mega.co.nz API."
+license = "Apache-2.0"
+maintainers = [{name = "NTFSvolume"}]
+readme = "README.md"
+requires-python = ">=3.10,<4.0"
+version = "1.10.0"
+
+[project.urls]
+Homepage = "https://github.com/NTFSvolume/mega.py"
+
+[tool.coverage.run]
+omit = [
+    "**/__init__.py",
+    "**/celeryconfig.py",
+    "**/constants.py",
+    "**/env.py",
+    "**/migrations/*",
+    "**/urls.py",
+    ".tox/*",
+    "app.py",
+    "dist/*",
+    "setup.py",
+    "src/*",
+    "tests/*"
+]
+
+[tool.hatch.build.targets.sdist]
+include = ["src/mega"]
+
+[tool.hatch.build.targets.wheel]
+include = ["src/mega"]
+
+[tool.hatch.build.targets.wheel.sources]
+"src/mega" = "mega"
+
+[tool.pytest.ini_options]
+addopts = "-x -s -v"
+norecursedirs = [".git"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "B",  # flake8-bugbear
+    "C4",  # flake8-comprehensions
+    "COM8",  # flake8-commas linter
+    "E",  # pycodestyle errors
+    "F",  # pyflakes
+    "FA102",  # future annotations
+    "FURB188",  # slice-to-remove-prefix-or-suffix
+    "I",  # isort
+    "N",  # PEP8 naming conventions
+    "PLR1716",  # boolean chained comparison
+    "Q",  # flake8-quotes
+    "RUF",  # RUF specific fixes
+    "T20",  # flake8-print
+    "TC",  # flake8-type-checking
+    "TID",  # flake8-tidy-imports
+    "UP",  # pyupgrade
+    "W"  # pycodestyle warnings
+]
+extend-safe-fixes = [
+    "TC"  # move import from and to TYPE_CHECKING blocks
+]
+ignore = [
+    "COM812",  # missing-trailing-comma
+    "E501",  # suppress line-too-long, let formatter decide
+    "N806"  # uppercase variables in functions
+]
+unfixable = [
+    "ERA"  # do not autoremove commented out code
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/{tests,docs}/*" = [
+    "E402",  # imports not at the top of the file.
+    "T20"  # flake8-print
+]
+"__init__.py" = ["E402"]  # imports not at the top of the file.
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.tomlsort]
+all = true
+ignore_case = true
+in_place = true
+sort_first = ["name", "project", "select", "tool"]
+spaces_before_inline_comment = 2
+spaces_indent_inline_array = 4
+
+[build-system]
+build-backend = "hatchling.build"
+requires = ["hatchling"]
+
+[dependency-groups]
+dev = [
+    "coverage[toml]>=7.7.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.14.0",
+    "pytest>=8.3.5",
+    "requests-mock>=1.12.1"
+]
