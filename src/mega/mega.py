@@ -10,7 +10,7 @@ import shutil
 import tempfile
 from enum import IntEnum
 from pathlib import Path
-from typing import TypedDict
+from typing import TypedDict, cast
 
 import requests
 from Crypto.Cipher import AES
@@ -46,7 +46,7 @@ from .crypto import (
 from .errors import RequestError, ValidationError
 
 
-class Attributes(TypedDict):
+class Attributes(TypedDict, total=False):
     n: str  # Name
 
 
@@ -326,7 +326,7 @@ class Mega:
             file["a"] = {"n": "Rubbish Bin"}
         return file
 
-    def _init_shared_keys(self, files: FilesDict, shared_keys: AnyDict) -> None:
+    def _init_shared_keys(self, files: dict[str, list[File]], shared_keys: AnyDict) -> None:
         """
         Init shared key not associated with a user.
         Seems to happen when a folder is shared,
@@ -729,7 +729,8 @@ class Mega:
         file_url = file_data["g"]
         file_size = file_data["s"]
         attribs_bytes = base64_url_decode(file_data["at"])
-        attribs: AnyDict = decrypt_attr(attribs_bytes, k)
+        attribs = decrypt_attr(attribs_bytes, k)
+        cast(Attributes, attribs)
 
         if dest_filename is not None:
             file_name = dest_filename
