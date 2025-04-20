@@ -384,19 +384,19 @@ class Mega:
         return parent_desc
 
     def find(
-        self, filename: str | None = None, handle: str | None = None, exclude_deleted: bool = False
-    ) -> File | None:
+        self, filename: Path | str | None = None, handle: str | None = None, exclude_deleted: bool = False
+    ) -> FileTuple | None:
         """
         Return file object from given filename
         """
         files = self.get_files()
         if handle:
-            return files[handle]
+            return handle, files[handle]
         assert filename
         path = Path(filename)
         filename = path.name
         parent_dir_name = path.parent.name
-        for _, file in files.items():
+        for parent_id, file in files.items():
             file: File = file
             parent_node_id = None
             try:
@@ -411,12 +411,12 @@ class Mega:
                     ):
                         if exclude_deleted and self._trash_folder_node_id == file["p"]:
                             continue
-                        return file
+                        return parent_id, file
 
                 elif filename and file["a"] and file["a"]["n"] == filename:
                     if exclude_deleted and self._trash_folder_node_id == file["p"]:
                         continue
-                    return file
+                    return parent_id, file
             except TypeError:
                 continue
         return None
@@ -618,7 +618,7 @@ class Mega:
             return self._api_request(post_list)
 
     def download(
-        self, file_or_node: File | None, dest_path: str | None = None, dest_filename: str | None = None
+        self, file_or_node: FileTuple | File | None, dest_path: str | None = None, dest_filename: str | None = None
     ) -> Path:
         """
         Download a file by it's file object
@@ -637,7 +637,7 @@ class Mega:
         self._api_request([{"a": "l", "n": node_data["h"], "i": self.request_id}])
         return self.get_link(node)
 
-    def export(self, path: str | None = None, node_id: str | None = None) -> str:
+    def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
         nodes = self.get_files()
         if node_id:
             _node_id = node_id
@@ -931,7 +931,7 @@ class Mega:
             _ = self.get_files()
         return self.root_id
 
-    def create_folder(self, name: str, dest: str | None = None) -> AnyDict:
+    def create_folder(self, name: Path | str, dest: str | None = None) -> AnyDict:
         dirs = tuple(dir_name for dir_name in str(name).split("/") if dir_name)
         folder_node_ids = {}
         for idx, directory_name in enumerate(dirs):
@@ -951,8 +951,8 @@ class Mega:
             folder_node_ids[idx] = node_id
         return dict(zip(dirs, folder_node_ids.values(), strict=False))
 
-    def rename(self, file_list: list[File], new_name: str) -> AnyDict:
-        file = file_list[1]
+    def rename(self, file: FileTuple | File, new_name: str) -> AnyDict:
+        file = self.__get_file(file)
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
