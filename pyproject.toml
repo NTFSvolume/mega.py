@@ -1,5 +1,5 @@
 [project]
-name = "meganzpy"
+name = "mega"
 authors = [{name = "O'Dwyer Software", email = "hello@odwyer.software"}]
 classifiers = [
     "Intended Audience :: Developers",
@@ -19,6 +19,9 @@ maintainers = [{name = "NTFSvolume"}]
 readme = "README.md"
 requires-python = ">=3.10,<4.0"
 version = "1.10.0"
+
+[project.scripts]
+mega_nz = "mega.main:main"
 
 [project.urls]
 Homepage = "https://github.com/NTFSvolume/mega.py"
