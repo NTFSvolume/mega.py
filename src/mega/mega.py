@@ -72,7 +72,6 @@ class Node(TypedDict):
     s: int  # Size
     ts: int  # Timestamp
     g: str  # Access URL
-    at: str  # Other Attributes
 
     #  Non standard properties, only used internally by mega.py
     attributes: Attributes  # Decrypted attributes
@@ -89,6 +88,10 @@ class FileOrFolder(Node):
     decrypted_k: TupleArray
     decrypted_sk: TupleArray
     key: TupleArray  # Decrypted access key (unique per file)
+
+
+class File(FileOrFolder):
+    at: str  # File specific attributes (encrypted)
 
 
 class Folder(FileOrFolder):
@@ -745,7 +748,7 @@ class Mega:
             if is_public:
                 _file_key = base64_to_a32(file_key)
 
-            file_data: FileOrFolder = self._api_request(
+            file_data: File = self._api_request(
                 {
                     "a": "g",
                     "g": 1,
