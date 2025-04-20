@@ -8,8 +8,9 @@ import re
 import secrets
 import shutil
 import tempfile
+from enum import IntEnum
 from pathlib import Path
-from typing import NewType, TypedDict
+from typing import TypedDict
 
 import requests
 from Crypto.Cipher import AES
@@ -44,15 +45,46 @@ from .crypto import (
 )
 from .errors import RequestError, ValidationError
 
-File = NewType("File", AnyDict)
-Node = tuple[str, File]
-Files = AnyDict
+
+class Attributes(TypedDict):
+    n: str  # Name
+
+
+class NodeType(IntEnum):
+    FILE = 0
+    FOLDER = 1
+    ROOT_FOLDER = 2
+    INBOX = 3
+    TRASH = 4
+    DUMMY = -1
+
+
+class Node(TypedDict):
+    t: NodeType
+    h: str  # id
+    p: str  # Parent Id
+    a: Attributes  # encrypted Attributes (within this: 'n' Name)
+    k: str  # Node Key
+    u: str  # User Id
+    s: int  # Size
+    ts: int  # Time Stamp
+
+
+class File(Node):
+    shared_folder_key: TupleArray
+    key: TupleArray
+    k: TupleArray
+    meta_mac: TupleArray
+    iv: TupleArray
 
 
 class StorageUsage(TypedDict):
     used: int
     total: int
 
+
+FilesDict = dict[str, File]
+FileTuple = tuple[str, File]  # parent_id, Node
 
 logger = logging.getLogger(__name__)
 
@@ -282,7 +314,7 @@ class Mega:
                 file["a"] = attributes
             # other => wrong object
             elif file["k"] == "":
-                file["a"] = False
+                file["a"] = {}
         elif file["t"] == 2:
             self.root_id: str = file["h"]
             file["a"] = {"n": "Cloud Drive"}
@@ -294,7 +326,7 @@ class Mega:
             file["a"] = {"n": "Rubbish Bin"}
         return file
 
-    def _init_shared_keys(self, files: Files, shared_keys: AnyDict) -> None:
+    def _init_shared_keys(self, files: FilesDict, shared_keys: AnyDict) -> None:
         """
         Init shared key not associated with a user.
         Seems to happen when a folder is shared,
@@ -313,7 +345,7 @@ class Mega:
                 shared_keys[s_item["u"]][s_item["h"]] = ok_dict[s_item["h"]]
         self.shared_keys = shared_keys
 
-    def find_path_descriptor(self, path: str, files: Files | None = None) -> str | None:
+    def find_path_descriptor(self, path: str, files: FilesDict | None = None) -> str | None:
         """
         Find descriptor of folder inside a path. i.e.: folder1/folder2/folder3
         Params:
@@ -323,7 +355,7 @@ class Mega:
         """
         paths = path.split("/")
 
-        _files: Files = files or self.get_files()
+        _files: FilesDict = files or self.get_files()
         parent_desc = self.root_id
         found = False
         for foldername in paths:
@@ -378,7 +410,7 @@ class Mega:
                 continue
         return None
 
-    def get_files(self) -> Files:
+    def get_files(self) -> FilesDict:
         logger.info("Getting all files...")
         files = self._api_request({"a": "f", "c": 1, "r": 1})
         files_dict = {}
@@ -407,14 +439,14 @@ class Mega:
                             use get_link() for regular file input""")
 
     @staticmethod
-    def __get_file(node_or_file: Node | File) -> File:
+    def __get_file(node_or_file: FileTuple | File) -> File:
         if isinstance(node_or_file, tuple):
             file: File = node_or_file[1]
         else:
             file = node_or_file
         return file
 
-    def get_link(self, file_or_node: Node | File) -> str:
+    def get_link(self, file_or_node: FileTuple | File) -> str:
         """
         Get a file public link from given file object
         """
@@ -428,7 +460,7 @@ class Mega:
         else:
             raise ValidationError("File id and key must be present")
 
-    def get_folder_link(self, file_or_node: Node | File) -> str:
+    def get_folder_link(self, file_or_node: FileTuple | File) -> str:
         file: File = self.__get_file(file_or_node)
         if "h" in file and "k" in file:
             public_handle = self._api_request({"a": "l", "n": file["h"]})
@@ -443,7 +475,7 @@ class Mega:
         user_data = self._api_request({"a": "ug"})
         return user_data
 
-    def get_node_by_type(self, type: int) -> Node:
+    def get_node_by_type(self, type: int) -> FileTuple:
         """
         Get a node by it's numeric type id, e.g:
         0: file
@@ -458,7 +490,7 @@ class Mega:
                 return name, node
         raise ValueError
 
-    def get_files_in_node(self, target: int | str) -> Files:
+    def get_files_in_node(self, target: int | str) -> FilesDict:
         """
         Get all files in a given target, e.g. 4=trash
         """
@@ -469,7 +501,7 @@ class Mega:
             node_id = target
 
         files = self._api_request({"a": "f", "c": 1})
-        files_dict: Files = {}
+        files_dict: FilesDict = {}
         shared_keys = {}
         self._init_shared_keys(files, shared_keys)
         for file in files["f"]:
@@ -589,7 +621,7 @@ class Mega:
             is_public=False,
         )
 
-    def _export_file(self, node: Node | File) -> str:
+    def _export_file(self, node: FileTuple | File) -> str:
         node_data = self.__get_file(node)
         self._api_request([{"a": "l", "n": node_data["h"], "i": self.request_id}])
         return self.get_link(node)
