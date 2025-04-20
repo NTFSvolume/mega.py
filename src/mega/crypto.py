@@ -17,6 +17,9 @@ AnyDict: TypeAlias = dict[str, Any]
 Chunk = tuple[int, int]  # index, size
 
 
+EMPTY_IV = b"\0" * 16
+
+
 def random_u32int() -> U32Int:
     return random.randint(0, 0xFFFFFFFF)
 
@@ -30,12 +33,12 @@ def _makestring(x: bytes) -> str:
 
 
 def _aes_cbc_encrypt(data: bytes, key: bytes) -> bytes:
-    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte("\0" * 16))
+    aes_cipher = AES.new(key, AES.MODE_CBC, EMPTY_IV)
     return aes_cipher.encrypt(data)
 
 
 def _aes_cbc_decrypt(data: bytes, key: bytes) -> bytes:
-    aes_cipher = AES.new(key, AES.MODE_CBC, makebyte("\0" * 16))
+    aes_cipher = AES.new(key, AES.MODE_CBC, EMPTY_IV)
     return aes_cipher.decrypt(data)
 
 
@@ -69,7 +72,10 @@ def prepare_key(arr: Array) -> Array:
     return pkey
 
 
-def encrypt_key(a: AnyArray, key: AnyArray):
+def encrypt_key(a: AnyArray, key: AnyArray) -> TupleArray:
+    # this sum, which is applied to a generator of tuples, actually flattens the output list of lists of that generator
+    # i.e. it's equivalent to tuple([item for t in generatorOfLists for item in t])
+
     return sum((_aes_cbc_encrypt_a32(a[i : i + 4], key) for i in range(0, len(a), 4)), ())
 
 
@@ -87,7 +93,16 @@ def encrypt_attr(attr_dict: dict, key: AnyArray) -> bytes:
 def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
     attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
     attr_str = _makestring(attr_bytes).rstrip("\0")
-    return json.loads(attr_str[4:]) if attr_str[:6] == 'MEGA{"' else {}
+    if attr_str.startswith('MEGA{"'):
+        i1 = 4
+        i2 = attr_str.find("}")
+        if i2 >= 0:
+            i2 += 1
+            return json.loads(attr_str[i1:i2])
+        else:
+            raise RuntimeError(f"Unable to properly decode filename, raw content is: {attr_str}")
+    else:
+        return {}
 
 
 def a32_to_bytes(a: AnyArray) -> bytes:
@@ -155,13 +170,14 @@ def a32_to_base64(a: AnyArray) -> str:
 
 
 def get_chunks(size: int) -> Generator[Chunk]:
+    # generates a list of chunks (offset, chunk_size), where offset refers to the file initial position
     position = 0
-    current_size = 0x20000
+    current_size = init_size = 0x20000
     while position + current_size < size:
         yield (position, current_size)
         position += current_size
         if current_size < 0x100000:
-            current_size += 0x20000
+            current_size += init_size
     yield (position, size - position)
 
 
