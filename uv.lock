@@ -173,8 +173,8 @@ wheels = [
 ]
 
 [[package]]
-name = "meganzpy"
-version = "0.1.0"
+name = "mega"
+version = "1.10.0"
 source = { editable = "." }
 dependencies = [
     { name = "pycryptodome" },
