@@ -3,9 +3,11 @@ import hashlib
 import logging
 import math
 import os
+import random
 import re
 import secrets
 import shutil
+import string
 import tempfile
 from enum import IntEnum
 from pathlib import Path
@@ -34,7 +36,6 @@ from .crypto import (
     encrypt_attr,
     encrypt_key,
     get_chunks,
-    make_id,
     map_bytes_to_int,
     modular_inverse,
     prepare_key,
@@ -85,6 +86,17 @@ class StorageUsage(TypedDict):
 FilesDict = dict[str, File]
 FileTuple = tuple[str, File]  # parent_id, Node
 
+
+VALID_REQUEST_ID_CHARS = string.ascii_letters + string.digits
+
+
+def make_request_id(length: int = 10) -> str:
+    text = ""
+    for _ in range(length):
+        text += random.choice(VALID_REQUEST_ID_CHARS)
+    return text
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,7 +109,7 @@ class Mega:
         self.timeout = 160  # max secs to wait for resp from api requests
         self.sid = None
         self.sequence_num: U32Int = random_u32int()
-        self.request_id: str = make_id(10)
+        self.request_id: str = make_request_id()
         self._trash_folder_node_id: str | None = None
 
         if options is None:

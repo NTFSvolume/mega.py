@@ -180,11 +180,3 @@ def get_chunks(size: int) -> Generator[Chunk]:
         if current_size < 0x100000:
             current_size += init_size
     yield (position, size - position)
-
-
-def make_id(length: int) -> str:
-    text = ""
-    possible = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
-    for _ in range(length):
-        text += random.choice(possible)
-    return text
