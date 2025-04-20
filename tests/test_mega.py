@@ -7,7 +7,7 @@ import pytest
 import requests_mock
 
 from mega import Mega
-from mega.mega import FileTuple
+from mega.mega import FileOrFolderTuple
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -68,7 +68,7 @@ def test_get_files(mega: Mega):
     assert isinstance(files, dict)
 
 
-def test_get_link(mega: Mega, uploaded_file: FileTuple):
+def test_get_link(mega: Mega, uploaded_file: FileOrFolderTuple):
     link = mega.get_link(uploaded_file)
     assert isinstance(link, str)
 
@@ -191,12 +191,12 @@ def test_delete_folder(mega: Mega, folder_name: str):
     assert isinstance(resp, int)
 
 
-def test_delete(mega: Mega, uploaded_file: FileTuple):
+def test_delete(mega: Mega, uploaded_file: FileOrFolderTuple):
     resp = mega.delete(uploaded_file[0])
     assert isinstance(resp, int)
 
 
-def test_destroy(mega: Mega, uploaded_file: FileTuple):
+def test_destroy(mega: Mega, uploaded_file: FileOrFolderTuple):
     resp = mega.destroy(uploaded_file[0])
     assert isinstance(resp, int)
 

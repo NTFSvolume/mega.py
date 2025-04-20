@@ -19,7 +19,7 @@ AnyArray: TypeAlias = Sequence[U32Int]
 AnyDict: TypeAlias = dict[str, Any]
 Chunk: TypeAlias = tuple[int, int]  # index, size
 
-CHUNK_BLOCK_LEN = 16
+CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
 
 
