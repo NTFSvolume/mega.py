@@ -11,6 +11,7 @@ classifiers = [
 dependencies = [
     "pycryptodome>=3.22.0",
     "requests>=2.32.3",
+    "rich>=13.0.0",
     "tenacity>=9.0.0"
 ]
 description = "Python lib for the Mega.co.nz API."

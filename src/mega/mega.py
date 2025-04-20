@@ -18,6 +18,7 @@ import requests
 from Crypto.Cipher import AES
 from Crypto.PublicKey import RSA
 from Crypto.Util import Counter
+from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .crypto import (
@@ -87,6 +88,20 @@ class Mega:
         if options is None:
             options = {}
         self.options: AnyDict = options
+
+        progress_columns = (
+            SpinnerColumn(),
+            "{task.description}",
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>6.2f}%",
+            "━",
+            DownloadColumn(),
+            "━",
+            TransferSpeedColumn(),
+            "━",
+            TimeRemainingColumn(),
+        )
+        self.progress = Progress(*progress_columns)
 
     def login(self, email: str | None = None, password: str | None = None):
         if email and password:
@@ -744,7 +759,8 @@ class Mega:
 
         output_path = Path(dest_path + file_name)
 
-        with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
+        with self.progress, tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
+            task_id = self.progress.add_task(output_path.name, total=file_size)
             k_bytes = a32_to_bytes(k)
             counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
             aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
@@ -761,6 +777,7 @@ class Mega:
                 actual_size = len(chunk)
                 bytes_written += actual_size
                 temp_output_file.write(chunk)
+                self.progress.advance(task_id, actual_size)
                 encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
 
                 # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
@@ -778,15 +795,14 @@ class Mega:
                 mac_bytes = mac_encryptor.encrypt(input_to_mac)
                 logger.info("%s of %s downloaded", bytes_written, file_size)
 
-            file_mac = str_to_a32(mac_bytes)
-            # check mac integrity
-            if (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]) != meta_mac:
-                raise RuntimeError("Mismatched mac")
+        file_mac = str_to_a32(mac_bytes)
+        # check mac integrity
+        if (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]) != meta_mac:
+            raise RuntimeError("Mismatched mac")
 
-            output_path = Path(dest_path + file_name)
-            temp_output_file.close()
-            shutil.move(temp_output_file.name, output_path)
-            return output_path
+        self.progress.remove_task(task_id)
+        shutil.move(temp_output_file.name, output_path)
+        return output_path
 
     def upload(self, filename: str, dest: str | None = None, dest_filename: str | None = None) -> Folder:
         # determine storage node
