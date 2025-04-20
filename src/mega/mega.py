@@ -60,7 +60,9 @@ logger = logging.getLogger(__name__)
 class Mega:
     def __init__(self, options: AnyDict | None = None) -> None:
         self.schema = "https"
-        self.domain = "mega.co.nz"
+        self.domain = "mega.nz"
+        # api still uses the old mega.co.nz domain
+        self.api_domain = "g.api.mega.co.nz"
         self.timeout = 160  # max secs to wait for resp from api requests
         self.sid = None
         self.sequence_num: U32Int = random_u32int()
@@ -192,7 +194,7 @@ class Mega:
         else:
             data: list[AnyDict] = data_input
 
-        url = f"{self.schema}://g.api.{self.domain}/cs"
+        url = f"{self.schema}://{self.api_domain}/cs"
         response = requests.post(
             url,
             params=params,
