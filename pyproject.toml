@@ -17,7 +17,7 @@ description = "Python lib for the Mega.co.nz API."
 license = "Apache-2.0"
 maintainers = [{name = "NTFSvolume"}]
 readme = "README.md"
-requires-python = ">=3.10,<4.0"
+requires-python = ">=3.9"
 version = "1.10.0"
 
 [project.scripts]
@@ -53,11 +53,13 @@ include = ["src/mega"]
 
 [tool.pytest.ini_options]
 addopts = "-x -s -v"
+minversion = "8.3"
 norecursedirs = [".git"]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py39"
 
 [tool.ruff.lint]
 select = [
