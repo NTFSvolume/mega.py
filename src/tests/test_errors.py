@@ -1,11 +1,11 @@
 import pytest
 
-from mega.errors import RequestError, _CODE_TO_DESCRIPTIONS
+from mega.errors import _CODE_TO_DESCRIPTIONS, RequestError
 
 
-@pytest.mark.parametrize('code, exp_message',
-                         [(code, f'{desc[0]}, {desc[1]}')
-                          for code, desc in _CODE_TO_DESCRIPTIONS.items()])
+@pytest.mark.parametrize(
+    "code, exp_message", [(code, f"{desc[0]}, {desc[1]}") for code, desc in _CODE_TO_DESCRIPTIONS.items()]
+)
 def test_request_error(code, exp_message):
     exc = RequestError(code)
 
