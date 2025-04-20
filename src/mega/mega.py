@@ -22,7 +22,7 @@ from Crypto.Util import Counter
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .crypto import (
-    CHUNK_LAST_BLOCK_LEN,
+    CHUNK_BLOCK_LEN,
     AnyArray,
     AnyDict,
     Array,
@@ -41,6 +41,7 @@ from .crypto import (
     make_hash,
     map_bytes_to_int,
     modular_inverse,
+    pad_bytes,
     prepare_key,
     random_u32int,
     str_to_a32,
@@ -787,15 +788,13 @@ class Mega:
 
                 # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
                 mem_view = memoryview(chunk)  # avoid copying memory for the entire chunk when slicing
-                modchunk = actual_size % CHUNK_LAST_BLOCK_LEN
+                modchunk = actual_size % CHUNK_BLOCK_LEN
                 if modchunk == 0:
                     # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                    modchunk = CHUNK_LAST_BLOCK_LEN
-                    last_block = mem_view[-CHUNK_LAST_BLOCK_LEN:]
-                else:
-                    # pad last block to 16 bytes
-                    last_block = mem_view[-modchunk:].tobytes() + (b"\0" * (CHUNK_LAST_BLOCK_LEN - modchunk))
+                    modchunk = CHUNK_BLOCK_LEN
 
+                # pad last block to 16 bytes
+                last_block = pad_bytes(mem_view[-modchunk:])
                 rest_of_chunk = mem_view[:-modchunk]
                 _ = encryptor.encrypt(rest_of_chunk)
                 input_to_mac = encryptor.encrypt(last_block)
@@ -847,19 +846,17 @@ class Mega:
                     encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
 
                     mem_view = memoryview(chunk)
-                    for index in range(0, actual_size - CHUNK_LAST_BLOCK_LEN, CHUNK_LAST_BLOCK_LEN):
-                        block = mem_view[index : index + CHUNK_LAST_BLOCK_LEN]
+                    for index in range(0, actual_size - CHUNK_BLOCK_LEN, CHUNK_BLOCK_LEN):
+                        block = mem_view[index : index + CHUNK_BLOCK_LEN]
                         encryptor.encrypt(block)
 
-                    last_block = mem_view[-CHUNK_LAST_BLOCK_LEN:]
-                    modchunk = actual_size % CHUNK_LAST_BLOCK_LEN
+                    modchunk = actual_size % CHUNK_BLOCK_LEN
                     if modchunk == 0:
                         # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                        modchunk = CHUNK_LAST_BLOCK_LEN
-                        last_block = mem_view[-CHUNK_LAST_BLOCK_LEN:]
-                    else:
-                        # pad last block to 16 bytes
-                        last_block = mem_view[-modchunk:].tobytes() + (b"\0" * (CHUNK_LAST_BLOCK_LEN - modchunk))
+                        modchunk = CHUNK_BLOCK_LEN
+
+                    # pad last block to 16 bytes
+                    last_block = pad_bytes(mem_view[-modchunk:])
 
                     mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_block))
 
