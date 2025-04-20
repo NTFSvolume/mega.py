@@ -11,9 +11,8 @@ import secrets
 import shutil
 import string
 import tempfile
-from enum import IntEnum
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict, cast
+from typing import Any, cast
 
 import requests
 from Crypto.Cipher import AES
@@ -23,11 +22,6 @@ from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .crypto import (
     CHUNK_BLOCK_LEN,
-    AnyArray,
-    AnyDict,
-    Array,
-    TupleArray,
-    U32Int,
     a32_to_base64,
     a32_to_bytes,
     base64_to_a32,
@@ -46,70 +40,24 @@ from .crypto import (
     random_u32int,
     str_to_a32,
 )
+from .data_structures import (
+    AnyArray,
+    AnyDict,
+    Array,
+    Attributes,
+    File,
+    FileOrFolder,
+    FileOrFolderDict,
+    FileOrFolderTuple,
+    Folder,
+    NodeType,
+    SharedKey,
+    SharedkeysDict,
+    StorageUsage,
+    TupleArray,
+    U32Int,
+)
 from .errors import RequestError, ValidationError
-
-
-class Attributes(TypedDict):
-    n: str  # Name
-
-
-class NodeType(IntEnum):
-    DUMMY = -1
-    FILE = 0
-    FOLDER = 1
-    ROOT_FOLDER = 2
-    INBOX = 3
-    TRASH = 4
-
-
-class Node(TypedDict):
-    t: NodeType
-    h: str  # Id
-    p: str  # Parent Id
-    a: str  # Encrypted attributes (within this: 'n' Name)
-    k: str  # Node key
-    u: str  # User Id
-    s: int  # Size
-    ts: int  # Timestamp
-    g: str  # Access URL
-
-    #  Non standard properties, only used internally by mega.py
-    attributes: Attributes  # Decrypted attributes
-
-
-class FileOrFolder(Node):
-    k: str  # Public access key (parent folder + file)
-    su: NotRequired[str]  # Shared key, only present present in shared files / folder
-    sk: NotRequired[str]  # Shared user Id, only present present in shared files / folder
-
-    #  Non standard properties, only used internally by mega.py
-    iv: TupleArray
-    meta_mac: TupleArray
-    decrypted_k: TupleArray
-    decrypted_sk: TupleArray
-    key: TupleArray  # Decrypted access key (unique per file)
-
-
-class File(FileOrFolder):
-    at: str  # File specific attributes (encrypted)
-
-
-class Folder(FileOrFolder):
-    f: list[FileOrFolder]  # Children (files or folders)
-
-
-SharedKey = dict[str, TupleArray]  # Mapping: User Id ('u') -> decrypted value of shared key ('sk')
-SharedkeysDict = dict[str, SharedKey]
-
-
-class StorageUsage(TypedDict):
-    used: int
-    total: int
-
-
-FileOrFolderDict = dict[str, FileOrFolder]  # key is parent_id ('p')
-FileOrFolderTuple = tuple[str, FileOrFolder]  # first element is parent_id ('p')
-
 
 VALID_REQUEST_ID_CHARS = string.ascii_letters + string.digits
 
@@ -517,7 +465,7 @@ class Mega:
         user_data: AnyDict = self._api_request({"a": "ug"})
         return user_data
 
-    def get_node_by_type(self, type: NodeType) -> FileOrFolderTuple:
+    def get_node_by_type(self, node_type: NodeType | int) -> FileOrFolderTuple:
         """
         Get a node by it's numeric type id, e.g:
         0: file
@@ -528,7 +476,7 @@ class Mega:
         """
         nodes = self.get_files()
         for name, node in nodes.items():
-            if node["t"] == type.value:
+            if node["t"] == node_type:
                 return name, node
         raise ValueError
 
@@ -544,7 +492,7 @@ class Mega:
 
         files: dict[str, list[FileOrFolder]] = self._api_request({"a": "f", "c": 1})
         files_dict: FileOrFolderDict = {}
-        shared_keys = {}
+        shared_keys: SharedkeysDict = {}
         self._init_shared_keys(files, shared_keys)
         for file in files["f"]:
             processed_file = self._process_file(file, shared_keys)

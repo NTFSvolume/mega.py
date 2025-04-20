@@ -6,18 +6,16 @@ import codecs
 import json
 import random
 import struct
-from collections.abc import Generator, Sequence
-from typing import Any, TypeAlias
+from typing import TYPE_CHECKING
 
 from Crypto.Cipher import AES
 
-U32Int: TypeAlias = int
-TupleArray: TypeAlias = tuple[U32Int, ...]
-ListArray: TypeAlias = list[U32Int]
-Array: TypeAlias = TupleArray | ListArray
-AnyArray: TypeAlias = Sequence[U32Int]
-AnyDict: TypeAlias = dict[str, Any]
-Chunk: TypeAlias = tuple[int, int]  # index, size
+from .data_structures import Chunk
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+
+    from .data_structures import AnyArray, AnyDict, Array, TupleArray, U32Int
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
@@ -224,8 +222,8 @@ def get_chunks(size: int) -> Generator[Chunk]:
     position = 0
     current_size = init_size = 0x20000
     while position + current_size < size:
-        yield (position, current_size)
+        yield Chunk(position, current_size)
         position += current_size
         if current_size < 0x100000:
             current_size += init_size
-    yield (position, size - position)
+    yield Chunk(position, size - position)
