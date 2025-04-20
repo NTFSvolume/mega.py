@@ -19,6 +19,7 @@ from Crypto.Util import Counter
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from .crypto import (
+    CHUNK_LAST_BLOCK_LEN,
     AnyArray,
     AnyDict,
     Array,
@@ -35,7 +36,6 @@ from .crypto import (
     encrypt_key,
     get_chunks,
     make_id,
-    makebyte,
     map_bytes_to_int,
     modular_inverse,
     prepare_key,
@@ -773,16 +773,17 @@ class Mega:
 
                 # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
                 mem_view = memoryview(chunk)  # avoid copying memory for the entire chunk when slicing
-                modchunk = len(chunk) % 16
+                modchunk = actual_size % CHUNK_LAST_BLOCK_LEN
                 if modchunk == 0:
                     # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                    modchunk = 16
-                    last_block = chunk[-modchunk:]  # fine to copy bytes here, they're only a few bytes
+                    modchunk = CHUNK_LAST_BLOCK_LEN
+                    last_block = mem_view[-CHUNK_LAST_BLOCK_LEN:]
                 else:
-                    last_block = chunk[-modchunk:] + (b"\0" * (16 - modchunk))  # pad last block to 16 bytes
+                    # pad last block to 16 bytes
+                    last_block = mem_view[-modchunk:].tobytes() + (b"\0" * (CHUNK_LAST_BLOCK_LEN - modchunk))
 
                 rest_of_chunk = mem_view[:-modchunk]
-                encryptor.encrypt(rest_of_chunk)
+                _ = encryptor.encrypt(rest_of_chunk)
                 input_to_mac = encryptor.encrypt(last_block)
                 mac_bytes = mac_encryptor.encrypt(input_to_mac)
                 logger.info("%s of %s downloaded", bytes_written, file_size)
@@ -810,38 +811,43 @@ class Mega:
             file_size = os.path.getsize(filename)
             ul_url = self._api_request({"a": "u", "s": file_size})["p"]
 
-            # generate random aes key (128) for file
+            # generate random aes key (128) for file, 192 bits of random data
             ul_key = [random_u32int() for _ in range(6)]
             k_bytes = a32_to_bytes(ul_key[:4])
+
+            # and 64 bits for the IV (which has size 128 bits anyway)
             count = Counter.new(128, initial_value=((ul_key[4] << 32) + ul_key[5]) << 64)
             aes = AES.new(k_bytes, AES.MODE_CTR, counter=count)
 
             upload_progress = 0
             completion_file_handle = None
 
-            mac_str = "\0" * 16
-            mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_str.encode("utf8"))
+            mac_bytes = b"\0" * 16
+            mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
             iv_bytes = a32_to_bytes([ul_key[4], ul_key[5], ul_key[4], ul_key[5]])
             if file_size > 0:
                 for chunk_start, chunk_size in get_chunks(file_size):
                     chunk = input_file.read(chunk_size)
-                    upload_progress += len(chunk)
-
+                    actual_size = len(chunk)
+                    upload_progress += actual_size
                     encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
-                    for i in range(0, len(chunk) - 16, 16):
-                        block = chunk[i : i + 16]
+
+                    mem_view = memoryview(chunk)
+                    for index in range(0, actual_size - CHUNK_LAST_BLOCK_LEN, CHUNK_LAST_BLOCK_LEN):
+                        block = mem_view[index : index + CHUNK_LAST_BLOCK_LEN]
                         encryptor.encrypt(block)
 
-                    # fix for files under 16 bytes failing
-                    if file_size > 16:
-                        i += 16
+                    last_block = mem_view[-CHUNK_LAST_BLOCK_LEN:]
+                    modchunk = actual_size % CHUNK_LAST_BLOCK_LEN
+                    if modchunk == 0:
+                        # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
+                        modchunk = CHUNK_LAST_BLOCK_LEN
+                        last_block = mem_view[-CHUNK_LAST_BLOCK_LEN:]
                     else:
-                        i = 0
+                        # pad last block to 16 bytes
+                        last_block = mem_view[-modchunk:].tobytes() + (b"\0" * (CHUNK_LAST_BLOCK_LEN - modchunk))
 
-                    block = chunk[i : i + 16]
-                    if len(block) % 16:
-                        block += makebyte("\0" * (16 - len(block) % 16))
-                    mac_str = mac_encryptor.encrypt(encryptor.encrypt(block))
+                    mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_block))
 
                     # encrypt file and upload
                     chunk = aes.encrypt(chunk)
@@ -856,7 +862,7 @@ class Mega:
             logger.info("Chunks uploaded")
             logger.info("Setting attributes to complete upload")
             logger.info("Computing attributes")
-            file_mac: TupleArray = str_to_a32(mac_str)
+            file_mac: TupleArray = str_to_a32(mac_bytes)
 
             # determine meta mac
             meta_mac = (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3])

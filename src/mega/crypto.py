@@ -18,13 +18,14 @@ Chunk = tuple[int, int]  # index, size
 
 
 EMPTY_IV = b"\0" * 16
+CHUNK_LAST_BLOCK_LEN = 16
 
 
 def random_u32int() -> U32Int:
     return random.randint(0, 0xFFFFFFFF)
 
 
-def makebyte(x: str) -> bytes:
+def _makebyte(x: str) -> bytes:
     return codecs.latin_1_encode(x)[0]
 
 
@@ -84,7 +85,7 @@ def decrypt_key(a: AnyArray, key: AnyArray) -> TupleArray:
 
 
 def encrypt_attr(attr_dict: dict, key: AnyArray) -> bytes:
-    attr: bytes = makebyte("MEGA" + json.dumps(attr_dict))
+    attr: bytes = _makebyte("MEGA" + json.dumps(attr_dict))
     if len(attr) % 16:
         attr += b"\0" * (16 - len(attr) % 16)
     return _aes_cbc_encrypt(attr, a32_to_bytes(key))
@@ -111,7 +112,7 @@ def a32_to_bytes(a: AnyArray) -> bytes:
 
 def str_to_a32(b: str | bytes) -> TupleArray:
     if isinstance(b, str):
-        array = makebyte(b)
+        array = _makebyte(b)
     else:
         array: bytes = b
     if len(array) % 4:
