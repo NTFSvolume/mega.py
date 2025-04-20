@@ -641,7 +641,7 @@ class Mega:
         nodes = self.get_files()
         if node_id:
             _node_id = node_id
-            node: File = nodes[_node_id]
+            node: FileTuple | File = nodes[_node_id]
         elif path:
             found = self.find(path)
             if not found:
