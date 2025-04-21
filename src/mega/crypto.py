@@ -4,11 +4,14 @@ import base64
 import binascii
 import codecs
 import json
+import math
 import random
 import struct
 from typing import TYPE_CHECKING
 
 from Crypto.Cipher import AES
+from Crypto.Math.Numbers import Integer
+from Crypto.PublicKey import RSA
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -145,51 +148,6 @@ def mpi_to_int(data: bytes) -> int:
     return int(binascii.hexlify(data[2:]), CHUNK_BLOCK_LEN)
 
 
-def _extended_gcd(num1: int, num2: int) -> tuple[int, int, int]:
-    """
-    Computes the extended greatest common divisor (GCD) of two integers.
-
-    Args:
-        num1: The first integer.
-        num2: The second integer.
-
-    Returns:
-        A tuple (gcd, x, y) such that gcd is the greatest common divisor
-        of num1 and num2, and num1*x + num2*y == gcd.
-    """
-    if num1 == 0:
-        return (num2, 0, 1)
-    else:
-        gcd, y, x = _extended_gcd(num2 % num1, num1)
-        return (gcd, x - (num2 // num1) * y, y)
-
-
-def modular_inverse(num: int, module: int) -> int:
-    """
-    Calculate the modular inverse of num with respect to the given module.
-
-    The modular inverse of 'a' modulo 'module' is an integer 'x' such that
-    (a * x) % module == 1.
-
-    Args:
-        num: The integer for which to find the modular inverse.
-        module: The modulus.
-
-    Returns:
-        The modular inverse of 'num' modulo 'module'.
-
-    Raises:
-        ValueError: If the modular inverse does not exist (i.e., 'num' and 'module'
-            are not coprime).
-    """
-
-    gcd, inverse, _ = _extended_gcd(num, module)
-    if gcd != 1:
-        raise ValueError("Modular inverse does not exist")
-    else:
-        return inverse % module
-
-
 def base64_url_decode(data: str) -> bytes:
     data += "=="[(2 - len(data) * 3) % 4 :]
     for search, replace in (("-", "+"), ("_", "/"), (",", "")):
@@ -223,3 +181,42 @@ def get_chunks(size: int) -> Generator[tuple[int, int]]:
         if current_size < 0x100000:
             current_size += init_size
     yield (position, size - position)
+
+
+def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
+    # The private_key contains 4 MPI integers concatenated together.
+    rsa_private_key = [0, 0, 0, 0]
+    for i in range(4):
+        # An MPI integer has a 2-byte header which describes the number
+        # of bits in the integer.
+        bitlength = (private_key[0] * 256) + private_key[1]
+        bytelength = math.ceil(bitlength / 8)
+        # Add 2 bytes to accommodate the MPI header
+        bytelength += 2
+        rsa_private_key[i] = mpi_to_int(private_key[:bytelength])
+        private_key = private_key[bytelength:]
+
+    first_factor_p = rsa_private_key[0]
+    second_factor_q = rsa_private_key[1]
+    private_exponent_d = rsa_private_key[2]
+    crt_coeficient_u = rsa_private_key[3]
+    # In MEGA's webclient javascript, they assign [3] to a variable
+    # called u, but I do not see how it corresponds to pycryptodome's
+    # RSA.construct and it does not seem to be necessary.
+
+    rsa_modulus_n = first_factor_p * second_factor_q
+    phi = (first_factor_p - 1) * (second_factor_q - 1)
+    public_exponent_e = int(Integer(private_exponent_d).inverse(phi))  # type: ignore
+
+    rsa_components = (
+        rsa_modulus_n,
+        public_exponent_e,
+        private_exponent_d,
+        first_factor_p,
+        second_factor_q,
+        crt_coeficient_u,
+    )
+
+    rsa_key = RSA.construct(rsa_components, consistency_check=True)
+
+    return rsa_key

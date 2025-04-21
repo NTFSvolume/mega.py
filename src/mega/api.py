@@ -3,7 +3,6 @@ from __future__ import annotations
 import binascii
 import hashlib
 import logging
-import math
 import os
 import random
 import re
@@ -16,7 +15,6 @@ from typing import Any, Union, cast
 
 import requests
 from Crypto.Cipher import AES
-from Crypto.PublicKey import RSA
 from Crypto.Util import Counter
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
 from tenacity import retry, retry_if_exception_type, wait_exponential
@@ -30,11 +28,11 @@ from mega.crypto import (
     base64_url_encode,
     decrypt_attr,
     decrypt_key,
+    decrypt_rsa_key,
     encrypt_attr,
     encrypt_key,
     get_chunks,
     make_hash,
-    modular_inverse,
     mpi_to_int,
     pad_bytes,
     prepare_key,
@@ -173,48 +171,15 @@ class Mega:
         elif "csid" in resp:
             encrypted_private_key = base64_to_a32(resp["privk"])
             private_key = a32_to_bytes(decrypt_key(encrypted_private_key, self.master_key))
-
-            # The private_key contains 4 MPI integers concatenated together.
-            rsa_private_key = [0, 0, 0, 0]
-            for i in range(4):
-                # An MPI integer has a 2-byte header which describes the number
-                # of bits in the integer.
-                bitlength = (private_key[0] * 256) + private_key[1]
-                bytelength = math.ceil(bitlength / 8)
-                # Add 2 bytes to accommodate the MPI header
-                bytelength += 2
-                rsa_private_key[i] = mpi_to_int(private_key[:bytelength])
-                private_key = private_key[bytelength:]
-
-            first_factor_p = rsa_private_key[0]
-            second_factor_q = rsa_private_key[1]
-            private_exponent_d = rsa_private_key[2]
-            crt_coeficient_u = rsa_private_key[3]
-            # In MEGA's webclient javascript, they assign [3] to a variable
-            # called u, but I do not see how it corresponds to pycryptodome's
-            # RSA.construct and it does not seem to be necessary.
-
-            rsa_modulus_n = first_factor_p * second_factor_q
-            phi = (first_factor_p - 1) * (second_factor_q - 1)
-            public_exponent_e = modular_inverse(private_exponent_d, phi)
-
-            rsa_components = (
-                rsa_modulus_n,
-                public_exponent_e,
-                private_exponent_d,
-                first_factor_p,
-                second_factor_q,
-                crt_coeficient_u,
-            )
-
-            rsa_key = RSA.construct(rsa_components, consistency_check=True)
+            rsa_key = decrypt_rsa_key(private_key)
             encrypted_sid = mpi_to_int(base64_url_decode(resp["csid"]))
 
             # TODO: Investigate how to decrypt using the current pycryptodome library.
             # The _decrypt method of RSA is deprecated and no longer available.
             # The documentation suggests using Crypto.Cipher.PKCS1_OAEP,
             # but the algorithm differs and requires bytes as input instead of integers.
-            sid_hex = f"{rsa_key._decrypt(encrypted_sid):x}"
+            decrypted_sid = int(rsa_key._decrypt(encrypted_sid))  # type: ignore
+            sid_hex = f"{decrypted_sid:x}"
             sid_bytes = binascii.unhexlify("0" + sid_hex if len(sid_hex) % 2 else sid_hex)
             sid = base64_url_encode(sid_bytes[:43])
             self.sid = sid
