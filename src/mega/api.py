@@ -60,6 +60,7 @@ from mega.data_structures import (
 )
 
 from .errors import RequestError, ValidationError
+from .xhashcash import generate_hashcash_token
 
 VALID_REQUEST_ID_CHARS = string.ascii_letters + string.digits
 
@@ -109,7 +110,8 @@ class Mega:
             self._login_user(email, password)
         else:
             self.login_anonymous()
-        self._trash_folder_node_id = self.get_node_by_type(NodeType.TRASH)[0]
+        node_info = self.get_node_by_type(NodeType.TRASH)
+        self._trash_folder_node_id = node_info[0] if node_info else None
         logger.info("Login complete")
         return self
 
@@ -214,6 +216,7 @@ class Mega:
     def _api_request(self, data_input: list[AnyDict] | AnyDict) -> Any:
         params: AnyDict = {"id": self.sequence_num}
         self.sequence_num += 1
+        DEFAULT_HEADERS = {"Content-Type": "application/json"}
 
         if self.sid:
             params["sid"] = self.sid
@@ -225,12 +228,25 @@ class Mega:
             data: list[AnyDict] = data_input
 
         url = f"{self.schema}://{self.api_domain}/cs"
-        response = requests.post(
-            url,
-            params=params,
-            json=data,
-            timeout=self.timeout,
-        )
+
+        response = requests.post(url, params=params, json=data, timeout=self.timeout, headers=DEFAULT_HEADERS)
+
+        # Since around feb 2025, MEGA requires clients to solve a challenge during each login attempt.
+        # When that happends, initial responses returns "402 Payment Required".
+        # Challenge is inside the `X-Hashcash` header.
+        # We need to solve the challenge and re-made the request with same params + the computed token
+        # See:  https://github.com/gpailler/MegaApiClient/issues/248#issuecomment-2692361193
+
+        if xhashcash_challenge := response.headers.get("X-Hashcash"):
+            logger.info("Solving xhashcash login challenge, this could take a few seconds...")
+            xhashcash_token = generate_hashcash_token(xhashcash_challenge)
+            new_headers = DEFAULT_HEADERS | {"X-Hashcash": xhashcash_token}
+            response = requests.post(url, params=params, json=data, timeout=self.timeout, headers=new_headers)
+
+        # Computed token failed
+        if xhashcash_challenge := response.headers.get("X-Hashcash"):
+            msg = f"Login failed. Mega requested a proof of work with xhashcash: {xhashcash_challenge}"
+            raise RequestError(msg)
 
         json_resp = response.json()
         try:
@@ -481,7 +497,7 @@ class Mega:
         user_data: AnyDict = self._api_request({"a": "ug"})
         return user_data
 
-    def get_node_by_type(self, node_type: NodeType | int) -> FileOrFolderTuple:
+    def get_node_by_type(self, node_type: NodeType | int) -> FileOrFolderTuple | None:
         """
         Get a node by it's numeric type id, e.g:
         0: file
@@ -494,7 +510,6 @@ class Mega:
         for name, node in nodes.items():
             if node["t"] == node_type:
                 return name, node
-        raise ValueError
 
     def get_files_in_node(self, target: NodeType | str) -> FileOrFolderDict:
         """
