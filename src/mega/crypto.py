@@ -136,9 +136,9 @@ def str_to_a32(bytes_or_str: str | bytes) -> TupleArray:
     return struct.unpack(f">{(len(bytes_) / 4):.0f}I", bytes_)
 
 
-def map_bytes_to_int(data: bytes) -> int:
+def mpi_to_int(data: bytes) -> int:
     """
-    A Multi-precision integer is encoded as a series of bytes in big-endian
+    A Multi-precision integer (mpi) is encoded as a series of bytes in big-endian
     order. The first two bytes are a header which tell the number of bits in
     the integer. The rest of the bytes are the integer.
     """
@@ -158,12 +158,10 @@ def _extended_gcd(num1: int, num2: int) -> tuple[int, int, int]:
         of num1 and num2, and num1*x + num2*y == gcd.
     """
     if num1 == 0:
-        return (num2, 0, 1)  # GCD, x, y
+        return (num2, 0, 1)
     else:
-        gcd, x_coeff, y_coeff = _extended_gcd(num2 % num1, num1)
-        x = y_coeff
-        y = x_coeff - (num2 // num1) * y_coeff
-        return (gcd, x, y)
+        gcd, y, x = _extended_gcd(num2 % num1, num1)
+        return (gcd, x - (num2 // num1) * y, y)
 
 
 def modular_inverse(num: int, module: int) -> int:

@@ -34,8 +34,8 @@ from mega.crypto import (
     encrypt_key,
     get_chunks,
     make_hash,
-    map_bytes_to_int,
     modular_inverse,
+    mpi_to_int,
     pad_bytes,
     prepare_key,
     random_u32int,
@@ -171,10 +171,9 @@ class Mega:
             if key_encrypted == tsid[-16:]:
                 self.sid = resp["tsid"]
         elif "csid" in resp:
-            encrypted_rsa_private_key = base64_to_a32(resp["privk"])
-            rsa_private_key = decrypt_key(encrypted_rsa_private_key, self.master_key)
+            encrypted_private_key = base64_to_a32(resp["privk"])
+            private_key = a32_to_bytes(decrypt_key(encrypted_private_key, self.master_key))
 
-            private_key = a32_to_bytes(rsa_private_key)
             # The private_key contains 4 MPI integers concatenated together.
             rsa_private_key = [0, 0, 0, 0]
             for i in range(4):
@@ -184,15 +183,17 @@ class Mega:
                 bytelength = math.ceil(bitlength / 8)
                 # Add 2 bytes to accommodate the MPI header
                 bytelength += 2
-                rsa_private_key[i] = map_bytes_to_int(private_key[:bytelength])
+                rsa_private_key[i] = mpi_to_int(private_key[:bytelength])
                 private_key = private_key[bytelength:]
 
             first_factor_p = rsa_private_key[0]
             second_factor_q = rsa_private_key[1]
             private_exponent_d = rsa_private_key[2]
+            crt_coeficient_u = rsa_private_key[3]
             # In MEGA's webclient javascript, they assign [3] to a variable
             # called u, but I do not see how it corresponds to pycryptodome's
             # RSA.construct and it does not seem to be necessary.
+
             rsa_modulus_n = first_factor_p * second_factor_q
             phi = (first_factor_p - 1) * (second_factor_q - 1)
             public_exponent_e = modular_inverse(private_exponent_d, phi)
@@ -203,14 +204,20 @@ class Mega:
                 private_exponent_d,
                 first_factor_p,
                 second_factor_q,
+                crt_coeficient_u,
             )
-            rsa_decrypter = RSA.construct(rsa_components)
 
-            encrypted_sid = map_bytes_to_int(base64_url_decode(resp["csid"]))
+            rsa_key = RSA.construct(rsa_components, consistency_check=True)
+            encrypted_sid = mpi_to_int(base64_url_decode(resp["csid"]))
 
-            sid = f"{rsa_decrypter._decrypt(encrypted_sid):x}"  # type: ignore
-            sid = binascii.unhexlify("0" + sid if len(sid) % 2 else sid)
-            self.sid = base64_url_encode(sid[:43])
+            # TODO: Investigate how to decrypt using the current pycryptodome library.
+            # The _decrypt method of RSA is deprecated and no longer available.
+            # The documentation suggests using Crypto.Cipher.PKCS1_OAEP,
+            # but the algorithm differs and requires bytes as input instead of integers.
+            sid_hex = f"{rsa_key._decrypt(encrypted_sid):x}"
+            sid_bytes = binascii.unhexlify("0" + sid_hex if len(sid_hex) % 2 else sid_hex)
+            sid = base64_url_encode(sid_bytes[:43])
+            self.sid = sid
 
     @retry(retry=retry_if_exception_type(RuntimeError), wait=wait_exponential(multiplier=2, min=2, max=60))
     def _api_request(self, data_input: list[AnyDict] | AnyDict) -> Any:

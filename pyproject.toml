@@ -9,7 +9,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP"
 ]
 dependencies = [
-    "pycryptodome>=3.22.0",
+    "pycryptodome==3.9.6",
     "requests>=2.32.3",
     "rich>=13.0.0",
     "tenacity>=9.0.0",
