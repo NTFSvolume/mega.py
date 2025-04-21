@@ -12,7 +12,7 @@ import shutil
 import string
 import tempfile
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Union, cast
 
 import requests
 from Crypto.Cipher import AES
@@ -21,7 +21,7 @@ from Crypto.Util import Counter
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
-from .crypto import (
+from mega.crypto import (
     CHUNK_BLOCK_LEN,
     a32_to_base64,
     a32_to_bytes,
@@ -41,7 +41,7 @@ from .crypto import (
     random_u32int,
     str_to_a32,
 )
-from .data_structures import (
+from mega.data_structures import (
     AnyArray,
     AnyDict,
     Array,
@@ -58,6 +58,7 @@ from .data_structures import (
     TupleArray,
     U32Int,
 )
+
 from .errors import RequestError, ValidationError
 
 VALID_REQUEST_ID_CHARS = string.ascii_letters + string.digits
@@ -499,7 +500,7 @@ class Mega:
         """
         Get all files in a given target, e.g. 4=trash
         """
-        if isinstance(target, NodeType | int):
+        if isinstance(target, Union[NodeType, int]):
             # convert special nodes (e.g. trash)
             node_id: str = self.get_node_by_type(target)[0]
         else:
@@ -729,7 +730,7 @@ class Mega:
             meta_mac: TupleArray = _file_key[6:8]
         else:
             file_data = self._api_request({"a": "g", "g": 1, "n": file["h"]})
-            k = file["k"]  # TODO: FIXME
+            k = file["k"]  # type: ignore # TODO: FIXME
             iv = file["iv"]
             meta_mac = file["meta_mac"]
 
@@ -942,7 +943,7 @@ class Mega:
             created_node = self._mkdir(name=directory_name, parent_node_id=parent_node_id)
             node_id = created_node["f"][0]["h"]
             folder_node_ids[idx] = node_id
-        return dict(zip(dirs, folder_node_ids.values(), strict=False))
+        return dict(zip(dirs, list(folder_node_ids.values()), strict=False))  # type: ignore
 
     def rename(self, file: FileOrFolderTuple | FileOrFolder, new_name: str) -> AnyDict:
         file = self.__get_file(file)
@@ -977,7 +978,7 @@ class Mega:
         """
 
         # determine target_node_id
-        if isinstance(target, NodeType | int):
+        if isinstance(target, Union[NodeType, int]):
             target_node_id = str(self.get_node_by_type(target)[0])
         elif isinstance(target, str):
             target_node_id = target

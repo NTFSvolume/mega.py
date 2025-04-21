@@ -1,1 +1,3 @@
-from .mega import Mega  # noqa
+import importlib.metadata
+
+__version__ = importlib.metadata.version("mega")

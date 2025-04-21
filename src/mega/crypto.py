@@ -10,8 +10,6 @@ from typing import TYPE_CHECKING
 
 from Crypto.Cipher import AES
 
-from .data_structures import Chunk
-
 if TYPE_CHECKING:
     from collections.abc import Generator
 
@@ -217,13 +215,13 @@ def a32_to_base64(array: AnyArray) -> str:
     return base64_url_encode(a32_to_bytes(array))
 
 
-def get_chunks(size: int) -> Generator[Chunk]:
+def get_chunks(size: int) -> Generator[tuple[int, int]]:
     # generates a list of chunks (offset, chunk_size), where offset refers to the file initial position
     position = 0
     current_size = init_size = 0x20000
     while position + current_size < size:
-        yield Chunk(position, current_size)
+        yield (position, current_size)
         position += current_size
         if current_size < 0x100000:
             current_size += init_size
-    yield Chunk(position, size - position)
+    yield (position, size - position)

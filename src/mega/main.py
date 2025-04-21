@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from mega import Mega
+from mega.api import Mega
 
 
 def main():
@@ -20,7 +20,7 @@ def main():
     )
     args = parser.parse_args()
     mega = Mega()
-    # mega.login()
+    mega.login()
 
     download_url: str = args.url
     output_dir: str = args.output_dir

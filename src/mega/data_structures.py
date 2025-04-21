@@ -1,11 +1,13 @@
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, NamedTuple, NotRequired, TypeAlias, TypedDict
+from typing import Any, NamedTuple, TypedDict, Union
+
+from typing_extensions import NotRequired, TypeAlias
 
 U32Int: TypeAlias = int
 TupleArray: TypeAlias = tuple[U32Int, ...]
 ListArray: TypeAlias = list[U32Int]
-Array: TypeAlias = TupleArray | ListArray
+Array: TypeAlias = Union[TupleArray, ListArray]
 AnyArray: TypeAlias = Sequence[U32Int]
 AnyDict: TypeAlias = dict[str, Any]
 

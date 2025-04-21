@@ -7,7 +7,7 @@ import pytest
 import requests_mock
 
 from mega import Mega
-from mega.mega import FileOrFolderTuple
+from mega.api import FileOrFolderTuple
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"

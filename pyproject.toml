@@ -12,7 +12,8 @@ dependencies = [
     "pycryptodome>=3.22.0",
     "requests>=2.32.3",
     "rich>=13.0.0",
-    "tenacity>=9.0.0"
+    "tenacity>=9.0.0",
+    "typing-extensions>=4.13.2"
 ]
 description = "Python lib for the Mega.co.nz API."
 license = "Apache-2.0"
@@ -22,7 +23,7 @@ requires-python = ">=3.9"
 version = "1.10.0"
 
 [project.scripts]
-mega_nz = "mega.main:main"
+mega_nz = "src.mega.main:main"
 
 [project.urls]
 Homepage = "https://github.com/NTFSvolume/mega.py"
