@@ -284,7 +284,7 @@ class Mega:
                 shared_key = shared_keys["EXP"][file["h"]]
                 encrypted_key = str_to_a32(base64_url_decode(file["k"].split(":")[-1]))
                 key = decrypt_key(encrypted_key, shared_key)
-                file["decrypted_sk"] = shared_key
+                file["sk_decrypted"] = shared_key
 
             if key is not None:
                 # file
@@ -297,7 +297,7 @@ class Mega:
                     k = key
 
                 file["key"] = key
-                file["decrypted_k"] = k
+                file["k_decrypted"] = k
                 attributes_bytes = base64_url_decode(file["a"])
                 attributes = decrypt_attr(attributes_bytes, k)
                 file["attributes"] = cast(Attributes, attributes)
@@ -460,7 +460,7 @@ class Mega:
             public_handle: str | int = self._api_request({"a": "l", "n": file["h"]})
             if public_handle == -11:
                 raise RequestError("Can't get a public link from that file (is this a shared file?)")
-            decrypted_key = a32_to_base64(file["decrypted_sk"])
+            decrypted_key = a32_to_base64(file["sk_decrypted"])
             return f"{self.schema}://{self.domain}/#F!{public_handle}!{decrypted_key}"
         else:
             raise ValidationError("File id and key must be present")
@@ -652,7 +652,7 @@ class Mega:
         ok = base64_url_encode(master_key_cipher.encrypt(share_key))
 
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
-        node_key = node_data["decrypted_k"]
+        node_key = node_data["k_decrypted"]
         encrypted_node_key = base64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
 
         _node_id: str = node_data["h"]
@@ -687,7 +687,7 @@ class Mega:
     def _download_file(
         self,
         file_handle: str | None = None,
-        file_key: str | None = None,
+        file_key: TupleArray | str | None = None,
         dest_path: str | None = None,
         dest_filename: str | None = None,
         is_public: bool = False,
@@ -695,9 +695,10 @@ class Mega:
     ) -> Path:
         if file is None:
             assert file_key
-
-            if is_public:
+            if isinstance(file_key, str):
                 _file_key = base64_to_a32(file_key)
+            else:
+                _file_key = file_key
 
             file_data: File = self._api_request(
                 {
@@ -717,7 +718,7 @@ class Mega:
             meta_mac: TupleArray = _file_key[6:8]
         else:
             file_data = self._api_request({"a": "g", "g": 1, "n": file["h"]})
-            k = file["k"]  # type: ignore # TODO: FIXME
+            k = file["k_decrypted"]
             iv = file["iv"]
             meta_mac = file["meta_mac"]
 
@@ -937,7 +938,7 @@ class Mega:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
-        encrypt_attribs = base64_url_encode(encrypt_attr(attribs, file["decrypted_k"]))
+        encrypt_attribs = base64_url_encode(encrypt_attr(attribs, file["k_decrypted"]))
         encrypted_key = a32_to_base64(encrypt_key(file["key"], self.master_key))
         # update attributes
         return self._api_request(

@@ -40,22 +40,22 @@ class Node(TypedDict):
     s: int  # Size
     ts: int  # Timestamp
     g: str  # Access URL
+    k: str  # Public access key (parent folder + file)
 
     #  Non standard properties, only used internally by mega.py
     attributes: Attributes  # Decrypted attributes
+    k_decrypted: TupleArray
 
 
 class FileOrFolder(Node):
-    k: str  # Public access key (parent folder + file)
-    su: NotRequired[str]  # Shared key, only present present in shared files / folder
-    sk: NotRequired[str]  # Shared user Id, only present present in shared files / folder
+    su: NotRequired[str]  # Shared user Id, only present present in shared files / folder
+    sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
 
     #  Non standard properties, only used internally by mega.py
+    key: TupleArray  # Decrypted access key (for folders, its values if the same as 'k')
     iv: TupleArray
     meta_mac: TupleArray
-    decrypted_k: TupleArray
-    decrypted_sk: TupleArray
-    key: TupleArray  # Decrypted access key (unique per file)
+    sk_decrypted: TupleArray
 
 
 class File(FileOrFolder):

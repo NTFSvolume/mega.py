@@ -7,7 +7,7 @@ import json
 import math
 import random
 import struct
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from Crypto.Cipher import AES
 from Crypto.Math.Numbers import Integer
@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
+
+
+class Chunk(NamedTuple):
+    offset: int
+    size: int
 
 
 def pad_bytes(data: bytes, length: int = CHUNK_BLOCK_LEN) -> bytes:
@@ -171,16 +176,16 @@ def a32_to_base64(array: AnyArray) -> str:
     return base64_url_encode(a32_to_bytes(array))
 
 
-def get_chunks(size: int) -> Generator[tuple[int, int]]:
+def get_chunks(size: int) -> Generator[Chunk]:
     # generates a list of chunks (offset, chunk_size), where offset refers to the file initial position
-    position = 0
+    offset = 0
     current_size = init_size = 0x20000
-    while position + current_size < size:
-        yield (position, current_size)
-        position += current_size
+    while offset + current_size < size:
+        yield Chunk(offset, current_size)
+        offset += current_size
         if current_size < 0x100000:
             current_size += init_size
-    yield (position, size - position)
+    yield Chunk(offset, size - offset)
 
 
 def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
