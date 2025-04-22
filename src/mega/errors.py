@@ -59,8 +59,11 @@ class RequestError(Exception):
 
     def __init__(self, msg: Union[str, int]) -> None:
         self.code = code = msg if isinstance(msg, int) else None
-        code_desc, long_desc = _CODE_TO_DESCRIPTIONS.get(code, ("", ""))
-        self.message = f"{code_desc}, {long_desc}" if code_desc else str(msg)
+        if code:
+            code_desc, long_desc = _CODE_TO_DESCRIPTIONS[code]
+            self.message = f"{code_desc}, {long_desc}"
+        else:
+            self.message = str(msg)
 
     def __str__(self) -> str:
         return self.message

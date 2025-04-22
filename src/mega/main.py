@@ -2,7 +2,7 @@ import argparse
 import logging
 import os
 
-from mega.api import Mega
+from mega.client import Mega
 
 
 def main():

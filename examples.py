@@ -2,7 +2,7 @@
 import os
 import uuid
 
-from mega import Mega
+from mega.client import Mega
 
 
 def test():
