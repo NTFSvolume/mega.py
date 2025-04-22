@@ -54,7 +54,7 @@ include = ["src/mega"]
 "src/mega" = "mega"
 
 [tool.pytest.ini_options]
-addopts = "-x -s -v"
+addopts = "-s -v"
 minversion = "8.3"
 norecursedirs = [".git"]
 testpaths = ["tests"]
