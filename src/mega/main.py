@@ -1,10 +1,12 @@
 import argparse
+import logging
 import os
 
 from mega.api import Mega
 
 
 def main():
+    logging.basicConfig(level=10)
     parser = argparse.ArgumentParser(description="Download files from a Mega.nz URL.")
     parser.add_argument(
         "url",
@@ -20,8 +22,7 @@ def main():
     )
     args = parser.parse_args()
     mega = Mega()
-    mega.login()
-
+    mega.login(email=os.getenv("EMAIL"), password=os.getenv("PASS"))
     download_url: str = args.url
     output_dir: str = args.output_dir
     mega.download_url(url=download_url, dest_path=output_dir)
