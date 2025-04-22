@@ -731,16 +731,16 @@ class Mega:
 
     def upload(self, filename: str, dest: str | None = None, dest_filename: str | None = None) -> Folder:
         # determine storage node
-        if dest is None:
-            # if none set, upload to cloud drive node
-            if not hasattr(self, "root_id"):
-                self.get_files()
-            dest = self.root_id
-
+        dest = dest or self.root_id
         # request upload url, call 'u' method
         with open(filename, "rb") as input_file:
             file_size = os.path.getsize(filename)
-            ul_url: str = self.api.request({"a": "u", "s": file_size})["p"]
+            ul_url: str = self.api.request(
+                {
+                    "a": "u",
+                    "s": file_size,
+                }
+            )["p"]
 
             # generate random aes key (128) for file, 192 bits of random data
             ul_key = [random_u32int() for _ in range(6)]
@@ -844,7 +844,7 @@ class Mega:
         )
         return data
 
-    def create_folder(self, path: Path | str, dest: str | None = None) -> AnyDict:
+    def create_folder(self, path: Path | str) -> AnyDict:
         path = Path(path)
         last_parent = self.find_by_handle(self.root_id)
         assert last_parent

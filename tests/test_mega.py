@@ -6,7 +6,8 @@ from pathlib import Path
 import pytest
 import requests_mock
 
-from mega.client import FileOrFolderTuple, Mega
+from mega.client import Mega
+from mega.data_structures import FileOrFolder
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -33,7 +34,7 @@ def mega(folder_name: str) -> Generator[Mega]:
 def uploaded_file(mega: Mega, folder_name: str):
     folder = mega.find(folder_name)
     assert folder
-    dest_node_id = folder[1]["h"]
+    dest_node_id = folder["h"]
     mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     return mega.find(path)
@@ -58,7 +59,7 @@ def test_get_quota(mega: Mega):
 
 
 def test_get_storage_space(mega: Mega):
-    resp = mega.get_storage_space(mega=True)
+    resp = mega.get_storage_space()
     assert isinstance(resp, dict)
 
 
@@ -67,7 +68,7 @@ def test_get_files(mega: Mega):
     assert isinstance(files, dict)
 
 
-def test_get_link(mega: Mega, uploaded_file: FileOrFolderTuple):
+def test_get_link(mega: Mega, uploaded_file: FileOrFolder):
     link = mega.get_link(uploaded_file)
     assert isinstance(link, str)
 
@@ -86,26 +87,22 @@ class TestExport:
 
     def test_export_folder_within_folder(self, mega: Mega, folder_name: str):
         folder_path = Path(folder_name) / "subdir" / "anothersubdir"
-        mega.create_folder(name=folder_path)
-
+        mega.create_folder(folder_path)
         result_public_share_url = mega.export(path=folder_path)
-
         assert result_public_share_url.startswith("https://mega.nz/#F!")
 
     def test_export_folder_using_node_id(self, mega: Mega, folder_name: str):
         file = mega.find(folder_name)
         assert file
-        node_id = file[0]
-
+        node_id = file["p"]
         result_public_share_url = mega.export(node_id=node_id)
-
         assert result_public_share_url.startswith("https://mega.nz/#F!")
 
     def test_export_single_file(self, mega: Mega, folder_name: str):
         # Upload a single file into a folder
         node = mega.find(folder_name)
         assert node
-        folder = node[1]
+        folder = node
         dest_node_id = folder["h"]
         mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
         path = f"{folder_name}/test.py"
@@ -133,7 +130,7 @@ class TestCreateFolder:
         assert len(folder_names_and_node_ids) == 1
 
     def test_create_folder_with_sub_folders(self, mega: Mega, folder_name: str, mocker):
-        folder_names_and_node_ids = mega.create_folder(name=(Path(folder_name) / "subdir" / "anothersubdir"))
+        folder_names_and_node_ids = mega.create_folder(Path(folder_name) / "subdir" / "anothersubdir")
 
         assert len(folder_names_and_node_ids) == 3
         assert folder_names_and_node_ids == {
@@ -147,7 +144,7 @@ class TestFind:
     def test_find_file(self, mega: Mega, folder_name: str):
         folder = mega.find(folder_name)
         assert folder
-        dest_node_id = folder[1]["h"]
+        dest_node_id = folder["h"]
         mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
         file1 = mega.find(f"{folder_name}/test.py")
         assert file1
@@ -166,11 +163,9 @@ class TestFind:
     def test_exclude_deleted_files(self, mega: Mega, folder_name: str):
         node = mega.find(folder_name)
         assert node
-        folder_node_id = node[0]
+        folder_node_id = node["h"]
         assert mega.find(folder_name)
-
         _ = mega.delete(folder_node_id)
-
         assert mega.find(folder_name)
         assert not mega.find(folder_name, exclude_deleted=True)
 
@@ -185,18 +180,18 @@ def test_rename(mega: Mega, folder_name: str):
 def test_delete_folder(mega: Mega, folder_name: str):
     node = mega.find(folder_name)
     assert node
-    folder_node_id = node[0]
+    folder_node_id = node["h"]
     resp = mega.delete(folder_node_id)
     assert isinstance(resp, int)
 
 
-def test_delete(mega: Mega, uploaded_file: FileOrFolderTuple):
-    resp = mega.delete(uploaded_file[0])
+def test_delete(mega: Mega, uploaded_file: FileOrFolder):
+    resp = mega.delete(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
-def test_destroy(mega: Mega, uploaded_file: FileOrFolderTuple):
-    resp = mega.destroy(uploaded_file[0])
+def test_destroy(mega: Mega, uploaded_file: FileOrFolder):
+    resp = mega.destroy(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
@@ -204,13 +199,13 @@ def test_download(mega: Mega, tmpdir, folder_name):
     # Upload a single file into a folder
     node = mega.find(folder_name)
     assert node
-    folder = node[1]
+    folder = node
     dest_node_id = folder["h"]
     mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     file = mega.find(path)
     assert file
-    output_path = mega.download(file_or_node=file, dest_path=tmpdir, dest_filename="test.py")
+    output_path = mega.download(file, tmpdir, "test.py")
     assert output_path.exists()
 
 
