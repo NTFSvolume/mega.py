@@ -88,8 +88,9 @@ class Mega:
             self._login_user(email, password)
         else:
             self.login_anonymous()
+        _ = self.get_files()  # This is to set the special folders id
         self.logged_in = True
-        logger.info(f"Special folders: {self.root_id =} {self.inbox_id = } {self.trashbin_id =}")
+        logger.info(f"Special folders: root: {self.root_id} inbox: {self.inbox_id} trash_bin: {self.trashbin_id}")
         logger.info("Login complete")
         return self
 
