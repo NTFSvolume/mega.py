@@ -122,7 +122,12 @@ class Mega:
     def _login_user(self, email: str, password: str) -> None:
         logger.info("Logging in user...")
         email = email.lower()
-        get_user_salt_resp: dict = self.api.request({"a": "us0", "user": email})
+        get_user_salt_resp: dict = self.api.request(
+            {
+                "a": "us0",
+                "user": email,
+            }
+        )
 
         if b64_salt := get_user_salt_resp.get("s"):
             # v2 user account
@@ -247,7 +252,7 @@ class Mega:
 
         elif file["t"] == NodeType.TRASH:
             self.trashbin_id = file["h"]
-            file["attributes"] = {"n": "Rubbish Bin"}
+            file["attributes"] = {"n": "Trash Bin"}
 
         return file
 
@@ -270,86 +275,61 @@ class Mega:
                 shared_keys[s_item["u"]][s_item["h"]] = shared_key[s_item["h"]]
         self.shared_keys = shared_keys
 
-    def find_path_descriptor(self, path: str, files: FilesMapping | None = None) -> str | None:
+    def find(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> FileOrFolder | None:
         """
-        Find descriptor of folder inside a path. i.e.: folder1/folder2/folder3
-        Params:
-            path, string like folder1/folder2/folder3
-        Return:
-            Descriptor (str) of folder3 if exists, None otherwise
+        Return file object(s) from given filename or path
         """
-        paths = path.split("/")
+        results = self._search(filename_or_path, exclude_deleted, strict=True)
+        return results[0] if results else None
 
-        _files: FilesMapping = files or self.get_files()
-        parent_desc = self.root_id
-        found = False
-        for foldername in paths:
-            if foldername != "":
-                for name, item in _files.items():
-                    file: FileOrFolder = item
-                    if file["a"] and file["t"] and file["attributes"]["n"] == foldername:
-                        if parent_desc == file["p"]:
-                            parent_desc = name
-                            found = True
-                if found:
-                    found = False
-                else:
-                    return None
-
-        return parent_desc
-
-    def find(
-        self, filename: Path | str | None = None, handle: str | None = None, exclude_deleted: bool = False
-    ) -> FileOrFolder | None:
+    def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[FileOrFolder]:
         """
-        Return file object from given filename
+        Return file object(s) from given filename or path
         """
+        return self._search(filename_or_path, exclude_deleted)
+
+    def _search(self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False) -> list[FileOrFolder]:
+        """
+        Return file object(s) from given filename or path
+        """
+
+        filename_or_path = str(filename_or_path)
+
+        fs = self.build_file_system()
+
+        found = []
+        for path, item in fs.items():
+            if filename_or_path in (path_str := str(path)):
+                if strict and not path_str.startswith(filename_or_path):
+                    continue
+                if exclude_deleted and item["p"] == self.trashbin_id:
+                    continue
+                found.append(item)
+        return found
+
+    def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> FileOrFolder | None:
+        """Return file object(s) from given filename or path"""
         files = self.get_files()
-        if handle:
-            return files.get(handle)
-        elif not filename:
-            raise ValidationError("Either filename or handle shoudl be provided")
-
-        path = Path(filename)
-        filename = path.name
-        parent_dir_name = path.parent.name
-        for _, file in files.items():
-            file: FileOrFolder = file
-            parent_node_id = None
-            try:
-                if parent_dir_name:
-                    parent_node_id = self.find_path_descriptor(parent_dir_name, files)
-                    if (
-                        filename
-                        and parent_node_id
-                        and file["attributes"]
-                        and file["attributes"]["n"] == filename
-                        and parent_node_id == file["p"]
-                    ):
-                        if exclude_deleted and self.trashbin_id == file["p"]:
-                            continue
-                        return file
-
-                elif filename and file["a"] and file["attributes"]["n"] == filename:
-                    if exclude_deleted and self.trashbin_id == file["p"]:
-                        continue
-                    return file
-            except TypeError:
-                continue
-        return None
+        return found if (found := files.get(handle)) else None
 
     def get_files(self) -> FilesMapping:
         logger.info("Getting all files...")
         files_dict: FilesMapping = {}
         for node in self._get_nodes():
-            if node["a"]:  # Trash, Cloud and Root have an empty `a` value
+            if node["attributes"]:
                 file = cast(File, node)
                 files_dict[file["h"]] = file
         return files_dict
 
     def _get_nodes(self) -> Generator[Node]:
         logger.info("Getting all files...")
-        files: Folder = self.api.request({"a": "f", "c": 1, "r": 1})
+        files: Folder = self.api.request(
+            {
+                "a": "f",
+                "c": 1,
+                "r": 1,
+            }
+        )
         shared_keys: SharedkeysDict = {}
         self._init_shared_keys(files, shared_keys)
         for node in files["f"]:
@@ -364,7 +344,12 @@ class Mega:
             raise ValueError("""Upload() response required as input, use get_link() for regular file input""")
 
         file = folder["f"][0]
-        public_handle: str = self.api.request({"a": "l", "n": file["h"]})
+        public_handle: str = self.api.request(
+            {
+                "a": "l",
+                "n": file["h"],
+            }
+        )
         _, file_key = file["k"].split(":", 1)
         decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self.master_key))
         return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
@@ -384,13 +369,19 @@ class Mega:
     def get_folder_link(self, folder: FileOrFolder) -> str:
         if not ("h" in folder and "sk_decrypted" in folder):
             raise ValidationError("Folder id and key must be present")
+
         public_handle: str = self._get_public_handle(folder)
         decrypted_key = a32_to_base64(folder["sk_decrypted"])
         return f"{self.primary_url}/#F!{public_handle}!{decrypted_key}"
 
     def _get_public_handle(self, file: FileOrFolder) -> str:
         try:
-            public_handle: str = self.api.request({"a": "l", "n": file["h"]})
+            public_handle: str = self.api.request(
+                {
+                    "a": "l",
+                    "n": file["h"],
+                }
+            )
         except RequestError as e:
             if e.code == -11:
                 raise MegaNzError("Can't get a public link from that file (is this a shared file?)") from e
@@ -433,7 +424,13 @@ class Mega:
 
     def get_id_from_public_handle(self, public_handle: str) -> str:
         # get node data
-        node_data: Folder = self.api.request({"a": "f", "f": 1, "p": public_handle})
+        node_data: Folder = self.api.request(
+            {
+                "a": "f",
+                "f": 1,
+                "p": public_handle,
+            }
+        )
         node_id = self.get_id_from_obj(node_data)
         assert node_id
         return node_id
@@ -451,7 +448,14 @@ class Mega:
         """
         Get current remaining disk quota in MegaBytes
         """
-        json_resp: AnyDict = self.api.request({"a": "uq", "xfer": 1, "strg": 1, "v": 1})
+        json_resp: AnyDict = self.api.request(
+            {
+                "a": "uq",
+                "xfer": 1,
+                "strg": 1,
+                "v": 1,
+            }
+        )
         return json_resp["mstrg"]
 
     def get_storage_space(self) -> StorageUsage:
@@ -462,14 +466,25 @@ class Mega:
           'total' : the maximum space allowed with current plan
         All storage space are in bytes unless asked differently.
         """
-        json_resp: AnyDict = self.api.request({"a": "uq", "xfer": 1, "strg": 1})
+        json_resp: AnyDict = self.api.request(
+            {
+                "a": "uq",
+                "xfer": 1,
+                "strg": 1,
+            }
+        )
         return StorageUsage(json_resp["cstrg"], json_resp["mstrg"])
 
     def get_balance(self) -> int | None:
         """
         Get account monetary balance, Pro accounts only
         """
-        user_data: AnyDict = self.api.request({"a": "uq", "pro": 1})
+        user_data: AnyDict = self.api.request(
+            {
+                "a": "uq",
+                "pro": 1,
+            }
+        )
         return user_data.get("balance")
 
     def delete(self, public_handle: str) -> AnyDict:
@@ -502,14 +517,19 @@ class Mega:
 
     def empty_trash(self) -> AnyDict | None:
         # get list of files in rubbish out
-        raise NotImplementedError
         files = self.get_files_in_node(NodeType.TRASH)
 
         # make a list of json
         if files != {}:
             post_list = []
             for file in files:
-                post_list.append({"a": "d", "n": file, "i": self.api.request_id})
+                post_list.append(
+                    {
+                        "a": "d",
+                        "n": file,
+                        "i": self.api.request_id,
+                    }
+                )
             return self.api.request(post_list)
 
     def download(
@@ -528,7 +548,15 @@ class Mega:
         )
 
     def _export_file(self, node: FileOrFolder) -> str:
-        self.api.request([{"a": "l", "n": node["h"], "i": self.api.request_id}])
+        self.api.request(
+            [
+                {
+                    "a": "l",
+                    "n": node["h"],
+                    "i": self.api.request_id,
+                }
+            ]
+        )
         return self.get_link(node)
 
     def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
@@ -544,7 +572,7 @@ class Mega:
         else:
             raise ValueError
 
-        if file["t"] == 0:  # is file
+        if file["t"] == NodeType.FILE:
             return self._export_file(file)
 
         if file:
@@ -817,30 +845,20 @@ class Mega:
         )
         return data
 
-    def _root_node_id(self) -> str:
-        if not hasattr(self, "root_id"):
-            _ = self.get_files()
-        return self.root_id
-
-    def create_folder(self, name: Path | str, dest: str | None = None) -> AnyDict:
-        dirs = tuple(dir_name for dir_name in str(name).split("/") if dir_name)
-        folder_node_ids = {}
-        for idx, directory_name in enumerate(dirs):
-            existing_node_id = self.find_path_descriptor(directory_name)
-            if existing_node_id:
-                folder_node_ids[idx] = existing_node_id
-                continue
-            if idx == 0:
-                if dest is None:
-                    parent_node_id = self._root_node_id()
-                else:
-                    parent_node_id = dest
+    def create_folder(self, path: Path | str, dest: str | None = None) -> AnyDict:
+        path = Path(path)
+        last_parent = self.find_by_handle(self.root_id)
+        assert last_parent
+        for parent in reversed(path.parents):
+            node = self.find(parent, exclude_deleted=True)
+            if node:
+                last_parent = node
             else:
-                parent_node_id = folder_node_ids[idx - 1]
-            created_node = self._mkdir(name=directory_name, parent_node_id=parent_node_id)
-            node_id = created_node["f"][0]["h"]
-            folder_node_ids[idx] = node_id
-        return dict(zip(dirs, folder_node_ids.values()))
+                created_node = self._mkdir(name=parent.name, parent_node_id=last_parent["h"])
+                last_parent = created_node["f"][0]
+
+        actual_node = self._mkdir(name=path.name, parent_node_id=last_parent["h"])
+        return actual_node
 
     def rename(self, file: FileOrFolder, new_name: str) -> AnyDict:
         # create new attribs
@@ -850,7 +868,13 @@ class Mega:
         encrypted_key = a32_to_base64(encrypt_key(file["key_decrypted"], self.master_key))
         # update attributes
         return self.api.request(
-            [{"a": "a", "attr": encrypt_attribs, "key": encrypted_key, "n": file["h"], "i": self.api.request_id}]
+            {
+                "a": "a",
+                "attr": encrypt_attribs,
+                "key": encrypted_key,
+                "n": file["h"],
+                "i": self.api.request_id,
+            }
         )
 
     def move(self, file_id: str, target: Folder | NodeType | str) -> AnyDict:
@@ -880,7 +904,14 @@ class Mega:
             target_node_id = result["h"]
         else:
             target_node_id = target
-        return self.api.request({"a": "m", "n": file_id, "t": target_node_id, "i": self.api.request_id})
+        return self.api.request(
+            {
+                "a": "m",
+                "n": file_id,
+                "t": target_node_id,
+                "i": self.api.request_id,
+            }
+        )
 
     def add_contact(self, email: str) -> AnyDict:
         """
@@ -992,15 +1023,18 @@ class Mega:
             }
         )
 
-    def build_file_system(self, nodes: FilesMapping | None = None) -> dict[Path, FileOrFolder]:
+    def build_file_system(self) -> dict[Path, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
 
         Returns:
             A 1-level dictionary where the each keys is the full path to a file/folder, and each value is the actual file/folder
         """
-        nodes = nodes or self.get_files()
-        path_mapping: dict[Path, FileOrFolder] = {}
-        parents_mapping: dict[str, list[FileOrFolder]] = {}
+        if not self.logged_in:
+            raise MegaNzError("You must log in to build your file system")
+
+        nodes = {node["h"]: node for node in self._get_nodes()}
+        path_mapping: dict[Path, Node] = {}
+        parents_mapping: dict[str, list[Node]] = {}
 
         for _, item in nodes.items():
             parent_id = item["p"]
@@ -1016,9 +1050,9 @@ class Mega:
                 if item["t"] == NodeType.FOLDER:
                     build_tree(item["h"], item_path)
 
-        root_ids = [root_id for root_id, item in nodes.items() if not item["p"] == ""]
+        special_folders_id = self.root_id, self.inbox_id, self.trashbin_id
 
-        for root_id in root_ids:
+        for root_id in special_folders_id:
             root_item = nodes[root_id]
             path = Path(root_item["attributes"]["n"])
             path_mapping[path] = root_item
