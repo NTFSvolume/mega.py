@@ -189,7 +189,10 @@ class Mega:
     def _api_request(self, data_input: list[AnyDict] | AnyDict) -> Any:
         params: AnyDict = {"id": self.sequence_num}
         self.sequence_num += 1
-        DEFAULT_HEADERS = {"Content-Type": "application/json"}
+        DEFAULT_HEADERS = {
+            "Content-Type": "application/json",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+        }
 
         if self.sid:
             params["sid"] = self.sid
@@ -376,13 +379,13 @@ class Mega:
 
     def find(
         self, filename: Path | str | None = None, handle: str | None = None, exclude_deleted: bool = False
-    ) -> FileOrFolder | None:
+    ) -> FileOrFolderTuple | None:
         """
         Return file object from given filename
         """
         files = self.get_files()
         if handle:
-            return files.get(handle)
+            return handle, files.get(handle)
         assert filename
         path = Path(filename)
         filename = path.name
@@ -402,12 +405,12 @@ class Mega:
                     ):
                         if exclude_deleted and self._trash_folder_node_id == file["p"]:
                             continue
-                        return file
+                        return parent_node_id, file
 
                 elif filename and file["a"] and file["attributes"]["n"] == filename:
                     if exclude_deleted and self._trash_folder_node_id == file["p"]:
                         continue
-                    return file
+                    return parent_node_id, file
             except TypeError:
                 continue
         return None
@@ -939,7 +942,7 @@ class Mega:
             created_node = self._mkdir(name=directory_name, parent_node_id=parent_node_id)
             node_id = created_node["f"][0]["h"]
             folder_node_ids[idx] = node_id
-        return dict(zip(dirs, list(folder_node_ids.values()), strict=False))  # type: ignore
+        return dict(zip(dirs, folder_node_ids.values()))
 
     def rename(self, file: FileOrFolderTuple | FileOrFolder, new_name: str) -> AnyDict:
         file = self.__get_file(file)
