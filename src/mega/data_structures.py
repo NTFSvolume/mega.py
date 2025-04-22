@@ -45,6 +45,7 @@ class Node(TypedDict):
     #  Non standard properties, only used internally by mega.py
     attributes: Attributes  # Decrypted attributes
     k_decrypted: TupleArray
+    key_decrypted: TupleArray  # Decrypted access key (for folders, its values if the same as 'k_decrypted')
 
 
 class FileOrFolder(Node):
@@ -52,7 +53,6 @@ class FileOrFolder(Node):
     sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
 
     #  Non standard properties, only used internally by mega.py
-    key: TupleArray  # Decrypted access key (for folders, its values if the same as 'k')
     iv: TupleArray
     meta_mac: TupleArray
     sk_decrypted: TupleArray
@@ -64,19 +64,20 @@ class File(FileOrFolder):
 
 class Folder(FileOrFolder):
     f: list[FileOrFolder]  # Children (files or folders)
+    ok: list[FileOrFolder]
+    s: list[FileOrFolder]
 
 
 SharedKey = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
 SharedkeysDict = dict[str, SharedKey]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
 
 
-class StorageUsage(TypedDict):
+class StorageUsage(NamedTuple):
     used: int
     total: int
 
 
-FileOrFolderDict = dict[str, FileOrFolder]  # key is parent_id ('p')
-FileOrFolderTuple = tuple[str, FileOrFolder]  # first element is parent_id ('p')
+FilesMapping = dict[str, FileOrFolder]  # key is parent_id ('p')
 
 
 class User(TypedDict):

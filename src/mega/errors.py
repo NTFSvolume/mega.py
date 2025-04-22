@@ -1,7 +1,10 @@
 from typing import Union
 
 
-class ValidationError(Exception):
+class MegaNzError(Exception): ...
+
+
+class ValidationError(MegaNzError):
     """Error in validation stage"""
 
 
@@ -52,7 +55,7 @@ _CODE_TO_DESCRIPTIONS = {
 }
 
 
-class RequestError(Exception):
+class RequestError(MegaNzError):
     """
     Error in API request
     """

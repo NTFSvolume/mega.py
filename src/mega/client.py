@@ -8,7 +8,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Union, cast
+from typing import TYPE_CHECKING, cast
 
 import requests
 from Crypto.Cipher import AES
@@ -43,9 +43,9 @@ from mega.data_structures import (
     Attributes,
     File,
     FileOrFolder,
-    FileOrFolderDict,
-    FileOrFolderTuple,
+    FilesMapping,
     Folder,
+    Node,
     NodeType,
     SharedKey,
     SharedkeysDict,
@@ -53,7 +53,10 @@ from mega.data_structures import (
     TupleArray,
 )
 
-from .errors import RequestError, ValidationError
+from .errors import MegaNzError, RequestError, ValidationError
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
 
 logger = logging.getLogger(__name__)
 
@@ -75,14 +78,18 @@ class Mega:
         )
         self.progress = Progress(*progress_columns)
         self.primary_url = f"{self.api.schema}://{self.api.domain}"
+        self.logged_in = False
+        self.root_id: str = ""
+        self.inbox_id: str = ""
+        self.trashbin_id: str = ""
 
     def login(self, email: str | None = None, password: str | None = None):
         if email and password:
             self._login_user(email, password)
         else:
             self.login_anonymous()
-        node_info = self.get_node_by_type(NodeType.TRASH)
-        self._trash_folder_node_id = node_info[0] if node_info else None
+        self.logged_in = True
+        logger.info(f"Special folders: {self.root_id =} {self.inbox_id = } {self.trashbin_id =}")
         logger.info("Login complete")
         return self
 
@@ -175,10 +182,11 @@ class Mega:
             path = match[0]
             return path
         else:
-            raise ValueError("Url key missing")
+            raise ValueError("URL key missing")
 
-    def _process_file(self, file: FileOrFolder, shared_keys: SharedkeysDict) -> FileOrFolder:
+    def _process_node(self, file: Node, shared_keys: SharedkeysDict) -> Node:
         if file["t"] == NodeType.FILE or file["t"] == NodeType.FOLDER:
+            file = cast(FileOrFolder, file)
             keys = dict(keypart.split(":", 1) for keypart in file["k"].split("/") if ":" in keypart)
             uid = file["u"]
             key = None
@@ -209,6 +217,7 @@ class Mega:
             if key is not None:
                 # file
                 if file["t"] == NodeType.FILE:
+                    file = cast(File, file)
                     k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
                     file["iv"] = key[4:6] + (0, 0)
                     file["meta_mac"] = key[6:8]
@@ -216,7 +225,7 @@ class Mega:
                 else:
                     k = key
 
-                file["key"] = key
+                file["key_decrypted"] = key
                 file["k_decrypted"] = k
                 attributes_bytes = base64_url_decode(file["a"])
                 attributes = decrypt_attr(attributes_bytes, k)
@@ -224,6 +233,7 @@ class Mega:
 
             # other => wrong object
             elif file["k"] == "":
+                file = cast(Node, file)
                 file["attributes"] = {"n": "Unknown Object"}
 
         elif file["t"] == NodeType.ROOT_FOLDER:
@@ -240,7 +250,7 @@ class Mega:
 
         return file
 
-    def _init_shared_keys(self, files: dict[str, list[FileOrFolder]], shared_keys: SharedkeysDict) -> None:
+    def _init_shared_keys(self, files: Folder, shared_keys: SharedkeysDict) -> None:
         """
         Init shared key not associated with a user.
         Seems to happen when a folder is shared,
@@ -259,7 +269,7 @@ class Mega:
                 shared_keys[s_item["u"]][s_item["h"]] = shared_key[s_item["h"]]
         self.shared_keys = shared_keys
 
-    def find_path_descriptor(self, path: str, files: FileOrFolderDict | None = None) -> str | None:
+    def find_path_descriptor(self, path: str, files: FilesMapping | None = None) -> str | None:
         """
         Find descriptor of folder inside a path. i.e.: folder1/folder2/folder3
         Params:
@@ -269,7 +279,7 @@ class Mega:
         """
         paths = path.split("/")
 
-        _files: FileOrFolderDict = files or self.get_files()
+        _files: FilesMapping = files or self.get_files()
         parent_desc = self.root_id
         found = False
         for foldername in paths:
@@ -284,18 +294,21 @@ class Mega:
                     found = False
                 else:
                     return None
+
         return parent_desc
 
     def find(
         self, filename: Path | str | None = None, handle: str | None = None, exclude_deleted: bool = False
-    ) -> FileOrFolderTuple | None:
+    ) -> FileOrFolder | None:
         """
         Return file object from given filename
         """
         files = self.get_files()
         if handle:
-            return handle, files.get(handle)
-        assert filename
+            return files.get(handle)
+        elif not filename:
+            raise ValidationError("Either filename or handle shoudl be provided")
+
         path = Path(filename)
         filename = path.name
         parent_dir_name = path.parent.name
@@ -308,34 +321,38 @@ class Mega:
                     if (
                         filename
                         and parent_node_id
-                        and file["a"]
+                        and file["attributes"]
                         and file["attributes"]["n"] == filename
                         and parent_node_id == file["p"]
                     ):
-                        if exclude_deleted and self._trash_folder_node_id == file["p"]:
+                        if exclude_deleted and self.trashbin_id == file["p"]:
                             continue
-                        return parent_node_id, file
+                        return file
 
                 elif filename and file["a"] and file["attributes"]["n"] == filename:
-                    if exclude_deleted and self._trash_folder_node_id == file["p"]:
+                    if exclude_deleted and self.trashbin_id == file["p"]:
                         continue
-                    return parent_node_id, file
+                    return file
             except TypeError:
                 continue
         return None
 
-    def get_files(self) -> FileOrFolderDict:
+    def get_files(self) -> FilesMapping:
         logger.info("Getting all files...")
-        files: dict[str, list[FileOrFolder]] = self.api.request({"a": "f", "c": 1, "r": 1})
-        files_dict = {}
+        files_dict: FilesMapping = {}
+        for node in self._get_nodes():
+            if node["a"]:  # Trash, Cloud and Root have an empty `a` value
+                file = cast(File, node)
+                files_dict[file["h"]] = file
+        return files_dict
+
+    def _get_nodes(self) -> Generator[Node]:
+        logger.info("Getting all files...")
+        files: Folder = self.api.request({"a": "f", "c": 1, "r": 1})
         shared_keys: SharedkeysDict = {}
         self._init_shared_keys(files, shared_keys)
-        for file in files["f"]:
-            processed_file = self._process_file(file, shared_keys)
-            # ensure each file has a name before returning
-            if processed_file["a"]:
-                files_dict[file["h"]] = processed_file
-        return files_dict
+        for node in files["f"]:
+            yield self._process_node(node, shared_keys)
 
     def get_upload_link(self, folder: Folder) -> str:
         """
@@ -347,51 +364,44 @@ class Mega:
 
         file = folder["f"][0]
         public_handle: str = self.api.request({"a": "l", "n": file["h"]})
-        file_key = file["k"][file["k"].index(":") + 1 :]
+        _, file_key = file["k"].split(":", 1)
         decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self.master_key))
         return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
 
-    @staticmethod
-    def __get_file(node_or_file: FileOrFolderTuple | FileOrFolder) -> FileOrFolder:
-        if isinstance(node_or_file, tuple):
-            file: FileOrFolder = node_or_file[1]
-        else:
-            file = node_or_file
-        return file
-
-    def get_link(self, file_or_node: FileOrFolderTuple | FileOrFolder) -> str:
+    def get_link(self, file: FileOrFolder) -> str:
         """
         Get a file public link from given file object
         """
-        file: FileOrFolder = self.__get_file(file_or_node)
-        if "h" in file and "k" in file:
-            try:
-                public_handle: str = self.api.request({"a": "l", "n": file["h"]})
-            except RequestError as e:
-                if e.code == -11:
-                    raise ValueError("Can't get a public link from that file (is this a shared file?)") from None
-                raise
-            decrypted_key = a32_to_base64(file["key"])
-            return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
-        else:
+
+        if not ("h" in file and "key_decrypted" in file):
             raise ValidationError("File id and key must be present")
 
-    def get_folder_link(self, file_or_node: FileOrFolderTuple | FileOrFolder) -> str:
-        file: FileOrFolder = self.__get_file(file_or_node)
-        if "h" in file and "k" in file:
-            public_handle: str | int = self.api.request({"a": "l", "n": file["h"]})
-            if public_handle == -11:
-                raise RequestError("Can't get a public link from that file (is this a shared file?)")
-            decrypted_key = a32_to_base64(file["sk_decrypted"])
-            return f"{self.primary_url}/#F!{public_handle}!{decrypted_key}"
+        public_handle: str = self._get_public_handle(file)
+        decrypted_key = a32_to_base64(file["key_decrypted"])
+        return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
+
+    def get_folder_link(self, folder: FileOrFolder) -> str:
+        if not ("h" in folder and "sk_decrypted" in folder):
+            raise ValidationError("Folder id and key must be present")
+        public_handle: str = self._get_public_handle(folder)
+        decrypted_key = a32_to_base64(folder["sk_decrypted"])
+        return f"{self.primary_url}/#F!{public_handle}!{decrypted_key}"
+
+    def _get_public_handle(self, file: FileOrFolder) -> str:
+        try:
+            public_handle: str = self.api.request({"a": "l", "n": file["h"]})
+        except RequestError as e:
+            if e.code == -11:
+                raise MegaNzError("Can't get a public link from that file (is this a shared file?)") from e
+            raise
         else:
-            raise ValidationError("File id and key must be present")
+            return public_handle
 
     def get_user(self) -> AnyDict:
         user_data: AnyDict = self.api.request({"a": "ug"})
         return user_data
 
-    def get_node_by_type(self, node_type: NodeType | int) -> FileOrFolderTuple | None:
+    def get_node_by_type(self, node_type: NodeType | int) -> Node | None:
         """
         Get a node by it's numeric type id, e.g:
         0: file
@@ -401,26 +411,21 @@ class Mega:
         4: special trash bin
         """
         nodes = self.get_files()
-        for name, node in nodes.items():
+        for _, node in nodes.items():
             if node["t"] == node_type:
-                return name, node
+                return node
 
-    def get_files_in_node(self, target: NodeType | str) -> FileOrFolderDict:
+    def get_files_in_node(self, target: NodeType | str) -> FilesMapping:
         """
         Get all files in a given target, e.g. 4=trash
         """
-        if isinstance(target, Union[NodeType, int]):
-            # convert special nodes (e.g. trash)
-            node_id: str = self.get_node_by_type(target)[0]
-        else:
-            node_id = target
-
-        files: dict[str, list[FileOrFolder]] = self.api.request({"a": "f", "c": 1})
-        files_dict: FileOrFolderDict = {}
+        node_id = target
+        folder: Folder = self.api.request({"a": "f", "c": 1})
+        files_dict: FilesMapping = {}
         shared_keys: SharedkeysDict = {}
-        self._init_shared_keys(files, shared_keys)
-        for file in files["f"]:
-            processed_file = self._process_file(file, shared_keys)
+        self._init_shared_keys(folder, shared_keys)
+        for file in folder["f"]:
+            processed_file = cast(FileOrFolder, self._process_node(file, shared_keys))
             if processed_file["a"] and processed_file["p"] == node_id:
                 files_dict[file["h"]] = processed_file
         return files_dict
@@ -436,22 +441,19 @@ class Mega:
         """
         Get node id from a file object
         """
-        node_id = None
 
         for i in node_data["f"]:
             if i["h"] != "":
-                node_id = i["h"]
-        return node_id
+                return i["h"]
 
     def get_quota(self) -> int:
         """
         Get current remaining disk quota in MegaBytes
         """
         json_resp: AnyDict = self.api.request({"a": "uq", "xfer": 1, "strg": 1, "v": 1})
-        # convert bytes to megabytes
-        return json_resp["mstrg"] / 1048576
+        return json_resp["mstrg"]
 
-    def get_storage_space(self, giga: bool = False, mega: bool = False, kilo: bool = False) -> StorageUsage:
+    def get_storage_space(self) -> StorageUsage:
         """
         Get the current storage space.
         Return a dict containing at least:
@@ -459,20 +461,8 @@ class Mega:
           'total' : the maximum space allowed with current plan
         All storage space are in bytes unless asked differently.
         """
-        if sum(1 if x else 0 for x in (kilo, mega, giga)) > 1:
-            raise ValueError("Only one unit prefix can be specified")
-        unit_coef = 1
-        if kilo:
-            unit_coef = 1024
-        if mega:
-            unit_coef = 1048576
-        if giga:
-            unit_coef = 1073741824
         json_resp: AnyDict = self.api.request({"a": "uq", "xfer": 1, "strg": 1})
-        return {
-            "used": json_resp["cstrg"] / unit_coef,
-            "total": json_resp["mstrg"] / unit_coef,
-        }
+        return StorageUsage(json_resp["cstrg"], json_resp["mstrg"])
 
     def get_balance(self) -> int | None:
         """
@@ -491,7 +481,7 @@ class Mega:
         """
         Delete a file by its url
         """
-        (public_handle,) = self._parse_url(url).split("!")
+        public_handle, _ = self._parse_url(url).split("!")
         file_id = self.get_id_from_public_handle(public_handle)
         return self.move(file_id, NodeType.TRASH)
 
@@ -511,6 +501,7 @@ class Mega:
 
     def empty_trash(self) -> AnyDict | None:
         # get list of files in rubbish out
+        raise NotImplementedError
         files = self.get_files_in_node(NodeType.TRASH)
 
         # make a list of json
@@ -521,15 +512,11 @@ class Mega:
             return self.api.request(post_list)
 
     def download(
-        self,
-        file_or_node: FileOrFolderTuple | None,
-        dest_path: str | None = None,
-        dest_filename: str | None = None,
+        self, file: FileOrFolder | None, dest_path: str | None = None, dest_filename: str | None = None
     ) -> Path:
         """
         Download a file by it's file object
         """
-        file = None if file_or_node is None else file_or_node[1]
         return self._download_file(
             file_handle=None,
             file_key=None,
@@ -539,46 +526,44 @@ class Mega:
             is_public=False,
         )
 
-    def _export_file(self, node: FileOrFolderTuple | FileOrFolder) -> str:
-        node_data = self.__get_file(node)
-        self.api.request([{"a": "l", "n": node_data["h"], "i": self.api.request_id}])
+    def _export_file(self, node: FileOrFolder) -> str:
+        self.api.request([{"a": "l", "n": node["h"], "i": self.api.request_id}])
         return self.get_link(node)
 
     def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
-        nodes = self.get_files()
+        files = self.get_files()
         if node_id:
             _node_id = node_id
-            node: FileOrFolderTuple | FileOrFolder = nodes[_node_id]
+            file: FileOrFolder = files[_node_id]
         elif path:
             found = self.find(path)
             if not found:
                 raise ValueError
-            node = found
+            file = found
         else:
             raise ValueError
 
-        node_data = self.__get_file(node)
-        is_file_node: bool = node_data["t"] == 0
-        if is_file_node:
-            return self._export_file(node)
-        if node:
+        if file["t"] == 0:  # is file
+            return self._export_file(file)
+
+        if file:
             try:
                 # If already exported
-                return self.get_folder_link(node)
+                return self.get_folder_link(file)
             except (RequestError, KeyError):
                 pass
 
         master_key_cipher = AES.new(a32_to_bytes(self.master_key), AES.MODE_ECB)
-        ha = base64_url_encode(master_key_cipher.encrypt(node_data["h"].encode("utf8") + node_data["h"].encode("utf8")))
+        ha = base64_url_encode(master_key_cipher.encrypt(file["h"].encode("utf8") + file["h"].encode("utf8")))
 
         share_key = random.randbytes(16)
         ok = base64_url_encode(master_key_cipher.encrypt(share_key))
 
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
-        node_key = node_data["k_decrypted"]
+        node_key = file["k_decrypted"]
         encrypted_node_key = base64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
 
-        _node_id: str = node_data["h"]
+        _node_id: str = file["h"]
         request_body = [
             {
                 "a": "s2",
@@ -591,8 +576,8 @@ class Mega:
             }
         ]
         self.api.request(request_body)
-        nodes = self.get_files()
-        return self.get_folder_link(nodes[_node_id])
+        files = self.get_files()
+        return self.get_folder_link(files[_node_id])
 
     def download_url(self, url: str, dest_path: str | None = None, dest_filename: str | None = None) -> Path:
         """
@@ -856,19 +841,18 @@ class Mega:
             folder_node_ids[idx] = node_id
         return dict(zip(dirs, folder_node_ids.values()))
 
-    def rename(self, file: FileOrFolderTuple | FileOrFolder, new_name: str) -> AnyDict:
-        file = self.__get_file(file)
+    def rename(self, file: FileOrFolder, new_name: str) -> AnyDict:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
         encrypt_attribs = base64_url_encode(encrypt_attr(attribs, file["k_decrypted"]))
-        encrypted_key = a32_to_base64(encrypt_key(file["key"], self.master_key))
+        encrypted_key = a32_to_base64(encrypt_key(file["key_decrypted"], self.master_key))
         # update attributes
         return self.api.request(
             [{"a": "a", "attr": encrypt_attribs, "key": encrypted_key, "n": file["h"], "i": self.api.request_id}]
         )
 
-    def move(self, file_id: str, target: FileOrFolderTuple | NodeType | str) -> AnyDict:
+    def move(self, file_id: str, target: Folder | NodeType | str) -> AnyDict:
         """
         Move a file to another parent node
         params:
@@ -888,14 +872,13 @@ class Mega:
         target's structure returned by find()
         """
 
-        # determine target_node_id
         if isinstance(target, int):
-            target_node_id = str(self.get_node_by_type(target)[0])
-        elif isinstance(target, str):
-            target_node_id = target
+            result = self.get_node_by_type(target)
+            if not result:
+                raise MegaNzError(f"Node type {target} does not exists")
+            target_node_id = result["h"]
         else:
-            file = target[1]
-            target_node_id = file["h"]
+            target_node_id = target
         return self.api.request({"a": "m", "n": file_id, "t": target_node_id, "i": self.api.request_id})
 
     def add_contact(self, email: str) -> AnyDict:
@@ -926,7 +909,7 @@ class Mega:
         else:
             return self.api.request({"a": "ur", "u": email, "l": add_or_remove, "i": self.api.request_id})
 
-    def get_public_url_info(self, url):
+    def get_public_url_info(self, url: str) -> AnyDict | None:
         """
         Get size and name from a public url, dict returned
         """
@@ -934,7 +917,7 @@ class Mega:
         return self.get_public_file_info(file_handle, file_key)
 
     def import_public_url(
-        self, url: str, dest_node: FileOrFolder | None = None, dest_name: str | None = None
+        self, url: str, dest_node: FileOrFolder | str | None = None, dest_name: str | None = None
     ) -> Folder:
         """
         Import the public url into user account
@@ -962,22 +945,28 @@ class Mega:
 
     def import_public_file(
         self,
-        file_handle: str | None,
+        file_handle: str,
         file_key: str,
-        dest_node: FileOrFolder | None = None,
+        dest_node: FileOrFolder | str | None = None,
         dest_name: str | None = None,
     ) -> Folder:
         """
         Import the public file into user account
         """
         # Providing dest_node spare an API call to retrieve it.
+        if not self.logged_in:
+            raise MegaNzError("You have to log in to import files")
+
         if dest_node is None:
             # Get '/Cloud Drive' folder no dest node specified
-            dest_node = self.get_node_by_type(NodeType.ROOT_FOLDER)[1]
+            dest_node_id: str = self.root_id
+        elif isinstance(dest_node, str):
+            dest_node_id = dest_node
+        else:
+            dest_node_id = dest_node["h"]
 
         # Providing dest_name spares an API call to retrieve it.
         if dest_name is None:
-            assert file_handle
             pl_info = self.get_public_file_info(file_handle, file_key)
             assert pl_info
             dest_name = pl_info["name"]
@@ -988,5 +977,16 @@ class Mega:
         encrypted_key: str = a32_to_base64(encrypt_key(key, self.master_key))
         encrypted_name: str = base64_url_encode(encrypt_attr({"n": dest_name}, k))
         return self.api.request(
-            {"a": "p", "t": dest_node["h"], "n": [{"ph": file_handle, "t": 0, "a": encrypted_name, "k": encrypted_key}]}
+            {
+                "a": "p",
+                "t": dest_node_id,
+                "n": [
+                    {
+                        "ph": file_handle,
+                        "t": 0,
+                        "a": encrypted_name,
+                        "k": encrypted_key,
+                    },
+                ],
+            }
         )
