@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import binascii
 import hashlib
 import logging
 import os
 import random
 import re
-import secrets
 import shutil
 import string
 import tempfile
@@ -116,15 +114,11 @@ class Mega:
     def _login_user(self, email: str, password: str) -> None:
         logger.info("Logging in user...")
         email = email.lower()
-        get_user_salt_resp = self._api_request({"a": "us0", "user": email})
-        try:
-            user_salt = base64_to_a32(get_user_salt_resp["s"])
-        except KeyError:
-            # v1 user account
-            password_aes = prepare_key(str_to_a32(password))
-            user_hash = make_hash(email, password_aes)
-        else:
+        get_user_salt_resp: dict = self._api_request({"a": "us0", "user": email})
+
+        if b64_salt := get_user_salt_resp.get("s"):
             # v2 user account
+            user_salt = base64_to_a32(b64_salt)
             pbkdf2_key = hashlib.pbkdf2_hmac(
                 hash_name="sha512",
                 password=password.encode(),
@@ -134,10 +128,16 @@ class Mega:
             )
             password_aes = str_to_a32(pbkdf2_key[:16])
             user_hash = base64_url_encode(pbkdf2_key[-16:])
+
+        else:
+            # v1 user account
+            password_aes = prepare_key(str_to_a32(password))
+            user_hash = make_hash(email, password_aes)
+
         resp = self._api_request({"a": "us", "user": email, "uh": user_hash})
         if isinstance(resp, int):
             raise RequestError(resp)
-        self._login_process(resp, password_aes)
+        self._process_login(resp, password_aes)
 
     def login_anonymous(self):
         logger.info("Logging in anonymous temporary user...")
@@ -158,21 +158,22 @@ class Mega:
         resp = self._api_request({"a": "us", "user": user})
         if isinstance(resp, int):
             raise RequestError(resp)
-        self._login_process(resp, password_key)
+        self._process_login(resp, password_key)
 
-    def _login_process(self, resp: AnyDict, password: Array):
+    def _process_login(self, resp: AnyDict, password: Array):
         encrypted_master_key = base64_to_a32(resp["k"])
         self.master_key = decrypt_key(encrypted_master_key, password)
-        if "tsid" in resp:
-            tsid = base64_url_decode(resp["tsid"])
+        if b64_tsid := resp.get("tsid"):
+            tsid = base64_url_decode(b64_tsid)
             key_encrypted = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), self.master_key))
             if key_encrypted == tsid[-16:]:
                 self.sid = resp["tsid"]
-        elif "csid" in resp:
+
+        elif b64_csid := resp.get("csid"):
+            encrypted_sid = mpi_to_int(base64_url_decode(b64_csid))
             encrypted_private_key = base64_to_a32(resp["privk"])
             private_key = a32_to_bytes(decrypt_key(encrypted_private_key, self.master_key))
             rsa_key = decrypt_rsa_key(private_key)
-            encrypted_sid = mpi_to_int(base64_url_decode(resp["csid"]))
 
             # TODO: Investigate how to decrypt using the current pycryptodome library.
             # The _decrypt method of RSA is deprecated and no longer available.
@@ -180,7 +181,7 @@ class Mega:
             # but the algorithm differs and requires bytes as input instead of integers.
             decrypted_sid = int(rsa_key._decrypt(encrypted_sid))  # type: ignore
             sid_hex = f"{decrypted_sid:x}"
-            sid_bytes = binascii.unhexlify("0" + sid_hex if len(sid_hex) % 2 else sid_hex)
+            sid_bytes = bytes.fromhex("0" + sid_hex if len(sid_hex) % 2 else sid_hex)
             sid = base64_url_encode(sid_bytes[:43])
             self.sid = sid
 
@@ -204,7 +205,7 @@ class Mega:
         response = requests.post(url, params=params, json=data, timeout=self.timeout, headers=DEFAULT_HEADERS)
 
         # Since around feb 2025, MEGA requires clients to solve a challenge during each login attempt.
-        # When that happends, initial responses returns "402 Payment Required".
+        # When that happens, initial responses returns "402 Payment Required".
         # Challenge is inside the `X-Hashcash` header.
         # We need to solve the challenge and re-made the request with same params + the computed token
         # See:  https://github.com/gpailler/MegaApiClient/issues/248#issuecomment-2692361193
@@ -215,20 +216,14 @@ class Mega:
             new_headers = DEFAULT_HEADERS | {"X-Hashcash": xhashcash_token}
             response = requests.post(url, params=params, json=data, timeout=self.timeout, headers=new_headers)
 
-        # Computed token failed
         if xhashcash_challenge := response.headers.get("X-Hashcash"):
+            # Computed token failed
             msg = f"Login failed. Mega requested a proof of work with xhashcash: {xhashcash_challenge}"
             raise RequestError(msg)
 
-        json_resp = response.json()
-        try:
-            if isinstance(json_resp, list):
-                int_resp = json_resp[0] if isinstance(json_resp[0], int) else None
-            elif isinstance(json_resp, int):
-                int_resp = json_resp
-        except IndexError:
-            int_resp = None
-        if int_resp is not None:
+        json_resp: list[AnyDict] | list[int] | int = response.json()
+
+        def handle_int_resp(int_resp: int):
             if int_resp == 0:
                 return int_resp
             if int_resp == -3:
@@ -236,12 +231,24 @@ class Mega:
                 logger.info(msg)
                 raise RuntimeError(msg)
             raise RequestError(int_resp)
-        return json_resp[0]  # type: ignore
+
+        if isinstance(json_resp, int):
+            return handle_int_resp(json_resp)
+        elif not isinstance(json_resp, list):
+            raise RequestError(f"Unknown response: {json_resp:r}")
+        elif json_resp:
+            first = json_resp[0]
+            if isinstance(first, int):
+                return handle_int_resp(first)
+            return first
+        else:
+            raise RequestError(f"Unknown response: {json_resp:r}")
 
     def _parse_url(self, url: str) -> str:
         """Parse file id and key from url."""
         if "/file/" in url:
             # V2 URL structure
+            # ex: https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq
             url = url.replace(" ", "")
             file_id = re.findall(r"\W\w\w\w\w\w\w\w\w\W", url)[0][1:-1]
             match = re.search(file_id, url)
@@ -251,6 +258,7 @@ class Mega:
             return f"{file_id}!{key}"
         elif "!" in url:
             # V1 URL structure
+            # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
             match = re.findall(r"/#!(.*)", url)
             path = match[0]
             return path
@@ -368,18 +376,18 @@ class Mega:
 
     def find(
         self, filename: Path | str | None = None, handle: str | None = None, exclude_deleted: bool = False
-    ) -> FileOrFolderTuple | None:
+    ) -> FileOrFolder | None:
         """
         Return file object from given filename
         """
         files = self.get_files()
         if handle:
-            return handle, files[handle]
+            return files.get(handle)
         assert filename
         path = Path(filename)
         filename = path.name
         parent_dir_name = path.parent.name
-        for parent_id, file in files.items():
+        for _, file in files.items():
             file: FileOrFolder = file
             parent_node_id = None
             try:
@@ -394,12 +402,12 @@ class Mega:
                     ):
                         if exclude_deleted and self._trash_folder_node_id == file["p"]:
                             continue
-                        return parent_id, file
+                        return file
 
                 elif filename and file["a"] and file["attributes"]["n"] == filename:
                     if exclude_deleted and self._trash_folder_node_id == file["p"]:
                         continue
-                    return parent_id, file
+                    return file
             except TypeError:
                 continue
         return None
@@ -648,7 +656,7 @@ class Mega:
         master_key_cipher = AES.new(a32_to_bytes(self.master_key), AES.MODE_ECB)
         ha = base64_url_encode(master_key_cipher.encrypt(node_data["h"].encode("utf8") + node_data["h"].encode("utf8")))
 
-        share_key = secrets.token_bytes(16)
+        share_key = random.randbytes(16)
         ok = base64_url_encode(master_key_cipher.encrypt(share_key))
 
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
@@ -1012,7 +1020,7 @@ class Mega:
 
     def import_public_url(
         self, url: str, dest_node: FileOrFolder | None = None, dest_name: str | None = None
-    ) -> AnyDict:
+    ) -> Folder:
         """
         Import the public url into user account
         """
@@ -1046,7 +1054,7 @@ class Mega:
         file_key: str,
         dest_node: FileOrFolder | None = None,
         dest_name: str | None = None,
-    ):
+    ) -> Folder:
         """
         Import the public file into user account
         """

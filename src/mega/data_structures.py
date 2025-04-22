@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, NamedTuple, TypedDict, Union
+from typing import Any, Literal, NamedTuple, TypedDict, Union
 
 from typing_extensions import NotRequired, TypeAlias
 
@@ -77,3 +77,54 @@ class StorageUsage(TypedDict):
 
 FileOrFolderDict = dict[str, FileOrFolder]  # key is parent_id ('p')
 FileOrFolderTuple = tuple[str, FileOrFolder]  # first element is parent_id ('p')
+
+
+class User(TypedDict):
+    user: str  # User handle
+    uh: str  # Password hash
+    mfa: str  # Multi-Factor Authentication key
+    csid: str  # Session Id
+    privk: str  # Private Key
+    k: str  # Master key
+    tsid: str  # Temp session Id
+    u: str  # User Id
+    ach: int  # <UNKNOWN>
+
+
+class Upload(TypedDict):
+    s: int  # Size
+    p: str  # URL
+
+
+class StorageMetrics(NamedTuple):
+    bytes_used: int
+    files_count: int
+    folders_count: int
+
+
+class AccountInformation(TypedDict):
+    mstrg: int  # Total Quota
+    cstrg: int  # Used Quota
+    cstrgn: dict[str, StorageMetrics]  # Metrics Serialized, Mapping of node_id > Storage metrics(tuple)
+
+
+# ~~~~~~~~~~~~~~~~~~~ REQUEST PARAMATERS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+class MegaRequest(TypedDict):
+    a: str  # Action, AKA what the request intends to do
+
+
+class MoveRequest(MegaRequest):
+    n: str  # node Id
+    t: str  # destination node Id
+
+
+class PreLoginRequest(MegaRequest):
+    a: Literal["us0"]
+    user: str  # user handle (AKA email)
+
+
+class PreLoginResponse(TypedDict):
+    s: str  # salt
+    v: int  # version
