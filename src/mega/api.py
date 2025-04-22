@@ -97,7 +97,7 @@ class Mega:
             "━",
             TransferSpeedColumn(),
             "━",
-            TimeRemainingColumn(),
+            TimeRemainingColumn(compact=True, elapsed_when_finished=True),
         )
         self.progress = Progress(*progress_columns)
 
@@ -611,17 +611,18 @@ class Mega:
 
     def download(
         self,
-        file_or_node: FileOrFolder | None,
+        file_or_node: FileOrFolderTuple | None,
         dest_path: str | None = None,
         dest_filename: str | None = None,
     ) -> Path:
         """
         Download a file by it's file object
         """
+        file = None if file_or_node is None else file_or_node[1]
         return self._download_file(
             file_handle=None,
             file_key=None,
-            file=file_or_node,
+            file=file,
             dest_path=dest_path,
             dest_filename=dest_filename,
             is_public=False,
@@ -977,7 +978,7 @@ class Mega:
         """
 
         # determine target_node_id
-        if isinstance(target, Union[NodeType, int]):
+        if isinstance(target, int):
             target_node_id = str(self.get_node_by_type(target)[0])
         elif isinstance(target, str):
             target_node_id = target

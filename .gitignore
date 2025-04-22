@@ -6,6 +6,7 @@
 ## Eclipse
 #################
 .env.fish
+*.env
 *.pydevproject
 .project
 .metadata
