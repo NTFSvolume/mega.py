@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 import requests_mock
 
-from mega.api import FileOrFolderTuple, Mega
+from mega.client import FileOrFolderTuple, Mega
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -257,5 +257,5 @@ class TestAPIRequest:
         response_text,
     ):
         with requests_mock.Mocker() as mocker:
-            mocker.post(f"{mega.schema}://{mega.api_domain}/cs", text=response_text)
-            mega._api_request(data_input={})
+            mocker.post(mega.api.entrypoint, text=response_text)
+            mega.api.request(data_input={})
