@@ -322,7 +322,6 @@ class Mega:
         return files_dict
 
     def _get_nodes(self) -> Generator[Node]:
-        logger.info("Getting all files...")
         files: Folder = self.api.request(
             {
                 "a": "f",

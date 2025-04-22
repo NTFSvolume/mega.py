@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import codecs
 import json
 import math
 import random
@@ -49,14 +48,6 @@ def pad_bytes(data: bytes, length: int = CHUNK_BLOCK_LEN) -> bytes:
 
 def random_u32int() -> U32Int:
     return random.randint(0, 0xFFFFFFFF)
-
-
-def _make_byte(x: str) -> bytes:
-    return codecs.latin_1_encode(x)[0]
-
-
-def _make_string(x: bytes) -> str:
-    return codecs.latin_1_decode(x)[0]
 
 
 def _aes_cbc_encrypt(data: bytes, key: bytes) -> bytes:
@@ -109,14 +100,14 @@ def decrypt_key(array: AnyArray, key: AnyArray) -> TupleArray:
 
 
 def encrypt_attr(attr_dict: dict, key: AnyArray) -> bytes:
-    attr: bytes = _make_byte("MEGA" + json.dumps(attr_dict))
+    attr: bytes = f"MEGA{json.dumps(attr_dict)}".encode()
     attr = pad_bytes(attr)
     return _aes_cbc_encrypt(attr, a32_to_bytes(key))
 
 
 def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
     attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
-    attr_str = _make_string(attr_bytes).rstrip("\0")
+    attr_str = attr_bytes.decode("utf-8").rstrip("\0")
     if attr_str.startswith('MEGA{"'):
         start = 4
         end = attr_str.find("}") + 1
@@ -134,7 +125,7 @@ def a32_to_bytes(array: AnyArray) -> bytes:
 
 def str_to_a32(bytes_or_str: str | bytes) -> TupleArray:
     if isinstance(bytes_or_str, str):
-        bytes_ = _make_byte(bytes_or_str)
+        bytes_ = bytes_or_str.encode()
     else:
         assert isinstance(bytes_or_str, bytes)
         bytes_ = bytes_or_str
@@ -166,7 +157,7 @@ def base64_to_a32(string: str) -> TupleArray:
 
 def base64_url_encode(data: bytes) -> str:
     data_bytes = base64.b64encode(data)
-    data_str = _make_string(data_bytes)
+    data_str = data_bytes.decode()
     for search, replace in (("+", "-"), ("/", "_"), ("=", "")):
         data_str = data_str.replace(search, replace)
     return data_str
