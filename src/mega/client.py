@@ -1053,8 +1053,10 @@ class Mega:
 
         for root_id in special_folders_id:
             root_item = nodes[root_id]
-            path = Path(root_item["attributes"]["n"])
+            name = root_item["attributes"]["n"]
+            path = Path(name if name != "Cloud Drive" else ".")
             path_mapping[path] = root_item
             build_tree(root_id, path)
 
-        return path_mapping
+        sorted_mapping = dict(sorted(path_mapping.items()))
+        return sorted_mapping
