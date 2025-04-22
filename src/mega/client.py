@@ -991,3 +991,37 @@ class Mega:
                 ],
             }
         )
+
+    def build_file_system(self, nodes: FilesMapping | None = None) -> dict[Path, FileOrFolder]:
+        """Builds a flattened dictionary representing a file system from a list of items.
+
+        Returns:
+            A 1-level dictionary where the each keys is the full path to a file/folder, and each value is the actual file/folder
+        """
+        nodes = nodes or self.get_files()
+        path_mapping: dict[Path, FileOrFolder] = {}
+        parents_mapping: dict[str, list[FileOrFolder]] = {}
+
+        for _, item in nodes.items():
+            parent_id = item["p"]
+            if parent_id not in parents_mapping:
+                parents_mapping[parent_id] = []
+            parents_mapping[parent_id].append(item)
+
+        def build_tree(parent_id: str, current_path: Path) -> None:
+            for item in parents_mapping.get(parent_id, []):
+                item_path = current_path / item["attributes"]["n"]
+                path_mapping[item_path] = item
+
+                if item["t"] == NodeType.FOLDER:
+                    build_tree(item["h"], item_path)
+
+        root_ids = [root_id for root_id, item in nodes.items() if not item["p"] == ""]
+
+        for root_id in root_ids:
+            root_item = nodes[root_id]
+            path = Path(root_item["attributes"]["n"])
+            path_mapping[path] = root_item
+            build_tree(root_id, path)
+
+        return path_mapping
