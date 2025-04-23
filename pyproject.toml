@@ -23,7 +23,7 @@ requires-python = ">=3.9"
 version = "1.10.0"
 
 [project.scripts]
-mega_nz = "src.mega.main:main"
+mega_nz = "mega.main:main"
 
 [project.urls]
 Homepage = "https://github.com/NTFSvolume/mega.py"

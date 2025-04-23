@@ -147,7 +147,13 @@ class Mega:
             password_aes = prepare_key(str_to_a32(password))
             user_hash = make_hash(email, password_aes)
 
-        resp = self.api.request({"a": "us", "user": email, "uh": user_hash})
+        resp = self.api.request(
+            {
+                "a": "us",
+                "user": email,
+                "uh": user_hash,
+            }
+        )
         self._process_login(resp, password_aes)
 
     def login_anonymous(self):
@@ -166,7 +172,12 @@ class Mega:
             }
         )
 
-        resp = self.api.request({"a": "us", "user": user})
+        resp = self.api.request(
+            {
+                "a": "us",
+                "user": user,
+            }
+        )
         self._process_login(resp, password_key)
 
     def _parse_url(self, url: str) -> str:
@@ -350,19 +361,14 @@ class Mega:
             yield self._process_node(node, self.shared_keys)
 
     def _parse_folder_url(self, url: str) -> tuple[str, str]:
-        "Returns (public_handle, key) if valid. If not returns None."
-        REGEXP1 = re.compile(r"mega.[^/]+/folder/([0-z-_]+)#([0-z-_]+)(?:/folder/([0-z-_]+))*")
-        REGEXP2 = re.compile(r"mega.[^/]+/#F!([0-z-_]+)[!#]([0-z-_]+)(?:/folder/([0-z-_]+))*")
-        m = re.search(REGEXP1, url)
-        if not m:
-            m = re.search(REGEXP2, url)
-        if not m:
+        if "/folder/" in url:
+            _, parts = url.split("/folder/", 1)
+        elif "#F!" in url:
+            _, parts = url.split("#F!", 1)
+        else:
             raise ValidationError("Not a valid folder URL")
-        root_folder = m.group(1)
-        key = m.group(2)
-        # You may want to use m.groups()[-1]
-        # to get the id of the subfolder
-        return (root_folder, key)
+        root_folder_id, shared_key = parts.split("#")
+        return root_folder_id, shared_key
 
     def get_upload_link(self, folder: Folder) -> str:
         """
@@ -419,7 +425,11 @@ class Mega:
             return public_handle
 
     def get_user(self) -> AnyDict:
-        user_data: AnyDict = self.api.request({"a": "ug"})
+        user_data: AnyDict = self.api.request(
+            {
+                "a": "ug",
+            }
+        )
         return user_data
 
     def get_node_by_type(self, node_type: NodeType | int) -> Node | None:
@@ -441,7 +451,12 @@ class Mega:
         Get all files in a given target, e.g. 4=trash
         """
         node_id = target
-        folder: Folder = self.api.request({"a": "f", "c": 1})
+        folder: Folder = self.api.request(
+            {
+                "a": "f",
+                "c": 1,
+            }
+        )
         files_dict: FilesMapping = {}
         shared_keys: SharedkeysDict = {}
         self._init_shared_keys(folder, shared_keys)
@@ -534,7 +549,13 @@ class Mega:
         """
         Destroy a file by its private id
         """
-        return self.api.request({"a": "d", "n": file_id, "i": self.api.request_id})
+        return self.api.request(
+            {
+                "a": "d",
+                "n": file_id,
+                "i": self.api.request_id,
+            }
+        )
 
     def destroy_url(self, url: str) -> AnyDict:
         """
@@ -622,7 +643,7 @@ class Mega:
         encrypted_node_key = base64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
 
         _node_id: str = file["h"]
-        request_body = [
+        self.api.request(
             {
                 "a": "s2",
                 "n": _node_id,
@@ -632,8 +653,7 @@ class Mega:
                 "ha": ha,
                 "cr": [[_node_id], [_node_id], [0, 0, encrypted_node_key]],
             }
-        ]
-        self.api.request(request_body)
+        )
         files = self.get_files()
         return self.get_folder_link(files[_node_id])
 
@@ -706,7 +726,13 @@ class Mega:
             iv: AnyArray = _file_key[4:6] + (0, 0)
             meta_mac: TupleArray = _file_key[6:8]
         else:
-            file_data = self.api.request({"a": "g", "g": 1, "n": file["h"]})
+            file_data = self.api.request(
+                {
+                    "a": "g",
+                    "g": 1,
+                    "n": file["h"],
+                }
+            )
             k = file["k_decrypted"]
             iv = file["iv"]
             meta_mac = file["meta_mac"]
@@ -728,8 +754,6 @@ class Mega:
         else:
             file_name: str = attribs["n"]
 
-        input_file = requests.get(file_url, stream=True).raw
-
         if dest_path is None:
             dest_path = ""
         else:
@@ -737,50 +761,98 @@ class Mega:
 
         output_path = Path(dest_path + file_name)
 
-        with self.progress, tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
+        with self.progress:
+            return self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
+
+    def _really_download_file(
+        self,
+        direct_file_url: str,
+        output_path: Path,
+        file_size: int,
+        iv: TupleArray,
+        meta_mac: TupleArray,
+        k_decrypted: TupleArray,
+    ):
+        input_file = requests.get(direct_file_url, stream=True).raw
+
+        with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
             task_id = self.progress.add_task(output_path.name, total=file_size)
-            k_bytes = a32_to_bytes(k)
-            counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-            aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
-
-            # mega.nz improperly uses CBC as a MAC mode, so after each chunk, the computed mac_bytes are used as IV for the next chunk MAC accumulation
-            mac_bytes = b"\0" * 16
-            mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
-            iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
-
+            chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
+            _ = next(chunk_decryptor)  # Prime chunk decryptor
             bytes_written: int = 0
             for _, chunk_size in get_chunks(file_size):
-                chunk = input_file.read(chunk_size)
-                chunk = aes.decrypt(chunk)
-                actual_size = len(chunk)
+                raw_chunk = input_file.read(chunk_size)
+                decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
+                actual_size = len(decrypted_chunk)
                 bytes_written += actual_size
-                temp_output_file.write(chunk)
+                temp_output_file.write(decrypted_chunk)
                 self.progress.advance(task_id, actual_size)
-                encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
-
-                # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
-                mem_view = memoryview(chunk)  # avoid copying memory for the entire chunk when slicing
-                modchunk = actual_size % CHUNK_BLOCK_LEN
-                if modchunk == 0:
-                    # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                    modchunk = CHUNK_BLOCK_LEN
-
-                # pad last block to 16 bytes
-                last_block = pad_bytes(mem_view[-modchunk:])
-                rest_of_chunk = mem_view[:-modchunk]
-                _ = encryptor.encrypt(rest_of_chunk)
-                input_to_mac = encryptor.encrypt(last_block)
-                mac_bytes = mac_encryptor.encrypt(input_to_mac)
                 logger.info("%s of %s downloaded", bytes_written, file_size)
 
-        file_mac = str_to_a32(mac_bytes)
-        # check mac integrity
-        if (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]) != meta_mac:
-            raise RuntimeError("Mismatched mac")
-
-        self.progress.remove_task(task_id)
+        try:
+            # Stop chunk decryptor and do a mac integrity check
+            chunk_decryptor.send(None)  # type: ignore
+        finally:
+            self.progress.remove_task(task_id)
         shutil.move(temp_output_file.name, output_path)
         return output_path
+
+    def _decrypt_chunks(
+        self,
+        iv: TupleArray,
+        k_decrypted: TupleArray,
+        meta_mac: TupleArray,
+    ) -> Generator[bytes, bytes, None]:
+        """
+        Decrypts chunks of data received via `send()` and yields the decrypted chunks.
+        It decrypts chunks indefinitely until a sentinel value (`None`) is sent.
+
+        NOTE: You MUST send `None` after decrypting every chunk to execute the mac check
+
+        Args:
+            iv (AnyArray):  Initialization vector (iv) as a list or tuple of two 32-bit unsigned integers.
+            k_decrypted (TupleArray):  Decryption key as a tuple of four 32-bit unsigned integers.
+            meta_mac (AnyArray):  The expected MAC value of the final file.
+
+        Yields:
+            bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
+
+        """
+        k_bytes = a32_to_bytes(k_decrypted)
+        counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
+        aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
+
+        # mega.nz improperly uses CBC as a MAC mode, so after each chunk
+        # the computed mac_bytes are used as IV for the next chunk MAC accumulation
+        mac_bytes = b"\0" * 16
+        mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
+        iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
+        raw_chunk = yield b""
+        while True:
+            if raw_chunk is None:
+                break
+            decrypted_chunk = aes.decrypt(raw_chunk)
+            raw_chunk = yield decrypted_chunk
+            encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
+
+            # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
+            mem_view = memoryview(decrypted_chunk)  # avoid copying memory for the entire chunk when slicing
+            modchunk = len(decrypted_chunk) % CHUNK_BLOCK_LEN
+            if modchunk == 0:
+                # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
+                modchunk = CHUNK_BLOCK_LEN
+
+            # pad last block to 16 bytes
+            last_block = pad_bytes(mem_view[-modchunk:])
+            rest_of_chunk = mem_view[:-modchunk]
+            _ = encryptor.encrypt(rest_of_chunk)
+            input_to_mac = encryptor.encrypt(last_block)
+            mac_bytes = mac_encryptor.encrypt(input_to_mac)
+
+        file_mac = str_to_a32(mac_bytes)
+        computed_mac = file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]
+        if computed_mac != meta_mac:
+            raise RuntimeError("Mismatched mac")
 
     def upload(self, filename: str, dest: str | None = None, dest_filename: str | None = None) -> Folder:
         # determine storage node
@@ -991,7 +1063,14 @@ class Mega:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             raise ValidationError("add_contact requires a valid email address")
         else:
-            return self.api.request({"a": "ur", "u": email, "l": add_or_remove, "i": self.api.request_id})
+            return self.api.request(
+                {
+                    "a": "ur",
+                    "u": email,
+                    "l": add_or_remove,
+                    "i": self.api.request_id,
+                }
+            )
 
     def get_public_url_info(self, url: str) -> AnyDict | None:
         """
@@ -1013,7 +1092,13 @@ class Mega:
         """
         Get size and name of a public file
         """
-        data: Folder = self.api.request({"a": "g", "p": file_handle, "ssm": 1})
+        data: Folder = self.api.request(
+            {
+                "a": "g",
+                "p": file_handle,
+                "ssm": 1,
+            }
+        )
         if "at" not in data or "s" not in data:
             raise ValueError("Unexpected result", data)
 
