@@ -107,7 +107,10 @@ def encrypt_attr(attr_dict: dict, key: AnyArray) -> bytes:
 
 def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
     attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
-    attr_str = attr_bytes.decode("utf-8").rstrip("\0")
+    try:
+        attr_str = attr_bytes.decode("utf-8").rstrip("\0")
+    except UnicodeDecodeError:
+        attr_str = attr_bytes.decode("latin-1").rstrip("\0")
     if attr_str.startswith('MEGA{"'):
         start = 4
         end = attr_str.find("}") + 1
