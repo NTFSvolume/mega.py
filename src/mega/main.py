@@ -1,4 +1,5 @@
 import argparse
+import asyncio
 import logging
 import os
 
@@ -7,7 +8,7 @@ from rich.logging import RichHandler
 from mega.client import Mega
 
 
-def main():
+async def run():
     handler = RichHandler(show_time=False, rich_tracebacks=True)
     logger = logging.getLogger()
     logger.setLevel(10)
@@ -27,10 +28,17 @@ def main():
     )
     args = parser.parse_args()
     mega = Mega()
-    mega.login(email=os.getenv("EMAIL"), password=os.getenv("PASS"))
+    email = os.getenv("EMAIL")
+    password = os.getenv("PASS")
+    await mega.login(email, password)
     download_url: str = args.url
     output_dir: str = args.output_dir
-    mega.download_url(url=download_url, dest_path=output_dir)
+    await mega.download_url(url=download_url, dest_path=output_dir)
+    await mega.close()
+
+
+def main():
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

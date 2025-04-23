@@ -5,7 +5,7 @@ import random
 import string
 from typing import TYPE_CHECKING, Any
 
-import requests
+from aiohttp import ClientSession
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from mega.crypto import random_u32int
@@ -34,13 +34,17 @@ class MegaApi:
         self.request_id: str = "".join(random.choice(VALID_REQUEST_ID_CHARS) for _ in range(10))
         self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0"
         self.default_headers = {"Content-Type": "application/json", "User-Agent": self.user_agent}
+        self.session = ClientSession()
+
+    async def close(self):
+        await self.session.close()
 
     @property
     def entrypoint(self) -> str:
         return f"{self.schema}://{self.api_domain}/cs"
 
     @retry(retry=retry_if_exception_type(RuntimeError), wait=wait_exponential(multiplier=2, min=2, max=60))
-    def request(self, data_input: list[AnyDict] | AnyDict, add_params: AnyDict | None = None) -> Any:
+    async def request(self, data_input: list[AnyDict] | AnyDict, add_params: AnyDict | None = None) -> Any:
         add_params = add_params or {}
 
         params: AnyDict = {"id": self.sequence_num} | add_params
@@ -55,7 +59,7 @@ class MegaApi:
         else:
             data: list[AnyDict] = data_input
 
-        response = requests.post(
+        response = await self.session.post(
             self.entrypoint, params=params, json=data, timeout=self.timeout, headers=self.default_headers
         )
 
@@ -69,14 +73,16 @@ class MegaApi:
             logger.info("Solving xhashcash login challenge, this could take a few seconds...")
             xhashcash_token = generate_hashcash_token(xhashcash_challenge)
             headers = self.default_headers | {"X-Hashcash": xhashcash_token}
-            response = requests.post(self.entrypoint, params=params, json=data, timeout=self.timeout, headers=headers)
+            response = await self.session.post(
+                self.entrypoint, params=params, json=data, timeout=self.timeout, headers=headers
+            )
 
         if xhashcash_challenge := response.headers.get("X-Hashcash"):
             # Computed token failed
             msg = f"Login failed. Mega requested a proof of work with xhashcash: {xhashcash_challenge}"
             raise RequestError(msg)
 
-        json_resp: list[Any] | list[int] | int = response.json()
+        json_resp: list[Any] | list[int] | int = await response.json()
 
         def handle_int_resp(int_resp: int):
             if int_resp == 0:

@@ -9,6 +9,7 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP"
 ]
 dependencies = [
+    "aiohttp>=3.11.18",
     "pycryptodome==3.9.6",
     "requests>=2.32.3",
     "rich>=13.0.0",

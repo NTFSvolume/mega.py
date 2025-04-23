@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import os
@@ -10,7 +11,6 @@ import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
-import requests
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
@@ -56,7 +56,7 @@ from mega.data_structures import (
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import AsyncGenerator, Generator
 
 logger = logging.getLogger(__name__)
 
@@ -83,12 +83,15 @@ class Mega:
         self.inbox_id: str = ""
         self.trashbin_id: str = ""
 
-    def login(self, email: str | None = None, password: str | None = None):
+    async def close(self):
+        await self.api.close()
+
+    async def login(self, email: str | None = None, password: str | None = None):
         if email and password:
-            self._login_user(email, password)
+            await self._login_user(email, password)
         else:
-            self.login_anonymous()
-        _ = self.get_files()  # This is to set the special folders id
+            await self.login_anonymous()
+        _ = await self.get_files()  # This is to set the special folders id
         self.logged_in = True
         logger.info(f"Special folders: root: {self.root_id} inbox: {self.inbox_id} trash_bin: {self.trashbin_id}")
         logger.info("Login complete")
@@ -119,10 +122,10 @@ class Mega:
             sid = base64_url_encode(sid_bytes[:43])
             self.api.sid = sid
 
-    def _login_user(self, email: str, password: str) -> None:
+    async def _login_user(self, email: str, password: str) -> None:
         logger.info("Logging in user...")
         email = email.lower()
-        get_user_salt_resp: dict = self.api.request(
+        get_user_salt_resp: dict = await self.api.request(
             {
                 "a": "us0",
                 "user": email,
@@ -147,7 +150,7 @@ class Mega:
             password_aes = prepare_key(str_to_a32(password))
             user_hash = make_hash(email, password_aes)
 
-        resp = self.api.request(
+        resp = await self.api.request(
             {
                 "a": "us",
                 "user": email,
@@ -156,13 +159,13 @@ class Mega:
         )
         self._process_login(resp, password_aes)
 
-    def login_anonymous(self):
+    async def login_anonymous(self) -> None:
         logger.info("Logging in anonymous temporary user...")
         master_key = [random_u32int()] * 4
         password_key = [random_u32int()] * 4
         session_self_challenge = [random_u32int()] * 4
 
-        user: str = self.api.request(
+        user: str = await self.api.request(
             {
                 "a": "up",
                 "k": a32_to_base64(encrypt_key(master_key, password_key)),
@@ -172,7 +175,7 @@ class Mega:
             }
         )
 
-        resp = self.api.request(
+        resp = await self.api.request(
             {
                 "a": "us",
                 "user": user,
@@ -286,27 +289,29 @@ class Mega:
                 shared_keys[s_item["u"]][s_item["h"]] = shared_key[s_item["h"]]
         self.shared_keys = shared_keys
 
-    def find(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> FileOrFolder | None:
+    async def find(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> FileOrFolder | None:
         """
         Return file object(s) from given filename or path
         """
-        results = self._search(filename_or_path, exclude_deleted, strict=True)
+        results = await self._search(filename_or_path, exclude_deleted, strict=True)
         return results[0] if results else None
 
-    def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[FileOrFolder]:
+    async def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[FileOrFolder]:
         """
         Return file object(s) from given filename or path
         """
-        return self._search(filename_or_path, exclude_deleted)
+        return await self._search(filename_or_path, exclude_deleted)
 
-    def _search(self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False) -> list[FileOrFolder]:
+    async def _search(
+        self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False
+    ) -> list[FileOrFolder]:
         """
         Return file object(s) from given filename or path
         """
 
         filename_or_path = str(filename_or_path)
 
-        fs = self.build_file_system()
+        fs = await self.build_file_system()
 
         found = []
         for path, item in fs.items():
@@ -318,22 +323,22 @@ class Mega:
                 found.append(item)
         return found
 
-    def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> FileOrFolder | None:
+    async def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> FileOrFolder | None:
         """Return file object(s) from given filename or path"""
-        files = self.get_files()
+        files = await self.get_files()
         return found if (found := files.get(handle)) else None
 
-    def get_files(self) -> FilesMapping:
+    async def get_files(self) -> FilesMapping:
         logger.info("Getting all files...")
         files_dict: FilesMapping = {}
-        for node in self._get_nodes():
+        async for node in self._get_nodes():
             if node["attributes"]:
                 file = cast(File, node)
                 files_dict[file["h"]] = file
         return files_dict
 
-    def _get_nodes(self) -> Generator[Node]:
-        files: Folder = self.api.request(
+    async def _get_nodes(self) -> AsyncGenerator[Node]:
+        files: Folder = await self.api.request(
             {
                 "a": "f",
                 "c": 1,
@@ -345,8 +350,8 @@ class Mega:
         for node in files["f"]:
             yield self._process_node(node, shared_keys)
 
-    def _get_nodes_in_shared_folder(self, folder_id: str) -> Generator[Node]:
-        files: Folder = self.api.request(
+    async def _get_nodes_in_shared_folder(self, folder_id: str) -> AsyncGenerator[Node]:
+        files: Folder = await self.api.request(
             {
                 "a": "f",
                 "c": 1,
@@ -370,7 +375,7 @@ class Mega:
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
 
-    def get_upload_link(self, folder: Folder) -> str:
+    async def get_upload_link(self, folder: Folder) -> str:
         """
         Get a files public link inc. decrypted key
         Requires upload() response as input
@@ -379,7 +384,7 @@ class Mega:
             raise ValueError("""Upload() response required as input, use get_link() for regular file input""")
 
         file = folder["f"][0]
-        public_handle: str = self.api.request(
+        public_handle: str = await self.api.request(
             {
                 "a": "l",
                 "n": file["h"],
@@ -389,7 +394,7 @@ class Mega:
         decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self.master_key))
         return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
 
-    def get_link(self, file: FileOrFolder) -> str:
+    async def get_link(self, file: FileOrFolder) -> str:
         """
         Get a file public link from given file object
         """
@@ -397,21 +402,21 @@ class Mega:
         if not ("h" in file and "key_decrypted" in file):
             raise ValidationError("File id and key must be present")
 
-        public_handle: str = self._get_public_handle(file)
+        public_handle: str = await self._get_public_handle(file)
         decrypted_key = a32_to_base64(file["key_decrypted"])
         return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
 
-    def get_folder_link(self, folder: FileOrFolder) -> str:
+    async def get_folder_link(self, folder: FileOrFolder) -> str:
         if not ("h" in folder and "sk_decrypted" in folder):
             raise ValidationError("Folder id and key must be present")
 
-        public_handle: str = self._get_public_handle(folder)
+        public_handle: str = await self._get_public_handle(folder)
         decrypted_key = a32_to_base64(folder["sk_decrypted"])
         return f"{self.primary_url}/#F!{public_handle}!{decrypted_key}"
 
-    def _get_public_handle(self, file: FileOrFolder) -> str:
+    async def _get_public_handle(self, file: FileOrFolder) -> str:
         try:
-            public_handle: str = self.api.request(
+            public_handle: str = await self.api.request(
                 {
                     "a": "l",
                     "n": file["h"],
@@ -424,15 +429,15 @@ class Mega:
         else:
             return public_handle
 
-    def get_user(self) -> AnyDict:
-        user_data: AnyDict = self.api.request(
+    async def get_user(self) -> AnyDict:
+        user_data: AnyDict = await self.api.request(
             {
                 "a": "ug",
             }
         )
         return user_data
 
-    def get_node_by_type(self, node_type: NodeType | int) -> Node | None:
+    async def get_node_by_type(self, node_type: NodeType | int) -> Node | None:
         """
         Get a node by it's numeric type id, e.g:
         0: file
@@ -441,17 +446,17 @@ class Mega:
         3: special: inbox
         4: special trash bin
         """
-        nodes = self.get_files()
+        nodes = await self.get_files()
         for _, node in nodes.items():
             if node["t"] == node_type:
                 return node
 
-    def get_files_in_node(self, target: NodeType | str) -> FilesMapping:
+    async def get_files_in_node(self, target: NodeType | str) -> FilesMapping:
         """
         Get all files in a given target, e.g. 4=trash
         """
         node_id = target
-        folder: Folder = self.api.request(
+        folder: Folder = await self.api.request(
             {
                 "a": "f",
                 "c": 1,
@@ -466,9 +471,9 @@ class Mega:
                 files_dict[file["h"]] = processed_file
         return files_dict
 
-    def get_id_from_public_handle(self, public_handle: str) -> str:
+    async def get_id_from_public_handle(self, public_handle: str) -> str:
         # get node data
-        node_data: Folder = self.api.request(
+        node_data: Folder = await self.api.request(
             {
                 "a": "f",
                 "f": 1,
@@ -489,9 +494,9 @@ class Mega:
         assert node_id
         return node_id
 
-    def get_quota(self) -> int:
+    async def get_quota(self) -> int:
         """Get current remaining disk quota."""
-        json_resp: AnyDict = self.api.request(
+        json_resp: AnyDict = await self.api.request(
             {
                 "a": "uq",  # Action: user quota
                 "xfer": 1,
@@ -501,7 +506,7 @@ class Mega:
         )
         return json_resp["mstrg"]
 
-    def get_storage_space(self) -> StorageUsage:
+    async def get_storage_space(self) -> StorageUsage:
         """
         Get the current storage space.
         Return a dict containing at least:
@@ -509,7 +514,7 @@ class Mega:
           'total' : the maximum space allowed with current plan
         All storage space are in bytes unless asked differently.
         """
-        json_resp: AnyDict = self.api.request(
+        json_resp: AnyDict = await self.api.request(
             {
                 "a": "uq",
                 "xfer": 1,
@@ -518,9 +523,9 @@ class Mega:
         )
         return StorageUsage(json_resp["cstrg"], json_resp["mstrg"])
 
-    def get_balance(self) -> int | None:
+    async def get_balance(self) -> int | None:
         """Get account monetary balance, Pro accounts only."""
-        user_data: AnyDict = self.api.request(
+        user_data: AnyDict = await self.api.request(
             {
                 "a": "uq",
                 "pro": 1,
@@ -528,19 +533,19 @@ class Mega:
         )
         return user_data.get("balance")
 
-    def delete(self, public_handle: str) -> AnyDict:
+    async def delete(self, public_handle: str) -> AnyDict:
         """Delete a file by its public handle."""
-        return self.move(public_handle, NodeType.TRASH)
+        return await self.move(public_handle, NodeType.TRASH)
 
-    def delete_url(self, url: str) -> AnyDict:
+    async def delete_url(self, url: str) -> AnyDict:
         """Delete a file by its url"""
         public_handle, _ = self._parse_url(url).split("!")
-        file_id = self.get_id_from_public_handle(public_handle)
-        return self.move(file_id, NodeType.TRASH)
+        file_id = await self.get_id_from_public_handle(public_handle)
+        return await self.move(file_id, NodeType.TRASH)
 
-    def destroy(self, file_id: str) -> AnyDict:
+    async def destroy(self, file_id: str) -> AnyDict:
         """Destroy a file by its private id (bypass trash bin)"""
-        return self.api.request(
+        return await self.api.request(
             {
                 "a": "d",  # Action: delete
                 "n": file_id,  # Node: file Id
@@ -548,16 +553,16 @@ class Mega:
             }
         )
 
-    def destroy_url(self, url: str) -> AnyDict:
+    async def destroy_url(self, url: str) -> AnyDict:
         """Destroy a file by its url (bypass trash bin)"""
         public_handle, *_ = self._parse_url(url).split("!")
-        file_id = self.get_id_from_public_handle(public_handle)
-        return self.destroy(file_id)
+        file_id = await self.get_id_from_public_handle(public_handle)
+        return await self.destroy(file_id)
 
-    def empty_trash(self) -> AnyDict | None:
+    async def empty_trash(self) -> AnyDict | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
         # get list of files in rubbish out
-        files = self.get_files_in_node(NodeType.TRASH)
+        files = await self.get_files_in_node(NodeType.TRASH)
 
         # make a list of json
         if files != {}:
@@ -570,13 +575,13 @@ class Mega:
                         "i": self.api.request_id,  # Request Id
                     }
                 )
-            return self.api.request(post_list)
+            return await self.api.request(post_list)
 
-    def download(
+    async def download(
         self, file: FileOrFolder | None, dest_path: str | None = None, dest_filename: str | None = None
     ) -> Path:
         """Download a file by it's file object."""
-        return self._download_file(
+        return await self._download_file(
             file_handle=None,
             file_key=None,
             file=file,
@@ -585,8 +590,8 @@ class Mega:
             is_public=False,
         )
 
-    def _export_file(self, node: FileOrFolder) -> str:
-        self.api.request(
+    async def _export_file(self, node: FileOrFolder) -> str:
+        await self.api.request(
             [
                 {
                     "a": "l",  # Action: Export file
@@ -595,15 +600,15 @@ class Mega:
                 }
             ]
         )
-        return self.get_link(node)
+        return await self.get_link(node)
 
-    def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
-        files = self.get_files()
+    async def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
+        files = await self.get_files()
         if node_id:
             _node_id = node_id
             file: FileOrFolder = files[_node_id]
         elif path:
-            found = self.find(path)
+            found = await self.find(path)
             if not found:
                 raise ValueError
             file = found
@@ -611,12 +616,12 @@ class Mega:
             raise ValueError
 
         if file["t"] == NodeType.FILE:
-            return self._export_file(file)
+            return await self._export_file(file)
 
         if file:
             try:
                 # If already exported
-                return self.get_folder_link(file)
+                return await self.get_folder_link(file)
             except (RequestError, KeyError):
                 pass
 
@@ -631,7 +636,7 @@ class Mega:
         encrypted_node_key = base64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
 
         _node_id: str = file["h"]
-        self.api.request(
+        await self.api.request(
             {
                 "a": "s2",
                 "n": _node_id,
@@ -647,15 +652,15 @@ class Mega:
                 "cr": [[_node_id], [_node_id], [0, 0, encrypted_node_key]],
             }
         )
-        files = self.get_files()
-        return self.get_folder_link(files[_node_id])
+        files = await self.get_files()
+        return await self.get_folder_link(files[_node_id])
 
-    def download_url(self, url: str, dest_path: str | None = None, dest_filename: str | None = None) -> Path:
+    async def download_url(self, url: str, dest_path: str | None = None, dest_filename: str | None = None) -> Path:
         """
         Download a file by it's public url
         """
         file_id, file_key = self._parse_url(url).split("!", 1)
-        return self._download_file(
+        return await self._download_file(
             file_handle=file_id,
             file_key=file_key,
             dest_path=dest_path,
@@ -663,12 +668,12 @@ class Mega:
             is_public=True,
         )
 
-    def get_nodes_public_folder(self, url: str) -> dict[str, FileOrFolder]:
+    async def get_nodes_public_folder(self, url: str) -> dict[str, FileOrFolder]:
         folder_id, b64_share_key = self._parse_folder_url(url)
         shared_key = base64_to_a32(b64_share_key)
 
-        def prepare_nodes():
-            for node in self._get_nodes_in_shared_folder(folder_id):
+        async def prepare_nodes():
+            async for node in self._get_nodes_in_shared_folder(folder_id):
                 node = cast(FileOrFolder, node)
                 encrypted_key = base64_to_a32(node["k"].split(":")[1])
                 key = decrypt_key(encrypted_key, shared_key)
@@ -687,11 +692,11 @@ class Mega:
                 node["meta_mac"] = meta_mac
                 yield node
 
-        nodes = {node["h"]: node for node in prepare_nodes()}
+        nodes = {node["h"]: node async for node in prepare_nodes()}
         return nodes
 
-    def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
-        nodes = self.get_nodes_public_folder(url)
+    async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
+        nodes = await self.get_nodes_public_folder(url)
         downloaded: list[Path] = []
         root_id = next(iter(nodes))
 
@@ -701,7 +706,7 @@ class Mega:
                     continue
 
                 file = cast(File, node)
-                file_data = self.api.request(
+                file_data = await self.api.request(
                     {
                         "a": "g",
                         "g": 1,
@@ -715,7 +720,7 @@ class Mega:
                 if dest_path:
                     path = Path(dest_path) / path
 
-                result = self._really_download_file(
+                result = await self._really_download_file(
                     file_url,
                     path,
                     file_size,
@@ -726,7 +731,7 @@ class Mega:
                 downloaded.append(result)
         return downloaded
 
-    def _download_file(
+    async def _download_file(
         self,
         file_handle: str | None = None,
         file_key: TupleArray | str | None = None,
@@ -742,7 +747,7 @@ class Mega:
             else:
                 _file_key = file_key
 
-            file_data: File = self.api.request(
+            file_data: File = await self.api.request(
                 {
                     "a": "g",
                     "g": 1,
@@ -759,7 +764,7 @@ class Mega:
             iv: AnyArray = _file_key[4:6] + (0, 0)
             meta_mac: TupleArray = _file_key[6:8]
         else:
-            file_data = self.api.request(
+            file_data = await self.api.request(
                 {
                     "a": "g",
                     "g": 1,
@@ -795,9 +800,9 @@ class Mega:
         output_path = Path(dest_path + file_name)
 
         with self.progress:
-            return self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
+            return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
 
-    def _really_download_file(
+    async def _really_download_file(
         self,
         direct_file_url: str,
         output_path: Path,
@@ -806,20 +811,19 @@ class Mega:
         meta_mac: TupleArray,
         k_decrypted: TupleArray,
     ):
-        input_file = requests.get(direct_file_url, stream=True).raw
-
         with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
             task_id = self.progress.add_task(output_path.name, total=file_size)
             chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
             _ = next(chunk_decryptor)  # Prime chunk decryptor
             bytes_written: int = 0
-            for _, chunk_size in get_chunks(file_size):
-                raw_chunk = input_file.read(chunk_size)
-                decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
-                actual_size = len(decrypted_chunk)
-                bytes_written += actual_size
-                temp_output_file.write(decrypted_chunk)
-                self.progress.advance(task_id, actual_size)
+            async with self.api.session.get(direct_file_url) as response:
+                for _, chunk_size in get_chunks(file_size):
+                    raw_chunk = await response.content.readexactly(chunk_size)
+                    decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
+                    actual_size = len(decrypted_chunk)
+                    bytes_written += actual_size
+                    temp_output_file.write(decrypted_chunk)
+                    self.progress.advance(task_id, actual_size)
 
         try:
             # Stop chunk decryptor and do a mac integrity check
@@ -828,8 +832,8 @@ class Mega:
             pass
         finally:
             self.progress.remove_task(task_id)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(temp_output_file.name, output_path)
+        await asyncio.to_thread(output_path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(shutil.move, temp_output_file.name, output_path)
         return output_path
 
     def _decrypt_chunks(
@@ -889,17 +893,19 @@ class Mega:
         if computed_mac != meta_mac:
             raise RuntimeError("Mismatched mac")
 
-    def upload(self, filename: str, dest: str | None = None, dest_filename: str | None = None) -> Folder:
+    async def upload(self, filename: str, dest: str | None = None, dest_filename: str | None = None) -> Folder:
         # determine storage node
         dest = dest or self.root_id
         # request upload url, call 'u' method
         with open(filename, "rb") as input_file:
             file_size = os.path.getsize(filename)
-            ul_url: str = self.api.request(
-                {
-                    "a": "u",
-                    "s": file_size,
-                }
+            ul_url: str = (
+                await self.api.request(
+                    {
+                        "a": "u",
+                        "s": file_size,
+                    }
+                )
             )["p"]
 
             # generate random aes key (128) for file, 192 bits of random data
@@ -940,13 +946,15 @@ class Mega:
 
                     # encrypt file and upload
                     chunk = aes.encrypt(chunk)
-                    output_file = requests.post(ul_url + "/" + str(chunk_start), data=chunk, timeout=self.api.timeout)
-                    completion_file_handle = output_file.text
+                    output_file = await self.api.session.post(
+                        ul_url + "/" + str(chunk_start), data=chunk, timeout=self.api.timeout
+                    )
+                    completion_file_handle = await output_file.text()
                     logger.info("%s of %s uploaded", upload_progress, file_size)
             else:
                 # empty file
-                output_file = requests.post(ul_url + "/0", data="", timeout=self.api.timeout)
-                completion_file_handle = output_file.text
+                output_file = await self.api.session.post(ul_url + "/0", data="", timeout=self.api.timeout)
+                completion_file_handle = await output_file.text()
 
             logger.info("Chunks uploaded")
             logger.info("Setting attributes to complete upload")
@@ -973,7 +981,7 @@ class Mega:
             encrypted_key = a32_to_base64(encrypt_key(key, self.master_key))
             logger.info("Sending request to update attributes")
             # update attributes
-            data: Folder = self.api.request(
+            data: Folder = await self.api.request(
                 {
                     "a": "p",
                     "t": dest,
@@ -984,7 +992,7 @@ class Mega:
             logger.info("Upload complete")
             return data
 
-    def _mkdir(self, name: str, parent_node_id: str) -> AnyDict:
+    async def _mkdir(self, name: str, parent_node_id: str) -> AnyDict:
         # generate random aes key (128) for folder
         ul_key = [random_u32int() for _ in range(6)]
 
@@ -994,7 +1002,7 @@ class Mega:
         encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self.master_key))
 
         # update attributes
-        data: AnyDict = self.api.request(
+        data: AnyDict = await self.api.request(
             {
                 "a": "p",
                 "t": parent_node_id,
@@ -1004,29 +1012,29 @@ class Mega:
         )
         return data
 
-    def create_folder(self, path: Path | str) -> AnyDict:
+    async def create_folder(self, path: Path | str) -> AnyDict:
         path = Path(path)
-        last_parent = self.find_by_handle(self.root_id)
+        last_parent = await self.find_by_handle(self.root_id)
         assert last_parent
         for parent in reversed(path.parents):
-            node = self.find(parent, exclude_deleted=True)
+            node = await self.find(parent, exclude_deleted=True)
             if node:
                 last_parent = node
             else:
-                created_node = self._mkdir(name=parent.name, parent_node_id=last_parent["h"])
+                created_node = await self._mkdir(name=parent.name, parent_node_id=last_parent["h"])
                 last_parent = created_node["f"][0]
 
-        actual_node = self._mkdir(name=path.name, parent_node_id=last_parent["h"])
+        actual_node = await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
         return actual_node
 
-    def rename(self, file: FileOrFolder, new_name: str) -> AnyDict:
+    async def rename(self, file: FileOrFolder, new_name: str) -> AnyDict:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
         encrypt_attribs = base64_url_encode(encrypt_attr(attribs, file["k_decrypted"]))
         encrypted_key = a32_to_base64(encrypt_key(file["key_decrypted"], self.master_key))
         # update attributes
-        return self.api.request(
+        return await self.api.request(
             {
                 "a": "a",
                 "attr": encrypt_attribs,
@@ -1036,7 +1044,7 @@ class Mega:
             }
         )
 
-    def move(self, file_id: str, target: Folder | NodeType | str) -> AnyDict:
+    async def move(self, file_id: str, target: Folder | NodeType | str) -> AnyDict:
         """
         Move a file to another parent node
         params:
@@ -1057,13 +1065,13 @@ class Mega:
         """
 
         if isinstance(target, int):
-            result = self.get_node_by_type(target)
+            result = await self.get_node_by_type(target)
             if not result:
                 raise MegaNzError(f"Node type {target} does not exists")
             target_node_id = result["h"]
         else:
             target_node_id = target
-        return self.api.request(
+        return await self.api.request(
             {
                 "a": "m",
                 "n": file_id,
@@ -1072,19 +1080,19 @@ class Mega:
             }
         )
 
-    def add_contact(self, email: str) -> AnyDict:
+    async def add_contact(self, email: str) -> AnyDict:
         """
         Add another user to your mega contact list
         """
-        return self._edit_contact(email, True)
+        return await self._edit_contact(email, True)
 
-    def remove_contact(self, email: str) -> AnyDict:
+    async def remove_contact(self, email: str) -> AnyDict:
         """
         Remove a user to your mega contact list
         """
-        return self._edit_contact(email, False)
+        return await self._edit_contact(email, False)
 
-    def _edit_contact(self, email: str, add: bool) -> AnyDict:
+    async def _edit_contact(self, email: str, add: bool) -> AnyDict:
         """
         Editing contacts
         """
@@ -1098,7 +1106,7 @@ class Mega:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             raise ValidationError("add_contact requires a valid email address")
         else:
-            return self.api.request(
+            return await self.api.request(
                 {
                     "a": "ur",
                     "u": email,
@@ -1107,27 +1115,27 @@ class Mega:
                 }
             )
 
-    def get_public_url_info(self, url: str) -> AnyDict | None:
+    async def get_public_url_info(self, url: str) -> AnyDict | None:
         """
         Get size and name from a public url, dict returned
         """
         file_handle, file_key = self._parse_url(url).split("!")
-        return self.get_public_file_info(file_handle, file_key)
+        return await self.get_public_file_info(file_handle, file_key)
 
-    def import_public_url(
+    async def import_public_url(
         self, url: str, dest_node: FileOrFolder | str | None = None, dest_name: str | None = None
     ) -> Folder:
         """
         Import the public url into user account
         """
         file_handle, file_key = self._parse_url(url).split("!")
-        return self.import_public_file(file_handle, file_key, dest_node=dest_node, dest_name=dest_name)
+        return await self.import_public_file(file_handle, file_key, dest_node=dest_node, dest_name=dest_name)
 
-    def get_public_file_info(self, file_handle: str, file_key: str) -> AnyDict | None:
+    async def get_public_file_info(self, file_handle: str, file_key: str) -> AnyDict | None:
         """
         Get size and name of a public file
         """
-        data: Folder = self.api.request(
+        data: Folder = await self.api.request(
             {
                 "a": "g",
                 "p": file_handle,
@@ -1147,7 +1155,7 @@ class Mega:
         result = {"size": size, "name": unencrypted_attrs["n"]}
         return result
 
-    def import_public_file(
+    async def import_public_file(
         self,
         file_handle: str,
         file_key: str,
@@ -1171,7 +1179,7 @@ class Mega:
 
         # Providing dest_name spares an API call to retrieve it.
         if dest_name is None:
-            pl_info = self.get_public_file_info(file_handle, file_key)
+            pl_info = await self.get_public_file_info(file_handle, file_key)
             assert pl_info
             dest_name = pl_info["name"]
 
@@ -1180,7 +1188,7 @@ class Mega:
 
         encrypted_key: str = a32_to_base64(encrypt_key(key, self.master_key))
         encrypted_name: str = base64_url_encode(encrypt_attr({"n": dest_name}, k))
-        return self.api.request(
+        return await self.api.request(
             {
                 "a": "p",
                 "t": dest_node_id,
@@ -1195,9 +1203,9 @@ class Mega:
             }
         )
 
-    def build_file_system(self) -> dict[Path, Node]:
+    async def build_file_system(self) -> dict[Path, Node]:
         special_folders_id = [self.root_id, self.inbox_id, self.trashbin_id]
-        nodes_map = {node["h"]: node for node in self._get_nodes()}
+        nodes_map = {node["h"]: node async for node in self._get_nodes()}
         return self._build_file_system(nodes_map, special_folders_id)
 
     def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
