@@ -663,7 +663,7 @@ class Mega:
             is_public=True,
         )
 
-    def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
+    def get_nodes_public_folder(self, url: str) -> dict[str, FileOrFolder]:
         folder_id, b64_share_key = self._parse_folder_url(url)
         shared_key = base64_to_a32(b64_share_key)
 
@@ -688,6 +688,10 @@ class Mega:
                 yield node
 
         nodes = {node["h"]: node for node in prepare_nodes()}
+        return nodes
+
+    def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
+        nodes = self.get_nodes_public_folder(url)
         downloaded: list[Path] = []
         root_id = next(iter(nodes))
 
