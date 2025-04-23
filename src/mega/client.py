@@ -334,6 +334,36 @@ class Mega:
         for node in files["f"]:
             yield self._process_node(node, shared_keys)
 
+    def _get_nodes_in_shared_folder(self, folder_id: str) -> Generator[Node]:
+        files: Folder = self.api.request(
+            {
+                "a": "f",
+                "c": 1,
+                "ca": 1,
+                "r": 1,
+            },
+            {
+                "n": folder_id,
+            },
+        )
+        for node in files["f"]:
+            yield self._process_node(node, self.shared_keys)
+
+    def _parse_folder_url(self, url: str) -> tuple[str, str]:
+        "Returns (public_handle, key) if valid. If not returns None."
+        REGEXP1 = re.compile(r"mega.[^/]+/folder/([0-z-_]+)#([0-z-_]+)(?:/folder/([0-z-_]+))*")
+        REGEXP2 = re.compile(r"mega.[^/]+/#F!([0-z-_]+)[!#]([0-z-_]+)(?:/folder/([0-z-_]+))*")
+        m = re.search(REGEXP1, url)
+        if not m:
+            m = re.search(REGEXP2, url)
+        if not m:
+            raise ValidationError("Not a valid folder URL")
+        root_folder = m.group(1)
+        key = m.group(2)
+        # You may want to use m.groups()[-1]
+        # to get the id of the subfolder
+        return (root_folder, key)
+
     def get_upload_link(self, folder: Folder) -> str:
         """
         Get a files public link inc. decrypted key
@@ -619,6 +649,29 @@ class Mega:
             dest_filename=dest_filename,
             is_public=True,
         )
+
+    def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
+        folder_id, b64_share_key = self._parse_folder_url(url)
+        shared_key = base64_to_a32(b64_share_key)
+        nodes = self._get_nodes_in_shared_folder(folder_id)
+        downloaded: list[Path] = []
+        for path, node in self._build_file_system(nodes).items():
+            if node["t"] != NodeType.FILE:
+                continue
+
+            file = cast(File, node)
+            if dest_path:
+                path = Path(dest_path) / path
+
+            node_key = base64_to_a32(file["k"].split(":")[-1])
+            key: TupleArray = decrypt_key(node_key, shared_key)
+            k: TupleArray = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
+            file["k_decrypted"] = k
+            file["iv"] = key[4:6] + (0, 0)
+            file["meta_mac"] = key[6:8]
+            result = self._download_file(file=file, dest_path=str(path.parent), dest_filename=path.name)
+            downloaded.append(result)
+        return downloaded
 
     def _download_file(
         self,
@@ -1023,6 +1076,9 @@ class Mega:
         )
 
     def build_file_system(self) -> dict[Path, Node]:
+        return self._build_file_system(self._get_nodes())
+
+    def _build_file_system(self, nodes_gen: Generator[Node]) -> dict[Path, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
 
         Returns:
@@ -1031,7 +1087,7 @@ class Mega:
         if not self.logged_in:
             raise MegaNzError("You must log in to build your file system")
 
-        nodes = {node["h"]: node for node in self._get_nodes()}
+        nodes = {node["h"]: node for node in nodes_gen}
         path_mapping: dict[Path, Node] = {}
         parents_mapping: dict[str, list[Node]] = {}
 

@@ -40,8 +40,10 @@ class MegaApi:
         return f"{self.schema}://{self.api_domain}/cs"
 
     @retry(retry=retry_if_exception_type(RuntimeError), wait=wait_exponential(multiplier=2, min=2, max=60))
-    def request(self, data_input: list[AnyDict] | AnyDict) -> Any:
-        params: AnyDict = {"id": self.sequence_num}
+    def request(self, data_input: list[AnyDict] | AnyDict, add_params: AnyDict | None = None) -> Any:
+        add_params = add_params or {}
+
+        params: AnyDict = {"id": self.sequence_num} | add_params
         self.sequence_num += 1
 
         if self.sid:
