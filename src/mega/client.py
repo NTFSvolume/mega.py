@@ -475,26 +475,25 @@ class Mega:
                 "p": public_handle,
             }
         )
-        node_id = self.get_id_from_obj(node_data)
+
+        def get_id_from_obj() -> str | None:
+            """
+            Get node id from a file object
+            """
+
+            for i in node_data["f"]:
+                if i["h"] != "":
+                    return i["h"]
+
+        node_id = get_id_from_obj()
         assert node_id
         return node_id
 
-    def get_id_from_obj(self, node_data: Folder) -> str | None:
-        """
-        Get node id from a file object
-        """
-
-        for i in node_data["f"]:
-            if i["h"] != "":
-                return i["h"]
-
     def get_quota(self) -> int:
-        """
-        Get current remaining disk quota in MegaBytes
-        """
+        """Get current remaining disk quota."""
         json_resp: AnyDict = self.api.request(
             {
-                "a": "uq",
+                "a": "uq",  # Action: user quota
                 "xfer": 1,
                 "strg": 1,
                 "v": 1,
@@ -520,9 +519,7 @@ class Mega:
         return StorageUsage(json_resp["cstrg"], json_resp["mstrg"])
 
     def get_balance(self) -> int | None:
-        """
-        Get account monetary balance, Pro accounts only
-        """
+        """Get account monetary balance, Pro accounts only."""
         user_data: AnyDict = self.api.request(
             {
                 "a": "uq",
@@ -532,40 +529,33 @@ class Mega:
         return user_data.get("balance")
 
     def delete(self, public_handle: str) -> AnyDict:
-        """
-        Delete a file by its public handle
-        """
+        """Delete a file by its public handle."""
         return self.move(public_handle, NodeType.TRASH)
 
     def delete_url(self, url: str) -> AnyDict:
-        """
-        Delete a file by its url
-        """
+        """Delete a file by its url"""
         public_handle, _ = self._parse_url(url).split("!")
         file_id = self.get_id_from_public_handle(public_handle)
         return self.move(file_id, NodeType.TRASH)
 
     def destroy(self, file_id: str) -> AnyDict:
-        """
-        Destroy a file by its private id
-        """
+        """Destroy a file by its private id (bypass trash bin)"""
         return self.api.request(
             {
-                "a": "d",
-                "n": file_id,
-                "i": self.api.request_id,
+                "a": "d",  # Action: delete
+                "n": file_id,  # Node: file Id
+                "i": self.api.request_id,  # Request Id
             }
         )
 
     def destroy_url(self, url: str) -> AnyDict:
-        """
-        Destroy a file by its url
-        """
+        """Destroy a file by its url (bypass trash bin)"""
         public_handle, *_ = self._parse_url(url).split("!")
         file_id = self.get_id_from_public_handle(public_handle)
         return self.destroy(file_id)
 
     def empty_trash(self) -> AnyDict | None:
+        """Deletes all file in the trash bin. Returns None if the trash was already empty"""
         # get list of files in rubbish out
         files = self.get_files_in_node(NodeType.TRASH)
 
@@ -575,9 +565,9 @@ class Mega:
             for file in files:
                 post_list.append(
                     {
-                        "a": "d",
-                        "n": file,
-                        "i": self.api.request_id,
+                        "a": "d",  # Action: delete
+                        "n": file,  # Node: file #Id
+                        "i": self.api.request_id,  # Request Id
                     }
                 )
             return self.api.request(post_list)
@@ -585,9 +575,7 @@ class Mega:
     def download(
         self, file: FileOrFolder | None, dest_path: str | None = None, dest_filename: str | None = None
     ) -> Path:
-        """
-        Download a file by it's file object
-        """
+        """Download a file by it's file object."""
         return self._download_file(
             file_handle=None,
             file_key=None,
@@ -601,9 +589,9 @@ class Mega:
         self.api.request(
             [
                 {
-                    "a": "l",
-                    "n": node["h"],
-                    "i": self.api.request_id,
+                    "a": "l",  # Action: Export file
+                    "n": node["h"],  # Node: file Id
+                    "i": self.api.request_id,  # Request #Id
                 }
             ]
         )
@@ -647,7 +635,12 @@ class Mega:
             {
                 "a": "s2",
                 "n": _node_id,
-                "s": [{"u": "EXP", "r": 0}],
+                "s": [
+                    {
+                        "u": "EXP",  # User: export (AKA public)
+                        "r": 0,
+                    }
+                ],
                 "i": self.api.request_id,
                 "ok": ok,
                 "ha": ha,
