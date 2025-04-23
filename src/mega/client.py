@@ -666,24 +666,60 @@ class Mega:
     def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, b64_share_key = self._parse_folder_url(url)
         shared_key = base64_to_a32(b64_share_key)
-        nodes = self._get_nodes_in_shared_folder(folder_id)
+
+        def prepare_nodes():
+            for node in self._get_nodes_in_shared_folder(folder_id):
+                node = cast(FileOrFolder, node)
+                encrypted_key = base64_to_a32(node["k"].split(":")[1])
+                key = decrypt_key(encrypted_key, shared_key)
+                if node["t"] == NodeType.FILE:
+                    k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
+                elif node["t"] == NodeType.FOLDER:
+                    k = key
+
+                iv: AnyArray = key[4:6] + (0, 0)
+                meta_mac: TupleArray = key[6:8]
+
+                attrs = decrypt_attr(base64_url_decode(node["a"]), k)
+                node["attributes"] = cast(Attributes, attrs)
+                node["k_decrypted"] = k
+                node["iv"] = iv
+                node["meta_mac"] = meta_mac
+                yield node
+
+        nodes = {node["h"]: node for node in prepare_nodes()}
         downloaded: list[Path] = []
-        for path, node in self._build_file_system(nodes).items():
-            if node["t"] != NodeType.FILE:
-                continue
+        root_id = next(iter(nodes))
 
-            file = cast(File, node)
-            if dest_path:
-                path = Path(dest_path) / path
+        with self.progress:
+            for path, node in self._build_file_system(nodes, [root_id]).items():  # type: ignore
+                if node["t"] != NodeType.FILE:
+                    continue
 
-            node_key = base64_to_a32(file["k"].split(":")[-1])
-            key: TupleArray = decrypt_key(node_key, shared_key)
-            k: TupleArray = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
-            file["k_decrypted"] = k
-            file["iv"] = key[4:6] + (0, 0)
-            file["meta_mac"] = key[6:8]
-            result = self._download_file(file=file, dest_path=str(path.parent), dest_filename=path.name)
-            downloaded.append(result)
+                file = cast(File, node)
+                file_data = self.api.request(
+                    {
+                        "a": "g",
+                        "g": 1,
+                        "n": file["h"],
+                    }
+                )
+
+                file_url = file_data["g"]
+                file_size = file_data["s"]
+
+                if dest_path:
+                    path = Path(dest_path) / path
+
+                result = self._really_download_file(
+                    file_url,
+                    path,
+                    file_size,
+                    file["iv"],
+                    file["meta_mac"],
+                    file["k_decrypted"],
+                )
+                downloaded.append(result)
         return downloaded
 
     def _download_file(
@@ -723,7 +759,7 @@ class Mega:
                 {
                     "a": "g",
                     "g": 1,
-                    "n": file["h"],
+                    "p" if is_public else "n": file_handle,
                 }
             )
             k = file["k_decrypted"]
@@ -780,13 +816,15 @@ class Mega:
                 bytes_written += actual_size
                 temp_output_file.write(decrypted_chunk)
                 self.progress.advance(task_id, actual_size)
-                logger.info("%s of %s downloaded", bytes_written, file_size)
 
         try:
             # Stop chunk decryptor and do a mac integrity check
             chunk_decryptor.send(None)  # type: ignore
+        except StopIteration:
+            pass
         finally:
             self.progress.remove_task(task_id)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
         shutil.move(temp_output_file.name, output_path)
         return output_path
 
@@ -1154,9 +1192,11 @@ class Mega:
         )
 
     def build_file_system(self) -> dict[Path, Node]:
-        return self._build_file_system(self._get_nodes())
+        special_folders_id = [self.root_id, self.inbox_id, self.trashbin_id]
+        nodes_map = {node["h"]: node for node in self._get_nodes()}
+        return self._build_file_system(nodes_map, special_folders_id)
 
-    def _build_file_system(self, nodes_gen: Generator[Node]) -> dict[Path, Node]:
+    def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
 
         Returns:
@@ -1165,11 +1205,10 @@ class Mega:
         if not self.logged_in:
             raise MegaNzError("You must log in to build your file system")
 
-        nodes = {node["h"]: node for node in nodes_gen}
         path_mapping: dict[Path, Node] = {}
         parents_mapping: dict[str, list[Node]] = {}
 
-        for _, item in nodes.items():
+        for _, item in nodes_map.items():
             parent_id = item["p"]
             if parent_id not in parents_mapping:
                 parents_mapping[parent_id] = []
@@ -1183,10 +1222,8 @@ class Mega:
                 if item["t"] == NodeType.FOLDER:
                     build_tree(item["h"], item_path)
 
-        special_folders_id = self.root_id, self.inbox_id, self.trashbin_id
-
-        for root_id in special_folders_id:
-            root_item = nodes[root_id]
+        for root_id in root_ids:
+            root_item = nodes_map[root_id]
             name = root_item["attributes"]["n"]
             path = Path(name if name != "Cloud Drive" else ".")
             path_mapping[path] = root_item
