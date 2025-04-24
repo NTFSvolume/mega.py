@@ -697,39 +697,41 @@ class Mega:
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         nodes = await self.get_nodes_public_folder(url)
-        downloaded: list[Path] = []
+        download_tasks = []
         root_id = next(iter(nodes))
 
+        for path, node in self._build_file_system(nodes, [root_id]).items():  # type: ignore
+            if node["t"] != NodeType.FILE:
+                continue
+
+            file = cast(File, node)
+            file_data = await self.api.request(
+                {
+                    "a": "g",
+                    "g": 1,
+                    "n": file["h"],
+                }
+            )
+
+            file_url = file_data["g"]
+            file_size = file_data["s"]
+
+            if dest_path:
+                path = Path(dest_path) / path
+
+            task = self._really_download_file(
+                file_url,
+                path,
+                file_size,
+                file["iv"],
+                file["meta_mac"],
+                file["k_decrypted"],
+            )
+            download_tasks.append(task)
+
         with self.progress:
-            for path, node in self._build_file_system(nodes, [root_id]).items():  # type: ignore
-                if node["t"] != NodeType.FILE:
-                    continue
-
-                file = cast(File, node)
-                file_data = await self.api.request(
-                    {
-                        "a": "g",
-                        "g": 1,
-                        "n": file["h"],
-                    }
-                )
-
-                file_url = file_data["g"]
-                file_size = file_data["s"]
-
-                if dest_path:
-                    path = Path(dest_path) / path
-
-                result = await self._really_download_file(
-                    file_url,
-                    path,
-                    file_size,
-                    file["iv"],
-                    file["meta_mac"],
-                    file["k_decrypted"],
-                )
-                downloaded.append(result)
-        return downloaded
+            results = await asyncio.gather(*download_tasks)
+        return results
 
     async def _download_file(
         self,
