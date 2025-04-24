@@ -10,7 +10,7 @@ classifiers = [
 ]
 dependencies = [
     "aiohttp>=3.11.18",
-    "pycryptodome==3.9.6",
+    "pycryptodome==3.19.0",
     "rich>=13.0.0",
     "tenacity>=9.0.0",
     "typing-extensions>=4.13.2"
