@@ -347,8 +347,10 @@ class Mega:
         )
         shared_keys: SharedkeysDict = {}
         self._init_shared_keys(files, shared_keys)
-        for node in files["f"]:
+        for index, node in enumerate(files["f"], 1):
             yield self._process_node(node, shared_keys)
+            if index % 100 == 0:
+                await asyncio.sleep(0)
 
     async def _get_nodes_in_shared_folder(self, folder_id: str) -> AsyncGenerator[Node]:
         files: Folder = await self.api.request(
@@ -362,8 +364,10 @@ class Mega:
                 "n": folder_id,
             },
         )
-        for node in files["f"]:
+        for index, node in enumerate(files["f"], 1):
             yield self._process_node(node, self.shared_keys)
+            if index % 100 == 0:
+                await asyncio.sleep(0)
 
     def _parse_folder_url(self, url: str) -> tuple[str, str]:
         if "/folder/" in url:
@@ -465,10 +469,12 @@ class Mega:
         files_dict: FilesMapping = {}
         shared_keys: SharedkeysDict = {}
         self._init_shared_keys(folder, shared_keys)
-        for file in folder["f"]:
+        for index, file in enumerate(folder["f"], 1):
             processed_file = cast(FileOrFolder, self._process_node(file, shared_keys))
             if processed_file["a"] and processed_file["p"] == node_id:
                 files_dict[file["h"]] = processed_file
+            if index % 100 == 0:
+                await asyncio.sleep(0)
         return files_dict
 
     async def get_id_from_public_handle(self, public_handle: str) -> str:
@@ -699,35 +705,39 @@ class Mega:
         nodes = await self.get_nodes_public_folder(url)
         download_tasks = []
         root_id = next(iter(nodes))
-
-        for path, node in self._build_file_system(nodes, [root_id]).items():  # type: ignore
+        fs = await self._build_file_system(nodes, [root_id])  # type: ignore
+        for path, node in fs.items():
             if node["t"] != NodeType.FILE:
                 continue
 
+            async def download_file(file: File, file_path: Path):
+                file_data = await self.api.request(
+                    {
+                        "a": "g",
+                        "g": 1,
+                        "n": file["h"],
+                    }
+                )
+
+                file_url = file_data["g"]
+                file_size = file_data["s"]
+
+                if dest_path:
+                    download_path = Path(dest_path) / file_path
+                else:
+                    download_path = file_path
+
+                await self._really_download_file(
+                    file_url,
+                    download_path,
+                    file_size,
+                    file["iv"],
+                    file["meta_mac"],
+                    file["k_decrypted"],
+                )
+
             file = cast(File, node)
-            file_data = await self.api.request(
-                {
-                    "a": "g",
-                    "g": 1,
-                    "n": file["h"],
-                }
-            )
-
-            file_url = file_data["g"]
-            file_size = file_data["s"]
-
-            if dest_path:
-                path = Path(dest_path) / path
-
-            task = self._really_download_file(
-                file_url,
-                path,
-                file_size,
-                file["iv"],
-                file["meta_mac"],
-                file["k_decrypted"],
-            )
-            download_tasks.append(task)
+            download_tasks.append(download_file(file, path))
 
         with self.progress:
             results = await asyncio.gather(*download_tasks)
@@ -1208,9 +1218,9 @@ class Mega:
     async def build_file_system(self) -> dict[Path, Node]:
         special_folders_id = [self.root_id, self.inbox_id, self.trashbin_id]
         nodes_map = {node["h"]: node async for node in self._get_nodes()}
-        return self._build_file_system(nodes_map, special_folders_id)
+        return await self._build_file_system(nodes_map, special_folders_id)
 
-    def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
+    async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
 
         Returns:
@@ -1228,20 +1238,22 @@ class Mega:
                 parents_mapping[parent_id] = []
             parents_mapping[parent_id].append(item)
 
-        def build_tree(parent_id: str, current_path: Path) -> None:
+        async def build_tree(parent_id: str, current_path: Path) -> None:
             for item in parents_mapping.get(parent_id, []):
                 item_path = current_path / item["attributes"]["n"]
                 path_mapping[item_path] = item
 
                 if item["t"] == NodeType.FOLDER:
-                    build_tree(item["h"], item_path)
+                    await build_tree(item["h"], item_path)
+
+            await asyncio.sleep(0)
 
         for root_id in root_ids:
             root_item = nodes_map[root_id]
             name = root_item["attributes"]["n"]
             path = Path(name if name != "Cloud Drive" else ".")
             path_mapping[path] = root_item
-            build_tree(root_id, path)
+            await build_tree(root_id, path)
 
         sorted_mapping = dict(sorted(path_mapping.items()))
         return sorted_mapping
