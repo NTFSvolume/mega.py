@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import logging
 import os
@@ -61,8 +62,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+@contextlib.contextmanager
+def progress_bar(client: Mega):
+    if client._use_progress_bar:
+        with client._progress:
+            yield
+    else:
+        yield
+
+
 class Mega:
-    def __init__(self) -> None:
+    def __init__(self, progress_bar: bool = True) -> None:
         self.api = MegaApi()
         progress_columns = (
             SpinnerColumn(),
@@ -76,7 +86,8 @@ class Mega:
             "━",
             TimeRemainingColumn(compact=True, elapsed_when_finished=True),
         )
-        self.progress = Progress(*progress_columns)
+        self._progress = Progress(*progress_columns)
+        self._use_progress_bar = progress_bar
         self.primary_url = f"{self.api.schema}://{self.api.domain}"
         self.logged_in = False
         self.root_id: str = ""
@@ -739,7 +750,7 @@ class Mega:
             file = cast(File, node)
             download_tasks.append(download_file(file, path))
 
-        with self.progress:
+        with progress_bar(self):
             results = await asyncio.gather(*download_tasks)
         return results
 
@@ -811,7 +822,7 @@ class Mega:
 
         output_path = Path(dest_path + file_name)
 
-        with self.progress:
+        with progress_bar(self):
             return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
 
     async def _really_download_file(
@@ -824,7 +835,7 @@ class Mega:
         k_decrypted: TupleArray,
     ):
         with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
-            task_id = self.progress.add_task(output_path.name, total=file_size)
+            task_id = self._progress.add_task(output_path.name, total=file_size)
             chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
             _ = next(chunk_decryptor)  # Prime chunk decryptor
             bytes_written: int = 0
@@ -835,7 +846,7 @@ class Mega:
                     actual_size = len(decrypted_chunk)
                     bytes_written += actual_size
                     temp_output_file.write(decrypted_chunk)
-                    self.progress.advance(task_id, actual_size)
+                    self._progress.advance(task_id, actual_size)
 
         try:
             # Stop chunk decryptor and do a mac integrity check
@@ -843,7 +854,7 @@ class Mega:
         except StopIteration:
             pass
         finally:
-            self.progress.remove_task(task_id)
+            self._progress.remove_task(task_id)
         await asyncio.to_thread(output_path.parent.mkdir, parents=True, exist_ok=True)
         await asyncio.to_thread(shutil.move, temp_output_file.name, output_path)
         return output_path
