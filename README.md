@@ -16,29 +16,30 @@ API, currently supporting:
 
 ## API information
 
-Please check [`src/mega/data_structures.py`]("src/mega/data_structures.py") for details about the object returned by the API
+Please check [`src/mega/data_structures.py`](src/mega/data_structures.py) for details about the objects returned by the API
 
 ## How To Use
 
-### Import mega.py
+### 1. Import the client
 
 ```python
 from mega.client import Mega
 ```
 
-### Create an instance of Mega.py
+### 2. Create an instance of the client
 
 ```python
 mega = Mega()
 ```
 
-### Login to Mega
+### 3. Login to Mega
 
 ```python
 m = await mega.login(email, password)
 # login using a temporary anonymous account
 m = await mega.login()
 ```
+## Methods
 
 ### Get user details
 
