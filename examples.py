@@ -1,11 +1,12 @@
 # ruff: noqa: T201
+import asyncio
 import os
 import uuid
 
 from mega.client import Mega
 
 
-def test():
+async def test():
     """
     Enter your account details to begin
     comment/uncomment lines to test various parts of the API
@@ -20,48 +21,50 @@ def test():
     # mega = Mega({'verbose': True})  # verbose option for print output
 
     # login
-    m = mega.login(email, password)
+    m = await mega.login(email, password)
 
     # get user details
-    details = m.get_user()
+    details = await m.get_user()
     print(details)
 
     # get account files
-    files = m.get_files()
+    files = await m.get_files()
 
-    # get account disk quota in MB
-    print(m.get_quota())
+    # get account disk quota in bytes
+    quota = await m.get_quota()
+    print(f"{quota = }")
     # get account storage space
-    print(m.get_storage_space())
+    storage = await m.get_storage_space()
+    print(f"{storage = }")
 
     # example iterate over files
-    for file in files:
-        print(files[file])
+    for file in files.values():
+        print(file)
 
     # upload file
-    print(m.upload(filename="examples.py", dest_filename=f"examples_{unique}.py"))
+    print(await m.upload(filename="examples.py", dest_filename=f"examples_{unique}.py"))
 
     # search for a file in account
-    file = m.find(f"examples_{unique}.py")
+    file = await m.find(f"examples_{unique}.py")
 
     if file:
         # get public link
-        link = m.get_link(file)
+        link = await m.get_link(file)
         print(link)
 
         # download file. by file object or url
-        print(m.download(file, "/tmp"))
+        print(await m.download(file, "/tmp"))
         # m.download_url(link)
 
         # delete or destroy file. by id or url
-        print(m.delete(file[0]))
+        print(await m.delete(file["h"]))
         # print(m.destroy(file[0]))
         # print(m.delete_url(link))
         # print(m.destroy_url(link))
 
     # empty trash
-    print(m.empty_trash())
+    print(await m.empty_trash())
 
 
 if __name__ == "__main__":
-    test()
+    asyncio.run(test())
