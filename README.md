@@ -14,8 +14,11 @@ API, currently supporting:
 -   moving files
 
 
-How To Use
-----------
+## API information
+
+Please check [`src/mega/data_structures.py`]("src/mega/data_structures.py") for details about the object returned by the API
+
+## How To Use
 
 ### Import mega.py
 
@@ -111,7 +114,7 @@ folders = await m.search('my_mega_folder')
 await m.upload('myfile.doc', folders[0])
 ```
 
-### Download a file from URL or file obj, optionally specify destination folder
+### Download a file from URL or file, optionally specify destination folder
 
 ```python
 file = await m.find('myfile.doc')

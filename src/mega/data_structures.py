@@ -1,3 +1,13 @@
+"""
+Mega API information
+=====================
+
+- This file contains definitions for some of the properties within the API.
+- Some definitions are not used by mega.py
+- The aim of the file is that more people will contribute through understanding.
+
+"""
+
 from collections.abc import Sequence
 from enum import IntEnum
 from typing import Any, Literal, NamedTuple, TypedDict, Union
