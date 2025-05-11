@@ -120,6 +120,7 @@ requires = ["hatchling"]
 [dependency-groups]
 dev = [
     "coverage[toml]>=7.7.0",
+    "pre-commit>=4.2.0",
     "pytest-cov>=6.0.0",
     "pytest-mock>=3.14.0",
     "pytest>=8.3.5",
