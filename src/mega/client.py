@@ -1282,9 +1282,8 @@ class Mega:
         )
 
     async def build_file_system(self) -> dict[Path, Node]:
-        special_folders_id = [self.root_id, self.inbox_id, self.trashbin_id]
         nodes_map = {node["h"]: node async for node in self._get_nodes()}
-        return await self._build_file_system(nodes_map, special_folders_id)
+        return await self._build_file_system(nodes_map, self.special_nodes_mapping.values())
 
     async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
@@ -1306,7 +1305,10 @@ class Mega:
 
         async def build_tree(parent_id: str, current_path: Path) -> None:
             for item in parents_mapping.get(parent_id, []):
-                item_path = current_path / item["attributes"]["n"]
+                name = item["attributes"].get("n")
+                if not name:
+                    continue
+                item_path = current_path / name
                 path_mapping[item_path] = item
 
                 if item["t"] == NodeType.FOLDER:
