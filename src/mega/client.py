@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import logging
 import os
@@ -9,7 +10,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -56,7 +57,20 @@ from mega.data_structures import (
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator
+    import sys
+    from collections.abc import AsyncGenerator, Callable, Generator
+
+    if sys.version_info < (3, 10):
+        from typing_extensions import ParamSpec
+    else:
+        from typing import ParamSpec
+
+    T = TypeVar("T")
+    P = ParamSpec("P")
+
+
+else:
+    P = Any
 
 logger = logging.getLogger(__name__)
 
@@ -88,15 +102,35 @@ class ProgressBar:
             self.progress.stop()
 
 
+def requires_login(func: Callable[P, T]) -> Callable[P, T]:
+    @functools.wraps(func)
+    async def wrapper(self: Mega, *args, **kwargs) -> T:
+        if not self.logged_in:
+            raise RuntimeError("You need to log in to use this method")
+        return await func(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Mega:
-    def __init__(self, progress_bar: bool = True) -> None:
+    def __init__(self, use_progress_bar: bool = True) -> None:
         self.api = MegaApi()
         self.primary_url = f"{self.api.schema}://{self.api.domain}"
         self.logged_in = False
         self.root_id: str = ""
         self.inbox_id: str = ""
         self.trashbin_id: str = ""
-        self._progress_bar = ProgressBar(enabled=progress_bar)
+        self._progress_bar = ProgressBar(enabled=use_progress_bar)
+
+    @property
+    def use_progress_bar(self) -> bool:
+        return self._progress_bar.enabled
+
+    @use_progress_bar.setter
+    def set_progress_bar(self, value: bool) -> None:
+        if not isinstance(value, bool):
+            raise ValueError("Only bool values are valid")
+        self._progress_bar.enabled = value
 
     async def close(self):
         await self.api.close()
@@ -106,7 +140,7 @@ class Mega:
             await self._login_user(email, password)
         else:
             await self.login_anonymous()
-        _ = await self.get_files()  # Required to get the special folders id
+        _ = await self._get_files()  # Required to get the special folders id
         self.logged_in = True
         logger.info(f"Special folders: root: {self.root_id} inbox: {self.inbox_id} trash_bin: {self.trashbin_id}")
         self.special_nodes_mapping = {
@@ -309,11 +343,11 @@ class Mega:
                 shared_keys[s_item["u"]][s_item["h"]] = shared_key[s_item["h"]]
         self.shared_keys = shared_keys
 
-    async def find(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> FileOrFolder | None:
+    async def find(self, path: Path | str, exclude_deleted: bool = False) -> FileOrFolder | None:
         """
-        Return file object(s) from given filename or path
+        Returns file or folder from given path( if exists)
         """
-        results = await self._search(filename_or_path, exclude_deleted, strict=True)
+        results = await self._search(path, exclude_deleted, strict=True)
         return results[0] if results else None
 
     async def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[FileOrFolder]:
@@ -322,6 +356,7 @@ class Mega:
         """
         return await self._search(filename_or_path, exclude_deleted)
 
+    @requires_login
     async def _search(
         self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False
     ) -> list[FileOrFolder]:
@@ -351,7 +386,7 @@ class Mega:
             return None
         return file
 
-    async def get_files(self) -> FilesMapping:
+    async def _get_files(self) -> FilesMapping:
         logger.info("Getting all files...")
         files_dict: FilesMapping = {}
         async for node in self._get_nodes():
@@ -359,6 +394,10 @@ class Mega:
                 file = cast("File", node)
                 files_dict[file["h"]] = file
         return files_dict
+
+    @requires_login
+    async def get_files(self) -> FilesMapping:
+        await self._get_files()
 
     async def _get_nodes(self) -> AsyncGenerator[Node]:
         files: Folder = await self.api.request(
@@ -402,6 +441,7 @@ class Mega:
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
 
+    @requires_login
     async def get_upload_link(self, folder: Folder) -> str:
         """
         Get a files public link inc. decrypted key
@@ -441,6 +481,7 @@ class Mega:
         decrypted_key = a32_to_base64(folder["sk_decrypted"])
         return f"{self.primary_url}/#F!{public_handle}!{decrypted_key}"
 
+    @requires_login
     async def _get_public_handle(self, file: FileOrFolder) -> str:
         try:
             public_handle: str = await self.api.request(
@@ -456,6 +497,7 @@ class Mega:
         else:
             return public_handle
 
+    @requires_login
     async def get_user(self) -> AnyDict:
         user_data: AnyDict = await self.api.request(
             {
@@ -478,6 +520,7 @@ class Mega:
             if node["t"] == node_type:
                 return node
 
+    @requires_login
     async def get_files_in_node(
         self, target: Literal[NodeType.INBOX, NodeType.TRASH, NodeType.ROOT_FOLDER]
     ) -> FilesMapping:
@@ -502,7 +545,6 @@ class Mega:
         return files_dict
 
     async def get_id_from_public_handle(self, public_handle: str) -> str:
-        # get node data
         node_data: Folder = await self.api.request(
             {
                 "a": "f",
