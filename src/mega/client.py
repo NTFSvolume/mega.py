@@ -102,7 +102,7 @@ class Mega:
             await self._login_user(email, password)
         else:
             await self.login_anonymous()
-        _ = await self.get_files()  # This is to set the special folders id
+        _ = await self.get_files()  # Required to get the special folders id
         self.logged_in = True
         logger.info(f"Special folders: root: {self.root_id} inbox: {self.inbox_id} trash_bin: {self.trashbin_id}")
         self.special_nodes_mapping = {
@@ -222,7 +222,7 @@ class Mega:
 
     def _process_node(self, file: Node, shared_keys: SharedkeysDict) -> Node:
         if file["t"] == NodeType.FILE or file["t"] == NodeType.FOLDER:
-            file = cast(FileOrFolder, file)
+            file = cast("FileOrFolder", file)
             keys = dict(keypart.split(":", 1) for keypart in file["k"].split("/") if ":" in keypart)
             uid = file["u"]
             key = None
@@ -253,7 +253,7 @@ class Mega:
             if key is not None:
                 # file
                 if file["t"] == NodeType.FILE:
-                    file = cast(File, file)
+                    file = cast("File", file)
                     k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
                     file["iv"] = key[4:6] + (0, 0)
                     file["meta_mac"] = key[6:8]
@@ -265,11 +265,11 @@ class Mega:
                 file["k_decrypted"] = k
                 attributes_bytes = base64_url_decode(file["a"])
                 attributes = decrypt_attr(attributes_bytes, k)
-                file["attributes"] = cast(Attributes, attributes)
+                file["attributes"] = cast("Attributes", attributes)
 
             # other => wrong object
             elif file["k"] == "":
-                file = cast(Node, file)
+                file = cast("Node", file)
                 file["attributes"] = {"n": "Unknown Object"}
 
         elif file["t"] == NodeType.ROOT_FOLDER:
@@ -342,14 +342,17 @@ class Mega:
     async def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> FileOrFolder | None:
         """Return file object(s) from given filename or path"""
         files = await self.get_files()
-        return found if (found := files.get(handle)) else None
+        file = found if (found := files.get(handle)) else None
+        if file and file["p"] == self.trashbin_id and exclude_deleted:
+            return None
+        return file
 
     async def get_files(self) -> FilesMapping:
         logger.info("Getting all files...")
         files_dict: FilesMapping = {}
         async for node in self._get_nodes():
             if node["attributes"]:
-                file = cast(File, node)
+                file = cast("File", node)
                 files_dict[file["h"]] = file
         return files_dict
 
@@ -695,7 +698,7 @@ class Mega:
 
         async def prepare_nodes():
             async for node in self._get_nodes_in_shared_folder(folder_id):
-                node = cast(FileOrFolder, node)
+                node = cast("FileOrFolder", node)
                 encrypted_key = base64_to_a32(node["k"].split(":")[1])
                 key = decrypt_key(encrypted_key, shared_key)
                 if node["t"] == NodeType.FILE:
@@ -707,7 +710,7 @@ class Mega:
                 meta_mac: TupleArray = key[6:8]
 
                 attrs = decrypt_attr(base64_url_decode(node["a"]), k)
-                node["attributes"] = cast(Attributes, attrs)
+                node["attributes"] = cast("Attributes", attrs)
                 node["k_decrypted"] = k
                 node["iv"] = iv
                 node["meta_mac"] = meta_mac
@@ -751,7 +754,7 @@ class Mega:
                     file["k_decrypted"],
                 )
 
-            file = cast(File, node)
+            file = cast("File", node)
             download_tasks.append(download_file(file, path))
 
         with progress_bar(self):
@@ -812,7 +815,7 @@ class Mega:
         file_size = file_data["s"]
         attribs_bytes = base64_url_decode(file_data["at"])
         attribs = decrypt_attr(attribs_bytes, k)
-        attribs = cast(Attributes, attribs)
+        attribs = cast("Attributes", attribs)
 
         if dest_filename is not None:
             file_name = dest_filename
