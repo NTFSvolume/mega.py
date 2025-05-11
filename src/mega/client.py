@@ -397,7 +397,7 @@ class Mega:
 
     @requires_login
     async def get_files(self) -> FilesMapping:
-        await self._get_files()
+        return await self._get_files()
 
     async def _get_nodes(self) -> AsyncGenerator[Node]:
         files: Folder = await self.api.request(
