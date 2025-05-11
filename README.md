@@ -1,15 +1,14 @@
 # Async Mega.py (Updated)
 
-=======
+Python library for the [Mega.nz](https://mega.nz/) API
 
-Python library for the [Mega.co.nz](https://mega.nz/)
-API, currently supporting:
+Supports:
 
 - login
-- uploading
-- downloading (files and folders)
-- deleting
-- searching
+- upload
+- download
+- delete
+- search
 - sharing
 - renaming
 - moving files
@@ -103,7 +102,7 @@ public_exported_web_link = await mega.export('my_mega_folder/my_sub_folder_to_sh
 
 Search returns every file/folder that contains the  search query in its path
 
-Assume you having these files in your account:
+If you have these files in your account:
 
 ```bash
 ├── dir1
@@ -119,7 +118,7 @@ Assume you having these files in your account:
 
 ```python
 
-result = await mega.search('file1.txt') # Returns a list with 1 element, the file at dir1/file1.txt
+result = await mega.search('file1.txt') # Returns a list with 1 element, dir1/file1.txt
 result = await mega.search('file') # Returns a list with 5 elements
 result = await mega.search('file', exclude_deleted=True) # Returns a list with 4 elements
 result = await mega.search('.txt') # Returns a list with 2 elements
@@ -141,7 +140,7 @@ result = await mega.find('dir2/subdir/file3.log') # File() at dir2/subdir/file3.
 
 ```python
 folder = await mega.find('dir2/subdir')
-await mega.upload('myfile.doc', folder)
+await mega.upload('myfile.doc', dest_node=folder)
 ```
 
 ### Download a file, optionally specify destination folder
@@ -162,27 +161,30 @@ mega = Mega(use_progress_bar=False)
 You can also disable the progress bar on an existing instance
 
 ```python
-mega.use_progress_bar =False
+mega.use_progress_bar = False
 ```
 
 ### Download a file from an URL
 
 ```python
-await mega.download_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_filename='my_file.zip')
+url = 'https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc'
+await mega.download_url(url, dest_filename='my_file.zip')
 ```
 
 ### Download a public folder
 
 ```python
-await mega.download_folder_url('https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_path ="downloads/my_music")
+url = 'https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc'
+await mega.download_folder_url(url, dest_path ="downloads/my_music")
 ```
 
 ### Import a file from URL, optionally specify destination folder
 
 ```python
-await mega.import_public_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc')
+url = 'https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc'
+await mega.import_public_url(url)
 folder = await mega.find('dir2')
-await mega.import_public_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_node=folder)
+await mega.import_public_url(url, dest_node=folder)
 ```
 
 ### Create a folder
@@ -196,5 +198,5 @@ await mega.create_folder('new_folder/sub_folder/subsub_folder')
 
 ```python
 file = await mega.find('dir2/subdir/file3.log')
-await mega.rename(file, 'dir2/subdir/old_logs.log')
+await mega.rename(file, new_name='dir2/subdir/old_logs.log')
 ```
