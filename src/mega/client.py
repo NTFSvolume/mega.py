@@ -971,9 +971,9 @@ class Mega:
         if computed_mac != meta_mac:
             raise RuntimeError("Mismatched mac")
 
-    async def upload(self, filename: str, dest: str | None = None, dest_filename: str | None = None) -> Folder:
+    async def upload(self, filename: str, dest_node: Folder | None = None, dest_filename: str | None = None) -> Folder:
         # determine storage node
-        dest = dest or self.root_id
+        dest_node_id = dest_node["h"] or self.root_id
         # request upload url, call 'u' method
         with open(filename, "rb") as input_file:
             file_size = os.path.getsize(filename)
@@ -1062,7 +1062,7 @@ class Mega:
             data: Folder = await self.api.request(
                 {
                     "a": "p",
-                    "t": dest,
+                    "t": dest_node_id,
                     "i": self.api.request_id,
                     "n": [{"h": completion_file_handle, "t": 0, "a": encrypt_attribs, "k": encrypted_key}],
                 }
@@ -1105,7 +1105,7 @@ class Mega:
         actual_node = await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
         return actual_node
 
-    async def rename(self, file: FileOrFolder, new_name: str) -> AnyDict:
+    async def rename(self, file: File, new_name: str) -> AnyDict:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs

@@ -35,7 +35,7 @@ def uploaded_file(mega: Mega, folder_name: str):
     folder = mega.find(folder_name)
     assert folder
     dest_node_id = folder["h"]
-    mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
+    mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     return mega.find(path)
 
@@ -104,7 +104,7 @@ class TestExport:
         assert node
         folder = node
         dest_node_id = folder["h"]
-        mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
+        mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
         path = f"{folder_name}/test.py"
         assert mega.find(path)
 
@@ -145,12 +145,12 @@ class TestFind:
         folder = mega.find(folder_name)
         assert folder
         dest_node_id = folder["h"]
-        mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
+        mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
         file1 = mega.find(f"{folder_name}/test.py")
         assert file1
 
         dest_node_id2 = mega.create_folder("new_folder")["new_folder"]
-        _ = mega.upload(__file__, dest=dest_node_id2, dest_filename="test.py")
+        _ = mega.upload(__file__, dest_node=dest_node_id2, dest_filename="test.py")
 
         file2 = mega.find("new_folder/test.py")
         assert file2
@@ -201,7 +201,7 @@ def test_download(mega: Mega, tmpdir, folder_name):
     assert node
     folder = node
     dest_node_id = folder["h"]
-    mega.upload(__file__, dest=dest_node_id, dest_filename="test.py")
+    mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     file = mega.find(path)
     assert file
@@ -230,11 +230,11 @@ def test_remove_contact(mega: Mega):
     "url, expected_file_id_and_key",
     [
         (
-            "https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F" "N-ISsBAGPzvTjT6k",
+            "https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
             "Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
         ),
         (
-            "https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq" "5VDTLfIhThx1capgVA30",
+            "https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30",
             "cH51DYDR!qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30",
         ),
     ],
