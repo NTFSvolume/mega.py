@@ -105,6 +105,11 @@ class Mega:
         _ = await self.get_files()  # This is to set the special folders id
         self.logged_in = True
         logger.info(f"Special folders: root: {self.root_id} inbox: {self.inbox_id} trash_bin: {self.trashbin_id}")
+        self.special_nodes_mapping = {
+            NodeType.INBOX: self.inbox_id,
+            NodeType.ROOT_FOLDER: self.root_id,
+            NodeType.TRASH: self.trashbin_id,
+        }
         logger.info("Login complete")
         return self
 
@@ -466,11 +471,10 @@ class Mega:
             if node["t"] == node_type:
                 return node
 
-    async def get_files_in_node(self, target: NodeType | str) -> FilesMapping:
+    async def get_files_in_node(self, target: NodeType.INBOX | NodeType.TRASH | NodeType.ROOT_FOLDER) -> FilesMapping:
         """
         Get all files in a given target, e.g. 4=trash
         """
-        node_id = target
         folder: Folder = await self.api.request(
             {
                 "a": "f",
@@ -479,10 +483,10 @@ class Mega:
         )
         files_dict: FilesMapping = {}
         shared_keys: SharedkeysDict = {}
-        self._init_shared_keys(folder, shared_keys)
+        target_id = self.special_nodes_mapping.get(target)
         for index, file in enumerate(folder["f"], 1):
-            processed_file = cast(FileOrFolder, self._process_node(file, shared_keys))
-            if processed_file["a"] and processed_file["p"] == node_id:
+            processed_file = cast("FileOrFolder", self._process_node(file, shared_keys))
+            if processed_file["a"] and processed_file["p"] == target_id:
                 files_dict[file["h"]] = processed_file
             if index % 100 == 0:
                 await asyncio.sleep(0)
