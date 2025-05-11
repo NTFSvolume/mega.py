@@ -1,20 +1,20 @@
-Async Mega.py (Updated)
+# Async Mega.py (Updated)
+
 =======
 
 Python library for the [Mega.co.nz](https://mega.nz/)
 API, currently supporting:
 
--   login
--   uploading
--   downloading (files and folders)
--   deleting
--   searching
--   sharing
--   renaming
--   moving files
+- login
+- uploading
+- downloading (files and folders)
+- deleting
+- searching
+- sharing
+- renaming
+- moving files
 
-
-## API information
+## API Information
 
 Please check [`src/mega/data_structures.py`](src/mega/data_structures.py) for details about the objects returned by the API
 
@@ -35,123 +35,166 @@ mega = Mega()
 ### 3. Login to Mega
 
 ```python
-m = await mega.login(email, password)
-# login using a temporary anonymous account
-m = await mega.login()
+await mega.login(email, password)
+await mega.login() # login using a temporary anonymous account
 ```
+
 ## Methods
 
 ### Get user details
 
 ```python
-details = await m.get_user()
+details = await mega.get_user()
 ```
 
 ### Get account balance (Pro accounts only)
 
 ```python
-balance = await m.get_balance()
+balance = await mega.get_balance()
 ```
 
 ### Get account disk quota
 
 ```python
-quota = await m.get_quota()
+quota = await mega.get_quota()
 ```
 
 ### Get account storage space
 
 ```python
-space = await m.get_storage_space()
+space = await mega.get_storage_space()
 ```
 
 ### Get account files
 
 ```python
-files = await m.get_files()
+files = await mega.get_files()
+```
+
+### Get files in trash bin
+
+```python
+deleted_files = await mega.get_files_in_node(4)  # Options: root(2), inbox(3), trashbin (4)
 ```
 
 ### Get file system
 
 ```python
-fs = await m.build_file_system()
+fs = await mega.build_file_system()
 ```
 
 ### Upload a file, and get its public link
 
 ```python
-file = await m.upload('myfile.doc')
-await m.get_upload_link(file)
+file = await mega.upload('myfile.doc')
+link = await mega.get_upload_link(file)
 # see client.py for destination and filename options
 ```
 
 ### Export a file or folder
 
 ```python
-public_exported_web_link = await m.export('myfile.doc')
-public_exported_web_link = await m.export('my_mega_folder/my_sub_folder_to_share')
+public_exported_web_link = await mega.export('myfile.doc')
+public_exported_web_link = await mega.export('my_mega_folder/my_sub_folder_to_share')
 # e.g. https://mega.nz/#F!WlVl1CbZ!M3wmhwZDENMNUJoBsdzFng
 ```
 
 ### Search a file or folder (recursively)
 
-```python
-folder = await m.search('my_mega_folder')
-# Excludes results which are in the Trash folder (i.e. deleted)
-folder = await m.search('my_mega_folder', exclude_deleted=True)
+Search returns every file/folder that contains the  search query in its path
+
+Assume you having these files in your account:
+
+```bash
+├── dir1
+│   ├── file1.txt
+│   └── file2.md
+├── dir2
+│   └── subdir
+│       └── file3.log
+├── trash_bin
+│   └── file4.mov
+└── file5.txt
 ```
 
-### Find a file or folder (path match exactly)
+```python
+
+result = await mega.search('file1.txt') # Returns a list with 1 element, the file at dir1/file1.txt
+result = await mega.search('file') # Returns a list with 5 elements
+result = await mega.search('file', exclude_deleted=True) # Returns a list with 4 elements
+result = await mega.search('.txt') # Returns a list with 2 elements
+result = await mega.search('dir1/file') # Returns a list with 2 elements
+```
+
+### Find a file or folder
+
+Like `search`, but the path must start with the search query and only returns the first element (if found)
 
 ```python
-file = await m.search('foldel1/folder2/my_file') # None
-file = await m.search('foldel1/other_folder2/my_file.') # File()
+result = await mega.find('file3.log') # None
+result = await mega.find('dir2/file3.log') # None
+result = await mega.find('dir2/subdir/file3') # File() at dir2/subdir/file3.log'
+result = await mega.find('dir2/subdir/file3.log') # File() at dir2/subdir/file3.log'
 ```
 
 ### Upload a file to a destination folder
 
 ```python
-folders = await m.search('my_mega_folder')
-await m.upload('myfile.doc', folders[0])
+folder = await mega.find('dir2/subdir')
+await mega.upload('myfile.doc', folder)
 ```
 
-### Download a file from URL or file, optionally specify destination folder
+### Download a file, optionally specify destination folder
 
 ```python
-file = await m.find('myfile.doc')
-await m.download(file, progress_bar = True)
-await m.download_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc')
-await m.download(file, '/home/john-smith/Desktop')
-# specify optional download filename (download_url() supports this also)
-await m.download(file, '/home/john-smith/Desktop', 'myfile.zip')
+file = await mega.find('dir2/subdir/file3.log')
+await mega.download(file)
+await mega.download(file, dest_path='/home/john-smith/Desktop')
+await mega.download(file, dest_path='/home/john-smith/Desktop', dest_filename='my_logs.log')
+```
+
+Download will show a progress bar on the terminal. To disable it, create an instance of the mega client with the progress bar disabled
+
+```python
+mega = Mega(use_progress_bar=False)
+```
+
+You can also disable the progress bar on an existing instance
+
+```python
+mega.use_progress_bar =False
+```
+
+### Download a file from an URL
+
+```python
+await mega.download_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_filename='my_file.zip')
 ```
 
 ### Download a public folder
 
 ```python
-await m.download_folder_url('https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc')
-
+await mega.download_folder_url('https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_path ="downloads/my_music")
 ```
 
 ### Import a file from URL, optionally specify destination folder
 
 ```python
-await m.import_public_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc')
-folder = await m.search('Documents')
-await m.import_public_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_node=folder)
+await mega.import_public_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc')
+folder = await mega.find('dir2')
+await mega.import_public_url('https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc', dest_node=folder)
 ```
 
 ### Create a folder
 
 ```python
-await m.create_folder('new_folder')
-await m.create_folder('new_folder/sub_folder/subsub_folder')
+await mega.create_folder('new_folder')
+await mega.create_folder('new_folder/sub_folder/subsub_folder')
 ```
-
 
 ### Rename a file or a folder
 
 ```python
-file = await m.find('folder1/myfile.doc')
-await m.rename(file, 'my_file.doc')
+file = await mega.find('dir2/subdir/file3.log')
+await mega.rename(file, 'dir2/subdir/old_logs.log')
 ```
