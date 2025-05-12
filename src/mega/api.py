@@ -5,7 +5,7 @@ import random
 import string
 from typing import TYPE_CHECKING, Any
 
-from aiohttp import ClientSession
+from aiohttp import ClientSession, ClientTimeout
 from tenacity import retry, retry_if_exception_type, wait_exponential
 
 from mega.crypto import random_u32int
@@ -28,16 +28,17 @@ class MegaApi:
         self.domain = "mega.nz"
         # api still uses the old mega.co.nz domain
         self.api_domain = "g.api.mega.co.nz"
-        self.timeout = 160  # max secs to wait for resp from api requests
         self.sid: str | None = None
+        self.timeout = ClientTimeout(160)
         self.sequence_num: U32Int = random_u32int()
         self.request_id: str = "".join(random.choice(VALID_REQUEST_ID_CHARS) for _ in range(10))
         self.user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0"
         self.default_headers = {"Content-Type": "application/json", "User-Agent": self.user_agent}
-        self.session = ClientSession()
+        self.session: ClientSession = None  # type: ignore
 
     async def close(self):
-        await self.session.close()
+        if self.session:
+            await self.session.close()
 
     @property
     def entrypoint(self) -> str:
@@ -45,6 +46,9 @@ class MegaApi:
 
     @retry(retry=retry_if_exception_type(RuntimeError), wait=wait_exponential(multiplier=2, min=2, max=60))
     async def request(self, data_input: list[AnyDict] | AnyDict, add_params: AnyDict | None = None) -> Any:
+        if not self.session:
+            self.session = ClientSession(timeout=self.timeout)
+
         add_params = add_params or {}
 
         params: AnyDict = {"id": self.sequence_num} | add_params
@@ -59,9 +63,7 @@ class MegaApi:
         else:
             data: list[AnyDict] = data_input
 
-        response = await self.session.post(
-            self.entrypoint, params=params, json=data, timeout=self.timeout, headers=self.default_headers
-        )
+        response = await self.session.post(self.entrypoint, params=params, json=data, headers=self.default_headers)
 
         # Since around feb 2025, MEGA requires clients to solve a challenge during each login attempt.
         # When that happens, initial responses returns "402 Payment Required".
