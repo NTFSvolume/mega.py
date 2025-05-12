@@ -58,14 +58,14 @@ from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
     import sys
-    from collections.abc import AsyncGenerator, Callable, Generator
+    from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
 
     if sys.version_info < (3, 10):
         from typing_extensions import ParamSpec
     else:
         from typing import ParamSpec
 
-    T = TypeVar("T")
+    R = TypeVar("R")
     P = ParamSpec("P")
 
 
@@ -102,12 +102,13 @@ class ProgressBar:
             self.progress.stop()
 
 
-def requires_login(func: Callable[P, T]) -> Callable[P, T]:
+def requires_login(func: Callable[P, Coroutine[None, None, R]]) -> Callable[P, Coroutine[None, None, R]]:
     @functools.wraps(func)
-    async def wrapper(self: Mega, *args, **kwargs) -> T:
+    async def wrapper(*args, **kwargs) -> R:
+        self: Mega = args[0]
         if not self.logged_in:
             raise RuntimeError("You need to log in to use this method")
-        return await func(self, *args, **kwargs)
+        return await func(*args, **kwargs)
 
     return wrapper
 
@@ -651,7 +652,7 @@ class Mega:
             return await self.api.request(post_list)
 
     async def download(
-        self, file: FileOrFolder | None, dest_path: str | None = None, dest_filename: str | None = None
+        self, file: FileOrFolder | None, dest_path: Path | str | None = None, dest_filename: str | None = None
     ) -> Path:
         """Download a file by it's file object."""
         return await self._download_file(
@@ -814,7 +815,7 @@ class Mega:
         self,
         file_handle: str | None = None,
         file_key: TupleArray | str | None = None,
-        dest_path: str | None = None,
+        dest_path: Path | str | None = None,
         dest_filename: str | None = None,
         is_public: bool = False,
         file: FileOrFolder | None = None,
@@ -872,11 +873,11 @@ class Mega:
             file_name: str = attribs["n"]
 
         if dest_path is None:
-            dest_path = ""
-        else:
-            dest_path += "/"
+            dest_path = Path()
+        elif isinstance(dest_path, str):
+            dest_path = Path(dest_path)
 
-        output_path = Path(dest_path + file_name)
+        output_path = dest_path / file_name
 
         with self._progress_bar:
             return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
@@ -1081,7 +1082,7 @@ class Mega:
         encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self.master_key))
 
         # This can return multiple folders if subfolders needed to be created
-        folders: list[Folder] = await self.api.request(
+        folders: dict[str, list[Folder]] = await self.api.request(
             {
                 "a": "p",
                 "t": parent_node_id,
@@ -1089,9 +1090,9 @@ class Mega:
                 "i": self.api.request_id,
             }
         )
-        return folders
+        return folders["f"][0]
 
-    async def create_folder(self, path: Path | str) -> list[Folder]:
+    async def create_folder(self, path: Path | str) -> Folder:
         path = Path(path)
         last_parent = await self.find_by_handle(self.root_id)
         assert last_parent
@@ -1100,25 +1101,23 @@ class Mega:
             if node:
                 last_parent = node
             else:
-                created_node = await self._mkdir(name=parent.name, parent_node_id=last_parent["h"])
-                last_parent = created_node["f"][0]
+                last_parent = await self._mkdir(name=parent.name, parent_node_id=last_parent["h"])
 
-        actual_node = await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
-        return actual_node
+        return await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
 
-    async def rename(self, file: File, new_name: str) -> AnyDict:
+    async def rename(self, node: FileOrFolder, new_name: str) -> int:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
-        encrypt_attribs = base64_url_encode(encrypt_attr(attribs, file["k_decrypted"]))
-        encrypted_key = a32_to_base64(encrypt_key(file["key_decrypted"], self.master_key))
+        encrypt_attribs = base64_url_encode(encrypt_attr(attribs, node["k_decrypted"]))
+        encrypted_key = a32_to_base64(encrypt_key(node["key_decrypted"], self.master_key))
         # update attributes
         return await self.api.request(
             {
                 "a": "a",
                 "attr": encrypt_attribs,
                 "key": encrypted_key,
-                "n": file["h"],
+                "n": node["h"],
                 "i": self.api.request_id,
             }
         )
@@ -1284,7 +1283,7 @@ class Mega:
 
     async def build_file_system(self) -> dict[Path, Node]:
         nodes_map = {node["h"]: node async for node in self._get_nodes()}
-        return await self._build_file_system(nodes_map, self.special_nodes_mapping.values())
+        return await self._build_file_system(nodes_map, list(self.special_nodes_mapping.values()))
 
     async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
