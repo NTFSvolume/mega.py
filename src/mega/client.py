@@ -844,6 +844,7 @@ class Mega:
             iv: AnyArray = _file_key[4:6] + (0, 0)
             meta_mac: TupleArray = _file_key[6:8]
         else:
+            file_handle = file["h"]
             file_data = await self.api.request(
                 {
                     "a": "g",
