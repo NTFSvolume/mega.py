@@ -9,7 +9,7 @@ import random
 import re
 import shutil
 import tempfile
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
 
 from Crypto.Cipher import AES
@@ -365,7 +365,7 @@ class Mega:
         Return file object(s) from given filename or path
         """
 
-        filename_or_path = str(filename_or_path)
+        filename_or_path = Path(filename_or_path).as_posix()
 
         fs = await self.build_file_system()
 
@@ -805,7 +805,7 @@ class Mega:
                 )
 
             file = cast("File", node)
-            download_tasks.append(download_file(file, path))
+            download_tasks.append(download_file(file, Path(path)))
 
         with self._progress_bar:
             results = await asyncio.gather(*download_tasks)
@@ -1282,11 +1282,11 @@ class Mega:
             }
         )
 
-    async def build_file_system(self) -> dict[Path, Node]:
+    async def build_file_system(self) -> dict[PurePosixPath, Node]:
         nodes_map = {node["h"]: node async for node in self._get_nodes()}
         return await self._build_file_system(nodes_map, list(self.special_nodes_mapping.values()))
 
-    async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[Path, Node]:
+    async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
 
         Returns:
@@ -1295,7 +1295,7 @@ class Mega:
         if not self.logged_in:
             raise MegaNzError("You must log in to build your file system")
 
-        path_mapping: dict[Path, Node] = {}
+        path_mapping: dict[PurePosixPath, Node] = {}
         parents_mapping: dict[str, list[Node]] = {}
 
         for _, item in nodes_map.items():
@@ -1304,7 +1304,7 @@ class Mega:
                 parents_mapping[parent_id] = []
             parents_mapping[parent_id].append(item)
 
-        async def build_tree(parent_id: str, current_path: Path) -> None:
+        async def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
             for item in parents_mapping.get(parent_id, []):
                 name = item["attributes"].get("n")
                 if not name:
@@ -1320,7 +1320,7 @@ class Mega:
         for root_id in root_ids:
             root_item = nodes_map[root_id]
             name = root_item["attributes"]["n"]
-            path = Path(name if name != "Cloud Drive" else ".")
+            path = PurePosixPath(name if name != "Cloud Drive" else ".")
             path_mapping[path] = root_item
             await build_tree(root_id, path)
 
