@@ -4,13 +4,14 @@ import random
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import Literal, cast
+from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
-import requests_mock
 
 from mega.client import Mega
 from mega.data_structures import File, FileOrFolder, Folder, NodeType, StorageUsage
+from mega.errors import RequestError
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -87,7 +88,7 @@ async def test_get_files(mega: Mega):
     assert isinstance(files, dict)
 
 
-@pytest.mark.xfail
+@pytest.mark.xfail(reason="Public links won't work with temp account")
 async def test_get_link(mega: Mega, uploaded_file: FileOrFolder):
     link = await mega.get_link(uploaded_file)
     assert isinstance(link, str)
@@ -199,7 +200,6 @@ async def test_destroy(mega: Mega, uploaded_file: FileOrFolder):
     assert isinstance(resp, int)
 
 
-@pytest.mark.xfail
 async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Folder):
     # Upload a single file into a folder
     _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
@@ -207,6 +207,7 @@ async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Fo
     file = await mega.find(path)
     assert file
     output_path = await mega.download(file, tmp_path, "test.py")
+    assert output_path.parent == tmp_path
     assert output_path.is_file()
 
 
@@ -245,14 +246,14 @@ def test_parse_url(url: str, expected_file_id_and_key: str):
     assert mega_._parse_url(url) == expected_file_id_and_key
 
 
-@pytest.mark.skip
 class TestAPIRequest:
-    @pytest.mark.parametrize("response_text", ["-3", "-9"])
+    @pytest.mark.parametrize("response", [-4, -9])
     async def test_when_api_returns_int_raises_exception(
         self,
         mega: Mega,
-        response_text: Literal["-3", "-9"],
+        response: Literal[-4, -9],
     ):
-        with requests_mock.Mocker() as mocker:
-            mocker.post(mega.api.entrypoint, text=response_text)
-            await mega.api.request(data_input={})
+        with pytest.MonkeyPatch.context() as m:
+            m.setattr(aiohttp.ClientResponse, "json", AsyncMock(return_value=response))
+            with pytest.raises(RequestError):
+                await mega.api.request(data_input={})
