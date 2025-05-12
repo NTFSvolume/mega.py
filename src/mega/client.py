@@ -371,7 +371,7 @@ class Mega:
 
         found = []
         for path, item in fs.items():
-            if filename_or_path in (path_str := str(path)):
+            if filename_or_path in (path_str := path.as_posix()):
                 if strict and not path_str.startswith(filename_or_path):
                     continue
                 if exclude_deleted and item["p"] == self.trashbin_id:
