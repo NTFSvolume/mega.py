@@ -23,10 +23,10 @@ def folder_name():
 @pytest.fixture
 async def mega(folder_name: str) -> AsyncGenerator[Mega]:
     mega_ = Mega()
-    await mega_.login(email=os.environ["EMAIL"], password=os.environ["PASS"])
-    created_nodes = await mega_.create_folder(folder_name)
+    await mega_.login(email=os.getenv("EMAIL"), password=os.getenv("PASS"))
+    folder = await mega_.create_folder(folder_name)
     yield mega_
-    node_id = next(iter(created_nodes.values()))
+    node_id = folder["h"]
     await mega_.destroy(node_id)
 
 

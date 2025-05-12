@@ -616,7 +616,7 @@ class Mega:
         return await self.move(file_id, NodeType.TRASH)
 
     async def destroy(self, file_id: str) -> AnyDict:
-        """Destroy a file by its private id (bypass trash bin)"""
+        """Destroy a file or folder by its private id (bypass trash bin)"""
         return await self.api.request(
             {
                 "a": "d",  # Action: delete
@@ -1070,7 +1070,7 @@ class Mega:
             logger.info("Upload complete")
             return data
 
-    async def _mkdir(self, name: str, parent_node_id: str) -> AnyDict:
+    async def _mkdir(self, name: str, parent_node_id: str) -> Folder:
         # generate random aes key (128) for folder
         ul_key = [random_u32int() for _ in range(6)]
 
@@ -1088,9 +1088,10 @@ class Mega:
                 "i": self.api.request_id,
             }
         )
-        return data
+        folder: Folder = data["f"][0]
+        return folder
 
-    async def create_folder(self, path: Path | str) -> AnyDict:
+    async def create_folder(self, path: Path | str) -> Folder:
         path = Path(path)
         last_parent = await self.find_by_handle(self.root_id)
         assert last_parent
