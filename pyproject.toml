@@ -55,7 +55,7 @@ include = ["src/mega"]
 
 [tool.pytest.ini_options]
 addopts = "-s -v"
-asyncio_default_fixture_loop_scope = "module"
+asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 minversion = "8.3"
 norecursedirs = [".git"]

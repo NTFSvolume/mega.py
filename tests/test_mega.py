@@ -1,13 +1,17 @@
 import os
 import random
-from collections.abc import AsyncGenerator
+from asyncio.events import AbstractEventLoop
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
+from typing import Callable, Literal, cast
 
+import aiohttp
 import pytest
 import requests_mock
+from pytest_mock import MockerFixture
 
 from mega.client import Mega
-from mega.data_structures import FileOrFolder
+from mega.data_structures import FileOrFolder, Folder, NodeType, StorageUsage
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -16,26 +20,43 @@ MODULE = "mega.mega"
 
 
 @pytest.fixture
+async def http_client(event_loop: AbstractEventLoop) -> aiohttp.ClientSession:
+    return aiohttp.ClientSession()
+
+
+@pytest.fixture
 def folder_name():
     return f"mega.py_testfolder_{random.random()}"
 
 
 @pytest.fixture
-async def mega(folder_name: str) -> AsyncGenerator[Mega]:
+async def mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGenerator[Mega]:
     mega_ = Mega()
+    mega_.api.session = http_client
     await mega_.login(email=os.getenv("EMAIL"), password=os.getenv("PASS"))
     folder = await mega_.create_folder(folder_name)
     yield mega_
-    node_id = folder["h"]
+    node_id = folder[0]["h"]
     await mega_.destroy(node_id)
+    await mega_.close()
+
+
+@pytest.fixture
+async def folder(mega: Mega, folder_name: str) -> Folder:
+    node = await mega.find(folder_name)
+    assert node
+    assert node["t"] == NodeType.FOLDER
+    folder = cast("Folder", node)
+    return folder
 
 
 @pytest.fixture
 async def uploaded_file(mega: Mega, folder_name: str):
-    folder = await mega.find(folder_name)
-    assert folder
-    dest_node_id = folder["h"]
-    await mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
+    node = await mega.find(folder_name)
+    assert node
+    assert node == NodeType.FOLDER
+    folder = cast("Folder", node)
+    await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     return await mega.find(path)
 
@@ -46,13 +67,18 @@ def test_mega(mega: Mega):
 
 def test_login(mega: Mega):
     assert mega.logged_in
+    assert all((mega.root_id, mega.inbox_id, mega.trashbin_id))
 
 
+@pytest.mark.asyncio
 async def test_get_user(mega: Mega):
     resp = await mega.get_user()
     assert isinstance(resp, dict)
+    for key in ("lastname", "since", "email", "name"):
+        assert key in resp
 
 
+@pytest.mark.asyncio
 async def test_get_quota(mega: Mega):
     resp = await mega.get_quota()
     assert isinstance(int(resp), int)
@@ -60,7 +86,7 @@ async def test_get_quota(mega: Mega):
 
 async def test_get_storage_space(mega: Mega):
     resp = await mega.get_storage_space()
-    assert isinstance(resp, dict)
+    assert isinstance(resp, StorageUsage)
 
 
 async def test_get_files(mega: Mega):
@@ -100,11 +126,8 @@ class TestExport:
 
     async def test_export_single_file(self, mega: Mega, folder_name: str):
         # Upload a single file into a folder
-        node = await mega.find(folder_name)
-        assert node
-        folder = node
-        dest_node_id = folder["h"]
-        await mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
+
+        await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
         path = f"{folder_name}/test.py"
         assert await mega.find(path)
 
@@ -116,24 +139,28 @@ class TestExport:
 
 async def test_import_public_url(mega: Mega):
     resp = await mega.import_public_url(TEST_PUBLIC_URL)
-    file_handle = mega.get_id_from_obj(resp)
-    assert file_handle
-    resp = await mega.destroy(file_handle)
+    file_id = mega.get_id_from_resp_obj(resp)
+    assert file_id
+    resp = await mega.destroy(file_id)
     assert isinstance(resp, int)
 
 
 class TestCreateFolder:
-    async def test_create_folder(self, mega: Mega, folder_name: str):
-        folder_names_and_node_ids = await mega.create_folder(folder_name)
+    async def test_create_single_folder(self, mega: Mega, folder_name: str):
+        folders = await mega.create_folder(folder_name)
+        assert len(folders) == 1
+        folder = folders[0]
+        assert isinstance(folder, dict)
+        assert folder["h"]
+        assert folder["t"] == NodeType.FOLDER
 
-        assert isinstance(folder_names_and_node_ids, dict)
-        assert len(folder_names_and_node_ids) == 1
+    async def test_create_folder_with_sub_folders(
+        self, mega: Mega, folder_name: str, mocker: Callable[..., Generator[MockerFixture, None, None]]
+    ):
+        folders = await mega.create_folder(Path(folder_name) / "subdir" / "anothersubdir")
 
-    async def test_create_folder_with_sub_folders(self, mega: Mega, folder_name: str, mocker):
-        folder_names_and_node_ids = await mega.create_folder(Path(folder_name) / "subdir" / "anothersubdir")
-
-        assert len(folder_names_and_node_ids) == 3
-        assert folder_names_and_node_ids == {
+        assert len(folders) == 3
+        assert folders == {
             folder_name: mocker.ANY,
             "subdir": mocker.ANY,
             "anothersubdir": mocker.ANY,
@@ -141,11 +168,8 @@ class TestCreateFolder:
 
 
 class TestFind:
-    async def test_find_file(self, mega: Mega, folder_name: str):
-        folder = await mega.find(folder_name)
-        assert folder
-        dest_node_id = folder["h"]
-        _ = await mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
+    async def test_find_file(self, mega: Mega, folder_name: str, folder: Folder):
+        _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
         file1 = await mega.find(f"{folder_name}/test.py")
         assert file1
 
@@ -196,17 +220,16 @@ async def test_destroy(mega: Mega, uploaded_file: FileOrFolder):
     assert isinstance(resp, int)
 
 
-async def test_download(mega: Mega, tmpdir, folder_name):
+async def test_download(mega: Mega, tmp_path: Path, folder_name: str):
     # Upload a single file into a folder
     node = await mega.find(folder_name)
     assert node
     folder = node
-    dest_node_id = folder["h"]
-    _ = await mega.upload(__file__, dest_node=dest_node_id, dest_filename="test.py")
+    _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     file = await mega.find(path)
     assert file
-    output_path = await mega.download(file, tmpdir, "test.py")
+    output_path = await mega.download(file, tmp_path, "test.py")
     assert output_path.is_file()
 
 
@@ -250,7 +273,7 @@ class TestAPIRequest:
     async def test_when_api_returns_int_raises_exception(
         self,
         mega: Mega,
-        response_text,
+        response_text: Literal["-3", "-9"],
     ):
         with requests_mock.Mocker() as mocker:
             mocker.post(mega.api.entrypoint, text=response_text)

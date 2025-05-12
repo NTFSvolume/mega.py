@@ -553,18 +553,19 @@ class Mega:
             }
         )
 
-        def get_id_from_obj() -> str | None:
-            """
-            Get node id from a file object
-            """
-
-            for i in node_data["f"]:
-                if i["h"] != "":
-                    return i["h"]
-
-        node_id = get_id_from_obj()
+        node_id = self.get_id_from_resp_obj(node_data)
         assert node_id
         return node_id
+
+    @staticmethod
+    def get_id_from_resp_obj(resp: Folder) -> str | None:
+        """
+        Get node id from a file object
+        """
+
+        for i in resp["f"]:
+            if i["h"] != "":
+                return i["h"]
 
     async def get_quota(self) -> int:
         """Get current remaining disk quota."""
@@ -973,7 +974,7 @@ class Mega:
 
     async def upload(self, filename: str, dest_node: Folder | None = None, dest_filename: str | None = None) -> Folder:
         # determine storage node
-        dest_node_id = dest_node["h"] or self.root_id
+        dest_node_id = dest_node["h"] if dest_node else self.root_id
         # request upload url, call 'u' method
         with open(filename, "rb") as input_file:
             file_size = os.path.getsize(filename)
@@ -1079,8 +1080,8 @@ class Mega:
         encrypt_attribs = base64_url_encode(encrypt_attr(attribs, ul_key[:4]))
         encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self.master_key))
 
-        # update attributes
-        data: AnyDict = await self.api.request(
+        # This can return multiple folders if subfolders needed to be created
+        folders: list[Folder] = await self.api.request(
             {
                 "a": "p",
                 "t": parent_node_id,
@@ -1088,10 +1089,9 @@ class Mega:
                 "i": self.api.request_id,
             }
         )
-        folder: Folder = data["f"][0]
-        return folder
+        return folders
 
-    async def create_folder(self, path: Path | str) -> Folder:
+    async def create_folder(self, path: Path | str) -> list[Folder]:
         path = Path(path)
         last_parent = await self.find_by_handle(self.root_id)
         assert last_parent
@@ -1203,7 +1203,7 @@ class Mega:
 
     async def import_public_url(
         self, url: str, dest_node: FileOrFolder | str | None = None, dest_name: str | None = None
-    ) -> Folder:
+    ) -> list[Folder]:
         """
         Import the public url into user account
         """
@@ -1240,7 +1240,7 @@ class Mega:
         file_key: str,
         dest_node: FileOrFolder | str | None = None,
         dest_name: str | None = None,
-    ) -> Folder:
+    ) -> list[Folder]:
         """
         Import the public file into user account
         """
