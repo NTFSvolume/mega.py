@@ -41,4 +41,9 @@ jobs:
 
       - name: Run pytest
         run: |
-          uv run pytest -v --cov
+          uv run pytest
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}

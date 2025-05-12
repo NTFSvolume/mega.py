@@ -31,16 +31,8 @@ Homepage = "https://github.com/NTFSvolume/mega.py"
 [tool.coverage.run]
 omit = [
     "**/__init__.py",
-    "**/celeryconfig.py",
-    "**/constants.py",
-    "**/env.py",
-    "**/migrations/*",
-    "**/urls.py",
     ".tox/*",
-    "app.py",
     "dist/*",
-    "setup.py",
-    "src/*",
     "tests/*"
 ]
 
@@ -54,7 +46,7 @@ include = ["src/mega"]
 "src/mega" = "mega"
 
 [tool.pytest.ini_options]
-addopts = "-s -v"
+addopts = "-s -v --cov --cov-branch --cov-report=xml"
 asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 minversion = "8.3"
