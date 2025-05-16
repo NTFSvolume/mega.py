@@ -918,8 +918,8 @@ class Mega:
         await asyncio.to_thread(shutil.move, temp_output_file.name, output_path)
         return output_path
 
+    @staticmethod
     def _decrypt_chunks(
-        self,
         iv: TupleArray,
         k_decrypted: TupleArray,
         meta_mac: TupleArray,
