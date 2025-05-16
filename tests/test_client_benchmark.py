@@ -1,7 +1,7 @@
 import asyncio
-import os
-import random
 import tempfile
+import hashlib
+from typing import Any, Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,15 +12,15 @@ from mega.client import Mega
 
 
 def generate_random_file(size_bytes: int, temp_dir: Path) -> Path:
-    """Generate a temporary file with random data of specified size."""
+    """Generate a temporary file with null data of specified size."""
     file_path = temp_dir / f"test_file_{size_bytes}.bin"
     with open(file_path, "wb") as f:
-        f.write(os.urandom(size_bytes))
+        f.write(size_bytes * b"\x00")
     return file_path
 
 
 @pytest.fixture
-def temp_dir():
+def temp_dir() -> Generator[Any,Any,Path]:
     """Create a temporary directory for test files."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         yield Path(tmp_dir)
@@ -33,7 +33,8 @@ def mock_mega():
     mega.api = MagicMock()
     mega.api.request = AsyncMock()
     mega.api.request_id = "test_request_id"
-    mega.master_key = [random.randint(0, 2**32 - 1) for _ in range(4)]
+    #mega.master_key = [random.randint(0, 2**32 - 1) for _ in range(4)]
+    mega.master_key = [0, 0, 0, 0]
     mega.root_id = "test_root_id"
     mega.logged_in = True
     return mega
@@ -41,22 +42,22 @@ def mock_mega():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "file_size",
+    "file_size,expected_hash",
     [
-        123,
-        1024, # 1KB
-        1032, # 1KB + 8
-        16 * 1024, # 16KB
-        16 * 1024 + 33,
-        100 * 1024,  # 100KB
-        1024 * 1024,  # 1MB
-        1024 * 1024 + 6,
-        10 * 1024 * 1024,  # 10MB
-        100 * 1024 * 1024,  # 100MB
-        1000 * 1024 * 1024,  # 1000MB
+        (123, "a20507fecb0a9b265eee3020f6ffaa5e0bd0c957106b97600225fe6256f20b6a"),
+        (1024, "469a896e0044722b40be4a1fd6ca442d994483bc0974fe291e313ccc49f19bd2"), # 1KB
+        (1032, "36a4bf611b25f48c685c279f4d1d0a7dee72946bcfab863daa806c80279c59d5"), # 1KB + 8
+        (16 * 1024, "12284e2a1b298cde673d01f83b08b534a45a99a4d96606e4f57b14c9ca401d45"), # 16KB
+        (16 * 1024 + 33, "d6d64588dc4bbad6d17d4f0a8dac8dc8d1e7f6aca12e5fa1403e208845456083"),
+        (100 * 1024, "a7bbbc6b3a4c46dea4f95f7ae5e762ca7645a3b6bed94bdee2817c63910c6e38"),  # 100KB
+        (1024 * 1024, "6edc9fa284fbd3d0176eb8bc5c23a53bf38430348ddbd134118f4f63a8192901"),  # 1MB
+        (1024 * 1024 + 6, "d5747956aa773b822eead7794ca915fe279e6efb50f7179e81c89c7e63d8c119"),
+        (10 * 1024 * 1024, "3e9aa285282ea64e61d7517330f11b761d15e669f1548f782be9f314e2ca8f3b"),  # 10MB
+        (100 * 1024 * 1024, "64062545ca0753883a2ec2f2b82d8c9272c7585b2d989b0c8abef6763a36140a"),  # 100MB
+        (1000 * 1024 * 1024, "7f835a3cd31662332c8a98abbdf543dbbff6f105ffe54f488c03993161315469")  # 1000MB
     ],
 )
-async def test_upload_benchmark(mock_mega, temp_dir, file_size):
+async def test_upload_benchmark(mock_mega: Mega, temp_dir: Path, file_size: int, expected_hash: str):
     """Benchmark the upload function with different file sizes."""
     # Generate test file
     test_file = generate_random_file(file_size, temp_dir)
@@ -79,8 +80,10 @@ async def test_upload_benchmark(mock_mega, temp_dir, file_size):
     start_time = asyncio.get_event_loop().time()
     
     # Perform upload
-    await mock_mega.upload(str(test_file))
-    
+    with patch("random.randint", return_value=42) as mocked_random_u32int:
+        await mock_mega.upload(str(test_file))
+        assert mocked_random_u32int.called
+
     # Calculate elapsed time and throughput
     end_time = asyncio.get_event_loop().time()
     elapsed_time = end_time - start_time
@@ -96,6 +99,13 @@ async def test_upload_benchmark(mock_mega, temp_dir, file_size):
     
     # Verify that the upload was called with correct parameters
     assert mock_mega.api.session.post.called
+
+    # Capture and print the arguments passed to session.post
+    post_call_args = mock_mega.api.session.post.call_args_list
+    sent_data = b"".join([x[1]["data"] for x in post_call_args])
     
+    hashdigest = hashlib.sha256(sent_data).hexdigest()
+    assert hashdigest == expected_hash
+
     # Clean up
     test_file.unlink() 
