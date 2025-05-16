@@ -1,7 +1,7 @@
 import asyncio
 import tempfile
 import hashlib
-from typing import Any, Generator
+from typing import Any, Generator, Tuple
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,7 +11,7 @@ from aiohttp import ClientResponse
 from mega.client import Mega
 
 
-def generate_random_file(size_bytes: int, temp_dir: Path) -> Path:
+def generate_nulled_file(size_bytes: int, temp_dir: Path) -> Path:
     """Generate a temporary file with null data of specified size."""
     file_path = temp_dir / f"test_file_{size_bytes}.bin"
     with open(file_path, "wb") as f:
@@ -33,7 +33,6 @@ def mock_mega():
     mega.api = MagicMock()
     mega.api.request = AsyncMock()
     mega.api.request_id = "test_request_id"
-    #mega.master_key = [random.randint(0, 2**32 - 1) for _ in range(4)]
     mega.master_key = [0, 0, 0, 0]
     mega.root_id = "test_root_id"
     mega.logged_in = True
@@ -60,7 +59,7 @@ def mock_mega():
 async def test_upload_benchmark(mock_mega: Mega, temp_dir: Path, file_size: int, expected_hash: str):
     """Benchmark the upload function with different file sizes."""
     # Generate test file
-    test_file = generate_random_file(file_size, temp_dir)
+    test_file = generate_nulled_file(file_size, temp_dir)
     
     # Mock the upload URL response
     mock_mega.api.request.return_value = {"p": "https://test-upload-url.com"}
@@ -109,3 +108,65 @@ async def test_upload_benchmark(mock_mega: Mega, temp_dir: Path, file_size: int,
 
     # Clean up
     test_file.unlink() 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_size,expected_mac",
+    [
+        (123, (3278462882, 2741736677)),
+        (1024, (2210161789, 3740104078)), # 1KB
+        (1032, (241438085, 1291985314)), # 1KB + 8
+        (16 * 1024, (3846108996, 4037968861)), # 16KB
+        (16 * 1024 + 33, (2265499540, 3339189967)),
+        (100 * 1024, (2987900235, 65369476)),  # 100KB
+        (1024 * 1024, (3422571937, 892360719)),  # 1MB
+        (1024 * 1024 + 6, (283052294, 516723235)),
+        (10 * 1024 * 1024, (4213234313, 1799800219)),  # 10MB
+        (100 * 1024 * 1024, (1534396906, 823987448)),  # 100MB
+        (1000 * 1024 * 1024, (3030876906, 1181557734))  # 1000MB
+    ],
+)
+async def test_download_benchmark(mock_mega: Mega, temp_dir: Path, file_size: int, expected_mac: Tuple[int, int]):
+    """Benchmark the download function with different file sizes."""
+
+    async def mock_content_reader(len: int):
+        return b"\x00" * len
+
+    # Create a temporary file for output
+    output_file = temp_dir / "output.bin"
+    
+    mock_mega.api.session.get.return_value.__aenter__.return_value.content.readexactly = AsyncMock(side_effect=mock_content_reader)
+
+    # Mock file operations
+    with patch("asyncio.to_thread") as mock_to_thread:
+        # Mock mkdir and move operations
+        mock_to_thread.side_effect = lambda func, *args, **kwargs: func(*args, **kwargs)
+        
+        # Record start time
+        start_time = asyncio.get_event_loop().time()
+        
+        # Perform download
+        await mock_mega._really_download_file(
+            direct_file_url="https://test-download-url.com",
+            output_path=output_file,
+            file_size=file_size,
+            iv=(1, 2),  # Using zero IV for deterministic encryption
+            meta_mac=expected_mac,  # Using zero MAC for testing
+            k_decrypted=(5, 6, 7, 8),  # Using zero key for testing
+        )
+        
+        # Calculate elapsed time and throughput
+        end_time = asyncio.get_event_loop().time()
+        elapsed_time = end_time - start_time
+        throughput = file_size / elapsed_time  # bytes per second
+        
+        # Convert to MB/s for readability
+        throughput_mbps = throughput / (1024 * 1024)
+        
+        # Print benchmark results
+        print(f"\nFile size: {file_size / (1024 * 1024):.2f} MB")
+        print(f"Elapsed time: {elapsed_time:.2f} seconds")
+        print(f"Throughput: {throughput_mbps:.2f} MB/s")
+        
+        # Verify that the download was called
+        assert mock_mega.api.session.get.called
