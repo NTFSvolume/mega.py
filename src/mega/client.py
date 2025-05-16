@@ -1030,8 +1030,7 @@ class Mega:
                         block = bytes(mem_view[offset : offset + read_size])
 
                         if len(block) % CHUNK_BLOCK_LEN:
-                            pad_count = (CHUNK_BLOCK_LEN - (len(block) % CHUNK_BLOCK_LEN))
-                            block += b"\x00" * pad_count
+                            block = pad_bytes(block)
 
                         encrypted_block = encryptor.encrypt(block)
                         offset += len(block)
