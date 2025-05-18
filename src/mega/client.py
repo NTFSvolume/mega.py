@@ -1059,7 +1059,7 @@ class Mega:
                     logger.info("%s of %s uploaded", upload_progress, file_size)
             else:
                 # empty file
-                output_file = await self.api.session.post(ul_url + "/0", data="", timeout=self.api.timeout)
+                output_file = await self.api.session.post(ul_url + "/0", data=b"", timeout=self.api.timeout)
                 completion_file_handle = await output_file.text()
 
             logger.info("Chunks uploaded")
