@@ -210,6 +210,12 @@ async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Fo
     assert output_path.parent == tmp_path
     assert output_path.is_file()
 
+    fin_bytes = Path(__file__).read_bytes()
+    fout_bytes = output_path.read_bytes()
+
+    assert len(fin_bytes) > 0
+    assert fin_bytes == fout_bytes
+
 
 async def test_empty_trash(mega: Mega):
     # resp None if already empty, else int
