@@ -19,6 +19,7 @@ from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, Ti
 from mega.api import MegaApi
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
+    CHUNK_LEN_16KB,
     a32_to_base64,
     a32_to_bytes,
     base64_to_a32,
@@ -917,8 +918,8 @@ class Mega:
         await asyncio.to_thread(shutil.move, temp_output_file.name, output_path)
         return output_path
 
+    @staticmethod
     def _decrypt_chunks(
-        self,
         iv: TupleArray,
         k_decrypted: TupleArray,
         meta_mac: TupleArray,
@@ -1010,20 +1011,44 @@ class Mega:
                     upload_progress += actual_size
                     encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
 
+                    offset = 0
                     mem_view = memoryview(chunk)
-                    for index in range(0, actual_size - CHUNK_BLOCK_LEN, CHUNK_BLOCK_LEN):
-                        block = mem_view[index : index + CHUNK_BLOCK_LEN]
-                        encryptor.encrypt(block)
 
-                    modchunk = actual_size % CHUNK_BLOCK_LEN
-                    if modchunk == 0:
-                        # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                        modchunk = CHUNK_BLOCK_LEN
+                    # Calculate padded size (AES block size aligned)
+                    padded_size = actual_size
+                    remainder = actual_size % CHUNK_BLOCK_LEN
+                    if remainder:
+                        padded_size += (CHUNK_BLOCK_LEN - remainder)
+                    else:
+                        padded_size += CHUNK_BLOCK_LEN
 
-                    # pad last block to 16 bytes
-                    last_block = pad_bytes(mem_view[-modchunk:])
+                    assert padded_size % CHUNK_BLOCK_LEN == 0
+                    assert padded_size >= actual_size
 
-                    mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_block))
+                    while offset < actual_size:
+                        read_size = min(CHUNK_LEN_16KB, actual_size - offset)
+                        block = bytes(mem_view[offset : offset + read_size])
+
+                        if len(block) % CHUNK_BLOCK_LEN:
+                            block = pad_bytes(block)
+
+                        encrypted_block = encryptor.encrypt(block)
+                        offset += len(block)
+
+                    if (padded_size - offset) > 0:
+                        block = bytes(mem_view[offset:])
+                        assert len(block) <= CHUNK_BLOCK_LEN
+                        block += (b"\x00" * (padded_size - offset))
+                        assert len(block) % CHUNK_BLOCK_LEN == 0
+
+                        # Encrypt last block
+                        encrypted_block = encryptor.encrypt(block)
+                        offset += len(block)
+
+                    assert len(encrypted_block) > 0
+                    assert offset == padded_size, f"Offset mismatch: {offset} vs. {padded_size}"
+
+                    mac_bytes = mac_encryptor.encrypt(encrypted_block[-CHUNK_BLOCK_LEN:])
 
                     # encrypt file and upload
                     chunk = aes.encrypt(chunk)

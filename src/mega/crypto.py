@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from .data_structures import AnyArray, AnyDict, Array, TupleArray, U32Int
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
+CHUNK_LEN_16KB = (16 * 1024 * 1024)
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
 
 
