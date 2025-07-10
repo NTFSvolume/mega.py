@@ -257,7 +257,7 @@ class Mega:
             path = match[0]
             return path
         else:
-            raise ValueError("URL key missing")
+            raise ValueError(f"URL key missing from {url}")
 
     def _process_node(self, file: Node, shared_keys: SharedkeysDict) -> Node:
         if file["t"] == NodeType.FILE or file["t"] == NodeType.FOLDER:
@@ -770,6 +770,7 @@ class Mega:
         return nodes
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
+        folder_id, _ = self._parse_folder_url(url)
         nodes = await self.get_nodes_public_folder(url)
         download_tasks = []
         root_id = next(iter(nodes))
@@ -778,13 +779,14 @@ class Mega:
             if node["t"] != NodeType.FILE:
                 continue
 
-            async def download_file(file: File, file_path: Path):
+            async def download_file(file: File, file_path: Path) -> None:
                 file_data = await self.api.request(
                     {
                         "a": "g",
                         "g": 1,
                         "n": file["h"],
-                    }
+                    },
+                    {"n": folder_id},
                 )
 
                 file_url = file_data["g"]
