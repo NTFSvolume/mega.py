@@ -20,7 +20,7 @@ license-files = ["LICENSE"]
 maintainers = [{name = "NTFSvolume"}]
 readme = "README.md"
 requires-python = ">=3.9"
-version = "1.10.0"
+version = "1.10.1"
 
 [project.scripts]
 mega_nz = "mega.main:main"
@@ -42,7 +42,6 @@ asyncio_default_fixture_loop_scope = "function"
 asyncio_mode = "auto"
 minversion = "8.3"
 norecursedirs = [".git"]
-testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 120
