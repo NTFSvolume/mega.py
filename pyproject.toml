@@ -19,7 +19,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 maintainers = [{name = "NTFSvolume"}]
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 version = "1.10.1"
 
 [project.scripts]
