@@ -294,7 +294,7 @@ class Mega:
                 if file["t"] == NodeType.FILE:
                     file = cast("File", file)
                     k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
-                    file["iv"] = key[4:6] + (0, 0)
+                    file["iv"] = (*key[4:6], 0, 0)
                     file["meta_mac"] = key[6:8]
                 # folder
                 else:
@@ -843,7 +843,7 @@ class Mega:
                 _file_key[2] ^ _file_key[6],
                 _file_key[3] ^ _file_key[7],
             )
-            iv: AnyArray = _file_key[4:6] + (0, 0)
+            iv: AnyArray = (*_file_key[4:6], 0, 0)
             meta_mac: TupleArray = _file_key[6:8]
         else:
             file_handle = file["h"]

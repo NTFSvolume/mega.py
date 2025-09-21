@@ -112,5 +112,6 @@ dev = [
     "pytest-cov>=6.0.0",
     "pytest-mock>=3.14.0",
     "pytest>=8.3.5",
-    "requests-mock>=1.12.1"
+    "requests-mock>=1.12.1",
+    "ruff>=0.13.1"
 ]
