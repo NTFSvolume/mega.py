@@ -8,11 +8,14 @@ Mega API information
 
 """
 
+from __future__ import annotations
+
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import Any, Literal, NamedTuple, TypedDict, Union
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict, Union
 
-from typing_extensions import NotRequired, TypeAlias
+if TYPE_CHECKING:
+    from typing_extensions import NotRequired
 
 U32Int: TypeAlias = int
 TupleArray: TypeAlias = tuple[U32Int, ...]
