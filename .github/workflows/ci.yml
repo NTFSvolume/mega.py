@@ -4,9 +4,15 @@ on:
   push:
     branches:
       - master
+    paths:
+      - '**.py'
+      - '.github/workflows/ci.yml'
   pull_request:
     branches:
       - master
+    paths:
+      - '**.py'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
 
 jobs:

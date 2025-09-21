@@ -1,11 +1,6 @@
 [project]
 name = "async-mega.py"
 authors = [{name = "O'Dwyer Software", email = "hello@odwyer.software"}]
-classifiers = [
-    "Intended Audience :: Developers",
-    "Operating System :: OS Independent",
-    "Topic :: Internet :: WWW/HTTP"
-]
 dependencies = [
     "aiohttp>=3.11.18",
     "pycryptodome==3.19.0",
