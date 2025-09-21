@@ -756,7 +756,7 @@ class Mega:
                 elif node["t"] == NodeType.FOLDER:
                     k = key
 
-                iv: AnyArray = key[4:6] + (0, 0)
+                iv: AnyArray = (*key[4:6], 0, 0)
                 meta_mac: TupleArray = key[6:8]
 
                 attrs = decrypt_attr(base64_url_decode(node["a"]), k)
@@ -1205,7 +1205,7 @@ class Mega:
 
     async def import_public_url(
         self, url: str, dest_node: FileOrFolder | str | None = None, dest_name: str | None = None
-    ) -> list[Folder]:
+    ) -> Folder:
         """
         Import the public url into user account
         """
@@ -1242,7 +1242,7 @@ class Mega:
         file_key: str,
         dest_node: FileOrFolder | str | None = None,
         dest_name: str | None = None,
-    ) -> list[Folder]:
+    ) -> Folder:
         """
         Import the public file into user account
         """
@@ -1269,20 +1269,22 @@ class Mega:
 
         encrypted_key: str = a32_to_base64(encrypt_key(key, self.master_key))
         encrypted_name: str = base64_url_encode(encrypt_attr({"n": dest_name}, k))
-        return await self.api.request(
-            {
-                "a": "p",
-                "t": dest_node_id,
-                "n": [
-                    {
-                        "ph": file_handle,
-                        "t": 0,
-                        "a": encrypted_name,
-                        "k": encrypted_key,
-                    },
-                ],
-            }
-        )
+        return (
+            await self.api.request(
+                {
+                    "a": "p",
+                    "t": dest_node_id,
+                    "n": [
+                        {
+                            "ph": file_handle,
+                            "t": 0,
+                            "a": encrypted_name,
+                            "k": encrypted_key,
+                        },
+                    ],
+                }
+            )
+        )[0]
 
     async def build_file_system(self) -> dict[PurePosixPath, Node]:
         nodes_map = {node["h"]: node async for node in self._get_nodes()}

@@ -30,7 +30,7 @@ from mega.crypto import get_chunks
         ),
     ],
 )
-def test_get_chunks(file_size: int, exp_result: tuple[int, int]):
+def test_get_chunks(file_size: int, exp_result: tuple[int, int]) -> None:
     result = tuple(get_chunks(file_size))
 
     assert result == exp_result

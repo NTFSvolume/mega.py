@@ -132,7 +132,7 @@ class TestExport:
             assert result_public_share_url.startswith("https://mega.nz/#!")
 
 
-async def test_import_public_url(mega: Mega):
+async def test_import_public_url(mega: Mega) -> None:
     resp = await mega.import_public_url(TEST_PUBLIC_URL)
     file_id = mega.get_id_from_resp_obj(resp)
     assert file_id
@@ -140,14 +140,14 @@ async def test_import_public_url(mega: Mega):
     assert isinstance(resp, int)
 
 
-async def test_create_single_folder(mega: Mega, folder_name: str):
+async def test_create_single_folder(mega: Mega, folder_name: str) -> None:
     folder = await mega.create_folder(folder_name)
     assert isinstance(folder, dict)
     assert folder["h"]
     assert folder["t"] == NodeType.FOLDER
 
 
-async def test_create_folder_with_sub_folders(mega: Mega, folder_name: str):
+async def test_create_folder_with_sub_folders(mega: Mega, folder_name: str) -> None:
     full_path = Path(folder_name) / "subdir" / "anothersubdir"
     _ = await mega.create_folder(full_path)
 
@@ -156,7 +156,7 @@ async def test_create_folder_with_sub_folders(mega: Mega, folder_name: str):
 
 
 class TestFind:
-    async def test_find_file(self, mega: Mega, folder_name: str, folder: Folder):
+    async def test_find_file(self, mega: Mega, folder_name: str, folder: Folder) -> None:
         _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
         file1 = await mega.find(f"{folder_name}/test.py")
         assert file1
@@ -169,38 +169,38 @@ class TestFind:
         # Check that the correct test.py was found
         assert file1 != file2
 
-    async def test_path_not_found_returns_none(self, mega: Mega):
+    async def test_path_not_found_returns_none(self, mega: Mega) -> None:
         result = await mega.find("not_found")
         assert result is None
 
-    async def test_exclude_deleted_files(self, mega: Mega, folder_name: str, folder: Folder):
+    async def test_exclude_deleted_files(self, mega: Mega, folder_name: str, folder: Folder) -> None:
         assert await mega.find(folder_name)
         _ = await mega.delete(folder["h"])
         assert await mega.search(folder_name)
         assert not await mega.search(folder_name, exclude_deleted=True)
 
 
-async def test_rename(mega: Mega, folder_name: str, folder: Folder):
+async def test_rename(mega: Mega, folder_name: str, folder: Folder) -> None:
     resp = await mega.rename(folder, folder_name)
     assert resp == 0
 
 
-async def test_delete_folder(mega: Mega, folder: Folder):
+async def test_delete_folder(mega: Mega, folder: Folder) -> None:
     resp = await mega.delete(folder["h"])
     assert isinstance(resp, int)
 
 
-async def test_delete(mega: Mega, uploaded_file: FileOrFolder):
+async def test_delete(mega: Mega, uploaded_file: FileOrFolder) -> None:
     resp = await mega.delete(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
-async def test_destroy(mega: Mega, uploaded_file: FileOrFolder):
+async def test_destroy(mega: Mega, uploaded_file: FileOrFolder) -> None:
     resp = await mega.destroy(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
-async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Folder):
+async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Folder) -> None:
     # Upload a single file into a folder
     _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
     path = f"{folder_name}/test.py"
@@ -211,19 +211,19 @@ async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Fo
     assert output_path.is_file()
 
 
-async def test_empty_trash(mega: Mega):
+async def test_empty_trash(mega: Mega) -> None:
     # resp None if already empty, else int
     resp = await mega.empty_trash()
     if resp is not None:
         assert isinstance(resp, int)
 
 
-async def test_add_contact(mega: Mega):
+async def test_add_contact(mega: Mega) -> None:
     resp = await mega.add_contact(TEST_CONTACT)
     assert isinstance(resp, int)
 
 
-async def test_remove_contact(mega: Mega):
+async def test_remove_contact(mega: Mega) -> None:
     resp = await mega.remove_contact(TEST_CONTACT)
     assert isinstance(resp, int)
 
@@ -241,7 +241,7 @@ async def test_remove_contact(mega: Mega):
         ),
     ],
 )
-def test_parse_url(url: str, expected_file_id_and_key: str):
+def test_parse_url(url: str, expected_file_id_and_key: str) -> None:
     mega_ = Mega()
     assert mega_._parse_url(url) == expected_file_id_and_key
 

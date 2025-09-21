@@ -8,7 +8,7 @@ from rich.logging import RichHandler
 from mega.client import Mega
 
 
-async def run():
+async def run() -> None:
     handler = RichHandler(show_time=False, rich_tracebacks=True)
     logger = logging.getLogger()
     logger.setLevel(10)
@@ -37,7 +37,7 @@ async def run():
     await mega.close()
 
 
-def main():
+def main() -> None:
     asyncio.run(run())
 
 
