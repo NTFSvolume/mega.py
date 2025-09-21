@@ -1,5 +1,5 @@
 [project]
-name = "mega"
+name = "async-mega.py"
 authors = [{name = "O'Dwyer Software", email = "hello@odwyer.software"}]
 classifiers = [
     "Intended Audience :: Developers",
@@ -12,11 +12,11 @@ dependencies = [
     "aiohttp>=3.11.18",
     "pycryptodome==3.19.0",
     "rich>=13.0.0",
-    "tenacity>=9.0.0",
-    "typing-extensions>=4.13.2"
+    "tenacity>=9.0.0"
 ]
 description = "Python lib for the Mega.co.nz API."
 license = "Apache-2.0"
+license-files = ["LICENSE"]
 maintainers = [{name = "NTFSvolume"}]
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,15 +35,6 @@ omit = [
     "dist/*",
     "tests/*"
 ]
-
-[tool.hatch.build.targets.sdist]
-include = ["src/mega"]
-
-[tool.hatch.build.targets.wheel]
-include = ["src/mega"]
-
-[tool.hatch.build.targets.wheel.sources]
-"src/mega" = "mega"
 
 [tool.pytest.ini_options]
 addopts = "-s -v --cov --cov-branch --cov-report=term --cov-report=xml"
@@ -107,9 +98,12 @@ sort_first = ["name", "project", "select", "tool"]
 spaces_before_inline_comment = 2
 spaces_indent_inline_array = 4
 
+[tool.uv.build-backend]
+module-name = "mega"
+
 [build-system]
-build-backend = "hatchling.build"
-requires = ["hatchling"]
+build-backend = "uv_build"
+requires = ["uv_build>=0.8.17,<0.9.0"]
 
 [dependency-groups]
 dev = [
