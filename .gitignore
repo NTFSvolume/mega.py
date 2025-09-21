@@ -31,6 +31,7 @@ htmlcov/
 
 # CDT-specific
 .cproject
+*.xml
 
 # PDT-specific
 .buildpath

@@ -1269,22 +1269,20 @@ class Mega:
 
         encrypted_key: str = a32_to_base64(encrypt_key(key, self.master_key))
         encrypted_name: str = base64_url_encode(encrypt_attr({"n": dest_name}, k))
-        return (
-            await self.api.request(
-                {
-                    "a": "p",
-                    "t": dest_node_id,
-                    "n": [
-                        {
-                            "ph": file_handle,
-                            "t": 0,
-                            "a": encrypted_name,
-                            "k": encrypted_key,
-                        },
-                    ],
-                }
-            )
-        )[0]
+        return await self.api.request(
+            {
+                "a": "p",
+                "t": dest_node_id,
+                "n": [
+                    {
+                        "ph": file_handle,
+                        "t": 0,
+                        "a": encrypted_name,
+                        "k": encrypted_key,
+                    },
+                ],
+            }
+        )
 
     async def build_file_system(self) -> dict[PurePosixPath, Node]:
         nodes_map = {node["h"]: node async for node in self._get_nodes()}
