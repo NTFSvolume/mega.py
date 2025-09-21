@@ -57,7 +57,7 @@ from mega.data_structures import (
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
+    from collections.abc import AsyncGenerator, Callable, Coroutine, Generator, Sequence
     from typing import ParamSpec
 
     R = TypeVar("R")
@@ -254,7 +254,8 @@ class Mega:
         else:
             raise ValueError(f"URL key missing from {url}")
 
-    def _process_node(self, file: Node, shared_keys: SharedkeysDict) -> Node:
+    def _process_node(self, file: Node) -> Node:
+        shared_keys: SharedkeysDict = self.shared_keys
         if file["t"] == NodeType.FILE or file["t"] == NodeType.FOLDER:
             file = cast("FileOrFolder", file)
             keys = dict(keypart.split(":", 1) for keypart in file["k"].split("/") if ":" in keypart)
@@ -406,26 +407,43 @@ class Mega:
         shared_keys: SharedkeysDict = {}
         self._init_shared_keys(files, shared_keys)
         for index, node in enumerate(files["f"], 1):
-            yield self._process_node(node, shared_keys)
+            yield self._process_node(node)
             if index % 100 == 0:
                 await asyncio.sleep(0)
 
-    async def _get_nodes_in_shared_folder(self, folder_id: str) -> AsyncGenerator[Node]:
-        files: Folder = await self.api.request(
-            {
-                "a": "f",
-                "c": 1,
-                "ca": 1,
-                "r": 1,
-            },
-            {
-                "n": folder_id,
-            },
-        )
-        for index, node in enumerate(files["f"], 1):
-            yield self._process_node(node, self.shared_keys)
-            if index % 100 == 0:
-                await asyncio.sleep(0)
+    async def _process_nodes(
+        self,
+        nodes: Sequence[Node],
+        public_key: str | None = None,
+        predicate: Callable[[Node], bool] | None = None,
+    ) -> dict[str, Node]:
+        """
+        Processes multiple nodes at once, decrypting their metadata and attributes.
+
+        If predicate is provided, only nodes for which `predicate(node)` returns `False` are included in the result.
+
+        This method is NOT thread safe. It modifies the internal state of the shared keys.
+        """
+        # User may already have access to this folder (the key is saved in their account)
+        folder_key = base64_to_a32(public_key) if public_key else None
+        self.shared_keys.setdefault("EXP", {})
+
+        async def process_nodes() -> dict[str, Node]:
+            results = {}
+            for index, node in enumerate(nodes):
+                node_id = node["h"]
+                if folder_key:
+                    self.shared_keys["EXP"][node_id] = folder_key
+                processed_node = self._process_node(node)
+                if predicate is None or not predicate(processed_node):
+                    results[node_id] = processed_node
+
+                if index % 500 == 0:
+                    await asyncio.sleep(0)
+
+            return results
+
+        return await process_nodes()
 
     def _parse_folder_url(self, url: str) -> tuple[str, str]:
         if "/folder/" in url:
@@ -530,10 +548,9 @@ class Mega:
             }
         )
         files_dict: FilesMapping = {}
-        shared_keys: SharedkeysDict = {}
         target_id = self.special_nodes_mapping.get(target)
         for index, file in enumerate(folder["f"], 1):
-            processed_file = cast("FileOrFolder", self._process_node(file, shared_keys))
+            processed_file = cast("FileOrFolder", self._process_node(file))
             if processed_file["a"] and processed_file["p"] == target_id:
                 files_dict[file["h"]] = processed_file
             if index % 100 == 0:
@@ -739,30 +756,13 @@ class Mega:
 
     async def get_nodes_public_folder(self, url: str) -> dict[str, FileOrFolder]:
         folder_id, b64_share_key = self._parse_folder_url(url)
-        shared_key = base64_to_a32(b64_share_key)
 
-        async def prepare_nodes():
-            async for node in self._get_nodes_in_shared_folder(folder_id):
-                node = cast("FileOrFolder", node)
-                encrypted_key = base64_to_a32(node["k"].split(":")[1])
-                key = decrypt_key(encrypted_key, shared_key)
-                if node["t"] == NodeType.FILE:
-                    k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
-                elif node["t"] == NodeType.FOLDER:
-                    k = key
+        folder: Folder = await self.api.request(
+            {"a": "f", "c": 1, "ca": 1, "r": 1},
+            {"n": folder_id},
+        )
 
-                iv: AnyArray = (*key[4:6], 0, 0)
-                meta_mac: TupleArray = key[6:8]
-
-                attrs = decrypt_attr(base64_url_decode(node["a"]), k)
-                node["attributes"] = cast("Attributes", attrs)
-                node["k_decrypted"] = k
-                node["iv"] = iv
-                node["meta_mac"] = meta_mac
-                yield node
-
-        nodes = {node["h"]: node async for node in prepare_nodes()}
-        return nodes
+        return cast("dict[str, FileOrFolder]", await self._process_nodes(folder["f"], b64_share_key))
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)
