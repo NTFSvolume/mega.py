@@ -4,8 +4,6 @@ authors = [{name = "O'Dwyer Software", email = "hello@odwyer.software"}]
 classifiers = [
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python",
     "Topic :: Internet :: WWW/HTTP"
 ]
 dependencies = [

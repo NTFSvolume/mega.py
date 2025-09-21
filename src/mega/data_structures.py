@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict, Union
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from typing_extensions import NotRequired
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 U32Int: TypeAlias = int
 TupleArray: TypeAlias = tuple[U32Int, ...]
 ListArray: TypeAlias = list[U32Int]
-Array: TypeAlias = Union[TupleArray, ListArray]
+Array: TypeAlias = TupleArray | ListArray
 AnyArray: TypeAlias = Sequence[U32Int]
 AnyDict: TypeAlias = dict[str, Any]
 

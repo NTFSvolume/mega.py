@@ -57,13 +57,8 @@ from mega.data_structures import (
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    import sys
     from collections.abc import AsyncGenerator, Callable, Coroutine, Generator
-
-    if sys.version_info < (3, 10):
-        from typing_extensions import ParamSpec
-    else:
-        from typing import ParamSpec
+    from typing import ParamSpec
 
     R = TypeVar("R")
     P = ParamSpec("P")

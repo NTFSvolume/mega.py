@@ -1,6 +1,3 @@
-from typing import Union
-
-
 class MegaNzError(Exception): ...
 
 
@@ -60,7 +57,7 @@ class RequestError(MegaNzError):
     Error in API request
     """
 
-    def __init__(self, msg: Union[str, int]) -> None:
+    def __init__(self, msg: str | int) -> None:
         self.code = code = msg if isinstance(msg, int) else None
         if code:
             code_desc, long_desc = _CODE_TO_DESCRIPTIONS[code]
