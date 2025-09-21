@@ -1,17 +1,23 @@
+from __future__ import annotations
+
 import asyncio
 import os
 import random
-from collections.abc import AsyncGenerator
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
 
 from mega.client import Mega
-from mega.data_structures import File, FileOrFolder, Folder, NodeType, StorageUsage
+from mega.data_structures import NodeType, StorageUsage
 from mega.errors import RequestError
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
+
+    from mega.data_structures import File, Folder
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -59,44 +65,44 @@ async def uploaded_file(mega: Mega, folder_name: str, folder: Folder) -> AsyncGe
     yield file
 
 
-def test_mega(mega: Mega):
+def test_mega(mega: Mega) -> None:
     assert isinstance(mega, Mega)
 
 
-def test_login(mega: Mega):
+def test_login(mega: Mega) -> None:
     assert mega.logged_in
     assert all((mega.root_id, mega.inbox_id, mega.trashbin_id))
 
 
-async def test_get_user(mega: Mega):
+async def test_get_user(mega: Mega) -> None:
     resp = await mega.get_user()
     assert isinstance(resp, dict)
 
 
-async def test_get_quota(mega: Mega):
+async def test_get_quota(mega: Mega) -> None:
     resp = await mega.get_quota()
     assert isinstance(resp, int)
 
 
-async def test_get_storage_space(mega: Mega):
+async def test_get_storage_space(mega: Mega) -> None:
     resp = await mega.get_storage_space()
     assert isinstance(resp, StorageUsage)
 
 
-async def test_get_files(mega: Mega):
+async def test_get_files(mega: Mega) -> None:
     files = await mega.get_files()
     assert isinstance(files, dict)
 
 
 @pytest.mark.xfail(reason="Public links won't work with temp account")
-async def test_get_link(mega: Mega, uploaded_file: FileOrFolder):
+async def test_get_link(mega: Mega, uploaded_file: File) -> None:
     link = await mega.get_link(uploaded_file)
     assert isinstance(link, str)
 
 
 @pytest.mark.skip
 class TestExport:
-    async def test_export_folder(self, mega: Mega, folder_name: str):
+    async def test_export_folder(self, mega: Mega, folder_name: str) -> None:
         public_url = None
         for _ in range(2):
             result_public_share_url = await mega.export(folder_name)
@@ -106,20 +112,20 @@ class TestExport:
             assert result_public_share_url.startswith("https://mega.nz/#F!")
             assert result_public_share_url == public_url
 
-    async def test_export_folder_within_folder(self, mega: Mega, folder_name: str):
+    async def test_export_folder_within_folder(self, mega: Mega, folder_name: str) -> None:
         folder_path = Path(folder_name) / "subdir" / "anothersubdir"
         await mega.create_folder(folder_path)
         result_public_share_url = await mega.export(path=folder_path)
         assert result_public_share_url.startswith("https://mega.nz/#F!")
 
-    async def test_export_folder_using_node_id(self, mega: Mega, folder_name: str):
+    async def test_export_folder_using_node_id(self, mega: Mega, folder_name: str) -> None:
         file = await mega.find(folder_name)
         assert file
         node_id = file["p"]
         result_public_share_url = await mega.export(node_id=node_id)
         assert result_public_share_url.startswith("https://mega.nz/#F!")
 
-    async def test_export_single_file(self, mega: Mega, folder_name: str, folder: Folder):
+    async def test_export_single_file(self, mega: Mega, folder_name: str, folder: Folder) -> None:
         # Upload a single file into a folder
 
         await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
@@ -190,12 +196,12 @@ async def test_delete_folder(mega: Mega, folder: Folder) -> None:
     assert isinstance(resp, int)
 
 
-async def test_delete(mega: Mega, uploaded_file: FileOrFolder) -> None:
+async def test_delete(mega: Mega, uploaded_file: File | Folder) -> None:
     resp = await mega.delete(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
-async def test_destroy(mega: Mega, uploaded_file: FileOrFolder) -> None:
+async def test_destroy(mega: Mega, uploaded_file: File | Folder) -> None:
     resp = await mega.destroy(uploaded_file["h"])
     assert isinstance(resp, int)
 
@@ -242,8 +248,7 @@ async def test_remove_contact(mega: Mega) -> None:
     ],
 )
 def test_parse_url(url: str, expected_file_id_and_key: str) -> None:
-    mega_ = Mega()
-    assert mega_._parse_url(url) == expected_file_id_and_key
+    assert Mega._parse_url(url) == expected_file_id_and_key
 
 
 class TestAPIRequest:

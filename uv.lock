@@ -107,7 +107,7 @@ wheels = [
 
 [[package]]
 name = "async-mega-py"
-version = "1.10.2"
+version = "1.10.2.post0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

@@ -10,7 +10,7 @@ import re
 import shutil
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Literal, TypeVar, cast
+from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -37,35 +37,32 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import (
-    AnyArray,
-    AnyDict,
-    Array,
-    Attributes,
-    File,
-    FileOrFolder,
-    FilesMapping,
-    Folder,
-    Node,
-    NodeType,
-    SharedKey,
-    SharedkeysDict,
-    StorageUsage,
-    TupleArray,
-)
+from mega.data_structures import NodeType, StorageUsage
 
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable, Coroutine, Generator, Sequence
+    from collections.abc import Callable, Coroutine, Generator, Sequence
     from typing import ParamSpec
 
-    R = TypeVar("R")
-    P = ParamSpec("P")
+    from mega.data_structures import (
+        AnyArray,
+        AnyDict,
+        Array,
+        Attributes,
+        File,
+        Folder,
+        FolderResponse,
+        Node,
+        NodesMap,
+        SharedKey,
+        SharedkeysDict,
+        TupleArray,
+    )
 
+    _R = TypeVar("_R")
+    _P = ParamSpec("_P")
 
-else:
-    P = Any
 
 logger = logging.getLogger(__name__)
 
@@ -97,9 +94,9 @@ class ProgressBar:
             self.progress.stop()
 
 
-def requires_login(func: Callable[P, Coroutine[None, None, R]]) -> Callable[P, Coroutine[None, None, R]]:
+def requires_login(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, Coroutine[None, None, _R]]:
     @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> R:
+    async def wrapper(*args, **kwargs) -> _R:
         self: Mega = args[0]
         if not self.logged_in:
             raise RuntimeError("You need to log in to use this method")
@@ -117,6 +114,7 @@ class Mega:
         self.inbox_id: str = ""
         self.trashbin_id: str = ""
         self._progress_bar = ProgressBar(enabled=use_progress_bar)
+        self._shared_keys: SharedkeysDict = {}
 
     @property
     def use_progress_bar(self) -> bool:
@@ -233,7 +231,8 @@ class Mega:
         )
         self._process_login(resp, password_key)
 
-    def _parse_url(self, url: str) -> str:
+    @staticmethod
+    def _parse_url(url: str) -> str:
         """Parse file id and key from url."""
         if "/file/" in url:
             # V2 URL structure
@@ -254,74 +253,73 @@ class Mega:
         else:
             raise ValueError(f"URL key missing from {url}")
 
-    def _process_node(self, file: Node) -> Node:
-        shared_keys: SharedkeysDict = self.shared_keys
-        if file["t"] == NodeType.FILE or file["t"] == NodeType.FOLDER:
-            file = cast("FileOrFolder", file)
-            keys = dict(keypart.split(":", 1) for keypart in file["k"].split("/") if ":" in keypart)
-            uid = file["u"]
+    def _process_node(self, node: Node) -> Node:
+        shared_keys: SharedkeysDict = self._shared_keys
+        if node["t"] == NodeType.FILE or node["t"] == NodeType.FOLDER:
+            node = cast("File | Folder", node)
+            keys = dict(keypart.split(":", 1) for keypart in node["k"].split("/") if ":" in keypart)
+            uid = node["u"]
             key = None
             # my objects
             if uid in keys:
                 key = decrypt_key(base64_to_a32(keys[uid]), self.master_key)
             # shared folders
-            elif "su" in file and "sk" in file and ":" in file["k"]:
-                shared_key = decrypt_key(base64_to_a32(file["sk"]), self.master_key)
-                key = decrypt_key(base64_to_a32(keys[file["h"]]), shared_key)
-                if file["su"] not in shared_keys:
-                    shared_keys[file["su"]] = {}
-                shared_keys[file["su"]][file["h"]] = shared_key
+            elif "su" in node and "sk" in node and ":" in node["k"]:
+                shared_key = decrypt_key(base64_to_a32(node["sk"]), self.master_key)
+                key = decrypt_key(base64_to_a32(keys[node["h"]]), shared_key)
+                shared_keys.setdefault(node["su"], {})[node["h"]] = shared_key
+
             # shared files
-            elif file["u"] and file["u"] in shared_keys:
-                for hkey in shared_keys[file["u"]]:
-                    shared_key = shared_keys[file["u"]][hkey]
+            elif node["u"] and node["u"] in shared_keys:
+                for hkey in shared_keys[node["u"]]:
+                    shared_key = shared_keys[node["u"]][hkey]
                     if hkey in keys:
                         key = keys[hkey]
                         key = decrypt_key(base64_to_a32(key), shared_key)
                         break
-            if file["h"] and file["h"] in shared_keys.get("EXP", ()):
-                shared_key = shared_keys["EXP"][file["h"]]
-                encrypted_key = str_to_a32(base64_url_decode(file["k"].split(":")[-1]))
+            if node["h"] and node["h"] in shared_keys.get("EXP", ()):
+                shared_key = shared_keys["EXP"][node["h"]]
+                encrypted_key = str_to_a32(base64_url_decode(node["k"].split(":")[-1]))
                 key = decrypt_key(encrypted_key, shared_key)
-                file["sk_decrypted"] = shared_key
+                node["sk_decrypted"] = shared_key
 
             if key is not None:
                 # file
-                if file["t"] == NodeType.FILE:
-                    file = cast("File", file)
+                if node["t"] == NodeType.FILE:
+                    node = cast("File", node)
                     k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
-                    file["iv"] = (*key[4:6], 0, 0)
-                    file["meta_mac"] = key[6:8]
+                    node["iv"] = (*key[4:6], 0, 0)
+                    node["meta_mac"] = key[6:8]
                 # folder
                 else:
                     k = key
 
-                file["key_decrypted"] = key
-                file["k_decrypted"] = k
-                attributes_bytes = base64_url_decode(file["a"])
+                node["full_key"] = key
+                node["k_decrypted"] = k
+                attributes_bytes = base64_url_decode(node["a"])
                 attributes = decrypt_attr(attributes_bytes, k)
-                file["attributes"] = cast("Attributes", attributes)
+                node["attributes"] = cast("Attributes", attributes)
 
             # other => wrong object
-            elif file["k"] == "":
-                file = cast("Node", file)
-                file["attributes"] = {"n": "Unknown Object"}
+            elif node["k"] == "":
+                node = cast("Node", node)
+                node["attributes"] = {"n": "Unknown Object"}
 
-        elif file["t"] == NodeType.ROOT_FOLDER:
-            self.root_id: str = file["h"]
-            file["attributes"] = {"n": "Cloud Drive"}
+        elif node["t"] == NodeType.ROOT_FOLDER:
+            self.root_id: str = node["h"]
+            node["attributes"] = {"n": "Cloud Drive"}
 
-        elif file["t"] == NodeType.INBOX:
-            self.inbox_id = file["h"]
-            file["attributes"] = {"n": "Inbox"}
+        elif node["t"] == NodeType.INBOX:
+            self.inbox_id = node["h"]
+            node["attributes"] = {"n": "Inbox"}
 
-        elif file["t"] == NodeType.TRASH:
-            self.trashbin_id = file["h"]
-            file["attributes"] = {"n": "Trash Bin"}
+        elif node["t"] == NodeType.TRASH:
+            self.trashbin_id = node["h"]
+            node["attributes"] = {"n": "Trash Bin"}
 
-        return file
+        return node
 
-    def _init_shared_keys(self, files: Folder, shared_keys: SharedkeysDict) -> None:
+    def _init_shared_keys(self, files: FolderResponse) -> None:
         """
         Init shared key not associated with a user.
         Seems to happen when a folder is shared,
@@ -330,24 +328,25 @@ class Mega:
         Keys are stored in files['s'] and files['ok']
         """
         shared_key: SharedKey = {}
+        shared_keys: SharedkeysDict = {}
         for ok_item in files["ok"]:
             decrypted_shared_key = decrypt_key(base64_to_a32(ok_item["k"]), self.master_key)
             shared_key[ok_item["h"]] = decrypted_shared_key
-        for s_item in files["s"]:
-            if s_item["u"] not in shared_keys:
-                shared_keys[s_item["u"]] = {}
-            if s_item["h"] in shared_key:
-                shared_keys[s_item["u"]][s_item["h"]] = shared_key[s_item["h"]]
-        self.shared_keys = shared_keys
 
-    async def find(self, path: Path | str, exclude_deleted: bool = False) -> FileOrFolder | None:
+        for s_item in files["s"]:
+            if s_item["h"] in shared_key:
+                shared_keys.setdefault(s_item["u"], {})[s_item["h"]] = shared_key[s_item["h"]]
+
+        self._shared_keys = shared_keys
+
+    async def find(self, path: Path | str, exclude_deleted: bool = False) -> File | Folder | None:
         """
         Returns file or folder from given path( if exists)
         """
         results = await self._search(path, exclude_deleted, strict=True)
         return results[0] if results else None
 
-    async def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[FileOrFolder]:
+    async def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[File | Folder]:
         """
         Return file object(s) from given filename or path
         """
@@ -356,7 +355,7 @@ class Mega:
     @requires_login
     async def _search(
         self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False
-    ) -> list[FileOrFolder]:
+    ) -> list[File | Folder]:
         """
         Return file object(s) from given filename or path
         """
@@ -375,41 +374,35 @@ class Mega:
                 found.append(item)
         return found
 
-    async def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> FileOrFolder | None:
+    async def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> File | Folder | None:
         """Return file object(s) from given filename or path"""
         files = await self.get_files()
         file = found if (found := files.get(handle)) else None
-        if file and file["p"] == self.trashbin_id and exclude_deleted:
+        if not file or (file["p"] == self.trashbin_id and exclude_deleted):
             return None
-        return file
+        return cast("File | Folder", file)
 
-    async def _get_files(self) -> FilesMapping:
+    async def _get_files(self) -> NodesMap:
         logger.info("Getting all files...")
-        files_dict: FilesMapping = {}
-        async for node in self._get_nodes():
-            if node["attributes"]:
-                file = cast("File", node)
-                files_dict[file["h"]] = file
-        return files_dict
+        return await self._get_nodes()
 
     @requires_login
-    async def get_files(self) -> FilesMapping:
+    async def get_files(self) -> NodesMap:
         return await self._get_files()
 
-    async def _get_nodes(self) -> AsyncGenerator[Node]:
-        files: Folder = await self.api.request(
+    async def _get_nodes(self) -> NodesMap:
+        files: FolderResponse = await self.api.request(
             {
                 "a": "f",
                 "c": 1,
                 "r": 1,
             }
         )
-        shared_keys: SharedkeysDict = {}
-        self._init_shared_keys(files, shared_keys)
-        for index, node in enumerate(files["f"], 1):
-            yield self._process_node(node)
-            if index % 100 == 0:
-                await asyncio.sleep(0)
+
+        if not self._shared_keys:
+            self._init_shared_keys(files)
+
+        return await self._process_nodes(files["f"])
 
     async def _process_nodes(
         self,
@@ -426,14 +419,14 @@ class Mega:
         """
         # User may already have access to this folder (the key is saved in their account)
         folder_key = base64_to_a32(public_key) if public_key else None
-        self.shared_keys.setdefault("EXP", {})
+        self._shared_keys.setdefault("EXP", {})
 
         async def process_nodes() -> dict[str, Node]:
             results = {}
             for index, node in enumerate(nodes):
                 node_id = node["h"]
                 if folder_key:
-                    self.shared_keys["EXP"][node_id] = folder_key
+                    self._shared_keys["EXP"][node_id] = folder_key
                 processed_node = self._process_node(node)
                 if predicate is None or not predicate(processed_node):
                     results[node_id] = processed_node
@@ -456,7 +449,7 @@ class Mega:
         return root_folder_id, shared_key
 
     @requires_login
-    async def get_upload_link(self, folder: Folder) -> str:
+    async def get_upload_link(self, folder: FolderResponse) -> str:
         """
         Get a files public link inc. decrypted key
         Requires upload() response as input
@@ -464,7 +457,7 @@ class Mega:
         if "f" not in folder:
             raise ValueError("""Upload() response required as input, use get_link() for regular file input""")
 
-        file = folder["f"][0]
+        file = cast("File", folder["f"][0])
         public_handle: str = await self.api.request(
             {
                 "a": "l",
@@ -475,19 +468,19 @@ class Mega:
         decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self.master_key))
         return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
 
-    async def get_link(self, file: FileOrFolder) -> str:
+    async def get_link(self, file: File) -> str:
         """
         Get a file public link from given file object
         """
 
-        if not ("h" in file and "key_decrypted" in file):
+        if not ("h" in file and "full_key" in file):
             raise ValidationError("File id and key must be present")
 
         public_handle: str = await self._get_public_handle(file)
-        decrypted_key = a32_to_base64(file["key_decrypted"])
+        decrypted_key = a32_to_base64(file["full_key"])
         return f"{self.primary_url}/#!{public_handle}!{decrypted_key}"
 
-    async def get_folder_link(self, folder: FileOrFolder) -> str:
+    async def get_folder_link(self, folder: Folder) -> str:
         if not ("h" in folder and "sk_decrypted" in folder):
             raise ValidationError("Folder id and key must be present")
 
@@ -496,7 +489,7 @@ class Mega:
         return f"{self.primary_url}/#F!{public_handle}!{decrypted_key}"
 
     @requires_login
-    async def _get_public_handle(self, file: FileOrFolder) -> str:
+    async def _get_public_handle(self, file: File | Folder) -> str:
         try:
             public_handle: str = await self.api.request(
                 {
@@ -537,20 +530,20 @@ class Mega:
     @requires_login
     async def get_files_in_node(
         self, target: Literal[NodeType.INBOX, NodeType.TRASH, NodeType.ROOT_FOLDER]
-    ) -> FilesMapping:
+    ) -> NodesMap:
         """
         Get all files in a given target, e.g. 4=trash
         """
-        folder: Folder = await self.api.request(
+        folder: FolderResponse = await self.api.request(
             {
                 "a": "f",
                 "c": 1,
             }
         )
-        files_dict: FilesMapping = {}
+        files_dict: NodesMap = {}
         target_id = self.special_nodes_mapping.get(target)
         for index, file in enumerate(folder["f"], 1):
-            processed_file = cast("FileOrFolder", self._process_node(file))
+            processed_file = cast("File | Folder", self._process_node(file))
             if processed_file["a"] and processed_file["p"] == target_id:
                 files_dict[file["h"]] = processed_file
             if index % 100 == 0:
@@ -558,7 +551,7 @@ class Mega:
         return files_dict
 
     async def get_id_from_public_handle(self, public_handle: str) -> str:
-        node_data: Folder = await self.api.request(
+        node_data: FolderResponse = await self.api.request(
             {
                 "a": "f",
                 "f": 1,
@@ -571,7 +564,7 @@ class Mega:
         return node_id
 
     @staticmethod
-    def get_id_from_resp_obj(resp: Folder) -> str | None:
+    def get_id_from_resp_obj(resp: FolderResponse) -> str | None:
         """
         Get node id from a file object
         """
@@ -664,7 +657,7 @@ class Mega:
             return await self.api.request(post_list)
 
     async def download(
-        self, file: FileOrFolder | None, dest_path: Path | str | None = None, dest_filename: str | None = None
+        self, file: File | None, dest_path: Path | str | None = None, dest_filename: str | None = None
     ) -> Path:
         """Download a file by it's file object."""
         return await self._download_file(
@@ -676,7 +669,7 @@ class Mega:
             is_public=False,
         )
 
-    async def _export_file(self, node: FileOrFolder) -> str:
+    async def _export_file(self, node: File) -> str:
         await self.api.request(
             [
                 {
@@ -692,36 +685,38 @@ class Mega:
         files = await self.get_files()
         if node_id:
             _node_id = node_id
-            file: FileOrFolder = files[_node_id]
+            node: Node = files[_node_id]
         elif path:
             found = await self.find(path)
             if not found:
                 raise ValueError
-            file = found
+            node = found
         else:
             raise ValueError
 
-        if file["t"] == NodeType.FILE:
-            return await self._export_file(file)
+        if node["t"] == NodeType.FILE:
+            folder = cast("File", node)
+            return await self._export_file(folder)
 
-        if file:
+        node = cast("File | Folder", node)
+        if node["t"] == NodeType.FOLDER:
             try:
                 # If already exported
-                return await self.get_folder_link(file)
+                return await self.get_folder_link(node)
             except (RequestError, KeyError):
                 pass
 
         master_key_cipher = AES.new(a32_to_bytes(self.master_key), AES.MODE_ECB)
-        ha = base64_url_encode(master_key_cipher.encrypt(file["h"].encode("utf8") + file["h"].encode("utf8")))
+        ha = base64_url_encode(master_key_cipher.encrypt(node["h"].encode("utf8") + node["h"].encode("utf8")))
 
         share_key = random.randbytes(16)
         ok = base64_url_encode(master_key_cipher.encrypt(share_key))
 
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
-        node_key = file["k_decrypted"]
+        node_key = node["k_decrypted"]
         encrypted_node_key = base64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
 
-        _node_id: str = file["h"]
+        _node_id: str = node["h"]
         await self.api.request(
             {
                 "a": "s2",
@@ -739,7 +734,8 @@ class Mega:
             }
         )
         files = await self.get_files()
-        return await self.get_folder_link(files[_node_id])
+        folder = cast("Folder", files[_node_id])
+        return await self.get_folder_link(folder)
 
     async def download_url(self, url: str, dest_path: str | None = None, dest_filename: str | None = None) -> Path:
         """
@@ -754,15 +750,15 @@ class Mega:
             is_public=True,
         )
 
-    async def get_nodes_public_folder(self, url: str) -> dict[str, FileOrFolder]:
+    async def get_nodes_public_folder(self, url: str) -> dict[str, File | Folder]:
         folder_id, b64_share_key = self._parse_folder_url(url)
 
-        folder: Folder = await self.api.request(
+        folder: FolderResponse = await self.api.request(
             {"a": "f", "c": 1, "ca": 1, "r": 1},
             {"n": folder_id},
         )
 
-        return cast("dict[str, FileOrFolder]", await self._process_nodes(folder["f"], b64_share_key))
+        return cast("dict[str, File | Folder]", await self._process_nodes(folder["f"], b64_share_key))
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)
@@ -815,7 +811,7 @@ class Mega:
         dest_path: Path | str | None = None,
         dest_filename: str | None = None,
         is_public: bool = False,
-        file: FileOrFolder | None = None,
+        file: File | None = None,
     ) -> Path:
         if file is None:
             assert file_key
@@ -971,7 +967,9 @@ class Mega:
         if computed_mac != meta_mac:
             raise RuntimeError("Mismatched mac")
 
-    async def upload(self, filename: str, dest_node: Folder | None = None, dest_filename: str | None = None) -> Folder:
+    async def upload(
+        self, filename: str, dest_node: Folder | None = None, dest_filename: str | None = None
+    ) -> FolderResponse:
         # determine storage node
         dest_node_id = dest_node["h"] if dest_node else self.root_id
         # request upload url, call 'u' method
@@ -1059,7 +1057,7 @@ class Mega:
             encrypted_key = a32_to_base64(encrypt_key(key, self.master_key))
             logger.info("Sending request to update attributes")
             # update attributes
-            data: Folder = await self.api.request(
+            data: FolderResponse = await self.api.request(
                 {
                     "a": "p",
                     "t": dest_node_id,
@@ -1103,12 +1101,12 @@ class Mega:
 
         return await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
 
-    async def rename(self, node: FileOrFolder, new_name: str) -> int:
+    async def rename(self, node: File | Folder, new_name: str) -> int:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
         encrypt_attribs = base64_url_encode(encrypt_attr(attribs, node["k_decrypted"]))
-        encrypted_key = a32_to_base64(encrypt_key(node["key_decrypted"], self.master_key))
+        encrypted_key = a32_to_base64(encrypt_key(node["full_key"], self.master_key))
         # update attributes
         return await self.api.request(
             {
@@ -1120,7 +1118,7 @@ class Mega:
             }
         )
 
-    async def move(self, file_id: str, target: Folder | NodeType | str) -> AnyDict:
+    async def move(self, file_id: str, target: FolderResponse | NodeType | str) -> AnyDict:
         """
         Move a file to another parent node
         params:
@@ -1199,8 +1197,8 @@ class Mega:
         return await self.get_public_file_info(file_handle, file_key)
 
     async def import_public_url(
-        self, url: str, dest_node: FileOrFolder | str | None = None, dest_name: str | None = None
-    ) -> Folder:
+        self, url: str, dest_node: Folder | str | None = None, dest_name: str | None = None
+    ) -> FolderResponse:
         """
         Import the public url into user account
         """
@@ -1211,7 +1209,7 @@ class Mega:
         """
         Get size and name of a public file
         """
-        data: Folder = await self.api.request(
+        data: FolderResponse = await self.api.request(
             {
                 "a": "g",
                 "p": file_handle,
@@ -1235,9 +1233,9 @@ class Mega:
         self,
         file_handle: str,
         file_key: str,
-        dest_node: FileOrFolder | str | None = None,
+        dest_node: Folder | str | None = None,
         dest_name: str | None = None,
-    ) -> Folder:
+    ) -> FolderResponse:
         """
         Import the public file into user account
         """
@@ -1280,7 +1278,7 @@ class Mega:
         )
 
     async def build_file_system(self) -> dict[PurePosixPath, Node]:
-        nodes_map = {node["h"]: node async for node in self._get_nodes()}
+        nodes_map = await self._get_nodes()
         return await self._build_file_system(nodes_map, list(self.special_nodes_mapping.values()))
 
     async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:

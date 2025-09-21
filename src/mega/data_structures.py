@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypedDict, TypeVar
 
 if TYPE_CHECKING:
     from typing_extensions import NotRequired
@@ -43,54 +43,54 @@ class NodeType(IntEnum):
     TRASH = 4
 
 
-class Node(TypedDict):
-    t: NodeType
-    h: str  # Id
-    p: str  # Parent Id
-    a: str  # Encrypted attributes (within this: 'n' Name)
-    k: str  # Node key
-    u: str  # User Id
-    s: int  # Size
-    ts: int  # Timestamp
-    g: str  # Access URL
-    k: str  # Public access key (parent folder + file)
+if TYPE_CHECKING:
+    _N = TypeVar("_N", bound=NodeType)
 
-    #  Non standard properties, only used internally by mega.py
-    attributes: Attributes  # Decrypted attributes
-    k_decrypted: TupleArray
-    key_decrypted: TupleArray  # Decrypted access key (for folders, its values if the same as 'k_decrypted')
+    class Node(TypedDict, Generic[_N]):
+        h: str  # Id
+        p: str  # Parent Id
+        u: str  # User Id
+        t: _N
+        a: str  # Encrypted attributes (within this: 'n' Name)
+        ts: int  # Timestamp
 
+        #  Non standard properties, only used internally by mega.py
+        attributes: Attributes  # Decrypted attributes
 
-class FileOrFolder(Node):
-    su: NotRequired[str]  # Shared user Id, only present present in shared files / folder
-    sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
+    class _FileOrFolder(Node, Generic[_N]):
+        k: str  # Node key
+        su: NotRequired[str]  # Shared user Id, only present present in shared files / folder
+        sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
 
-    #  Non standard properties, only used internally by mega.py
-    iv: TupleArray
-    meta_mac: TupleArray
-    sk_decrypted: TupleArray
+        #  Non standard properties, only used internally by mega.py
+        iv: TupleArray
+        meta_mac: TupleArray
+        k_decrypted: TupleArray
+        sk_decrypted: TupleArray
+        full_key: TupleArray  # Decrypted access key (for folders, its values if the same as 'k_decrypted')
 
+    class File(_FileOrFolder[Literal[NodeType.FILE]]):
+        s: int  # size
+        fa: str  # file attributes
 
-class File(FileOrFolder):
-    at: str  # File specific attributes (encrypted)
+    class Folder(_FileOrFolder[Literal[NodeType.FOLDER]]): ...
 
+    class PublicFile(File):
+        g: str  # direct download URL
 
-class Folder(FileOrFolder):
-    f: list[FileOrFolder]  # Children (files or folders)
-    ok: list[FileOrFolder]
-    s: list[FileOrFolder]
+    class FolderResponse(_FileOrFolder):
+        f: list[Node]
+        ok: list[File | Folder]
+        s: list[File | Folder]
 
-
-SharedKey = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
-SharedkeysDict = dict[str, SharedKey]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
+    NodesMap = dict[str, Node]  # key is parent_id ('p')
+    SharedKey = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
+    SharedkeysDict = dict[str, SharedKey]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
 
 
 class StorageUsage(NamedTuple):
     used: int
     total: int
-
-
-FilesMapping = dict[str, FileOrFolder]  # key is parent_id ('p')
 
 
 class User(TypedDict):
@@ -120,25 +120,3 @@ class AccountInformation(TypedDict):
     mstrg: int  # Total Quota
     cstrg: int  # Used Quota
     cstrgn: dict[str, StorageMetrics]  # Metrics Serialized, Mapping of node_id > Storage metrics(tuple)
-
-
-# ~~~~~~~~~~~~~~~~~~~ REQUEST PARAMATERS ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-
-class MegaRequest(TypedDict):
-    a: str  # Action, AKA what the request intends to do
-
-
-class MoveRequest(MegaRequest):
-    n: str  # node Id
-    t: str  # destination node Id
-
-
-class PreLoginRequest(MegaRequest):
-    a: Literal["us0"]
-    user: str  # user handle (AKA email)
-
-
-class PreLoginResponse(TypedDict):
-    s: str  # salt
-    v: int  # version
