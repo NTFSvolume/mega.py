@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from mega.crypto import decrypt_attr, get_chunks
+from mega import crypto
 from mega.data_structures import AnyArray
 
 
@@ -34,7 +34,7 @@ from mega.data_structures import AnyArray
     ],
 )
 def test_get_chunks(file_size: int, exp_result: tuple[int, int]) -> None:
-    result = tuple(get_chunks(file_size))
+    result = tuple(crypto.get_chunks(file_size))
 
     assert result == exp_result
 
@@ -53,5 +53,17 @@ def test_get_chunks(file_size: int, exp_result: tuple[int, int]) -> None:
     ],
 )
 def test_decrypt_attr(attrs: bytes, key: AnyArray, expected_output: dict[str, Any]) -> None:
-    output = decrypt_attr(attrs, key)
+    output = crypto.decrypt_attr(attrs, key)
     assert output == expected_output
+
+
+@pytest.mark.parametrize(
+    "blob,expected",
+    [
+        (b"\x00\x00\x00", 0),
+        (b"\x00\x08\xff", 255),
+        (b"\x00\x10\x01\x23", 0x0123),
+    ],
+)
+def test_mpi(blob: bytes, expected: int) -> None:
+    assert crypto.mpi_to_int(blob) == expected

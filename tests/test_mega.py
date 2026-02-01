@@ -37,8 +37,7 @@ def folder_name():
 
 @pytest.fixture
 async def mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGenerator[Mega]:
-    mega_ = Mega()
-    mega_.api.session = http_client
+    mega_ = Mega(session=http_client)
     await mega_.login(email=os.getenv("EMAIL"), password=os.getenv("PASS"))
     folder = await mega_.create_folder(folder_name)
     yield mega_
@@ -261,4 +260,4 @@ class TestAPIRequest:
         with pytest.MonkeyPatch.context() as m:
             m.setattr(aiohttp.ClientResponse, "json", AsyncMock(return_value=response))
             with pytest.raises(RequestError):
-                await mega.api.request(data_input={})
+                await mega.api.request(data={})

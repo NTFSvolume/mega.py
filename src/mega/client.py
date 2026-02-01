@@ -45,6 +45,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Generator, Sequence
     from typing import ParamSpec
 
+    import aiohttp
+
     from mega.data_structures import (
         AnyArray,
         AnyDict,
@@ -106,9 +108,9 @@ def requires_login(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P
 
 
 class Mega:
-    def __init__(self, use_progress_bar: bool = True) -> None:
-        self.api = MegaApi()
-        self.primary_url = f"{self.api.schema}://{self.api.domain}"
+    def __init__(self, use_progress_bar: bool = True, session: aiohttp.ClientSession | None = None) -> None:
+        self.api = MegaApi(session)
+        self.primary_url = "https://mega.nz"
         self.logged_in = False
         self.root_id: str = ""
         self.inbox_id: str = ""
@@ -152,7 +154,7 @@ class Mega:
             tsid = base64_url_decode(b64_tsid)
             key_encrypted = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), self.master_key))
             if key_encrypted == tsid[-16:]:
-                self.api.sid = resp["tsid"]
+                self.api.session_id = resp["tsid"]
 
         elif b64_csid := resp.get("csid"):
             encrypted_sid = mpi_to_int(base64_url_decode(b64_csid))
@@ -168,7 +170,7 @@ class Mega:
             sid_hex = f"{decrypted_sid:x}"
             sid_bytes = bytes.fromhex("0" + sid_hex if len(sid_hex) % 2 else sid_hex)
             sid = base64_url_encode(sid_bytes[:43])
-            self.api.sid = sid
+            self.api.session_id = sid
 
     async def _login_user(self, email: str, password: str) -> None:
         logger.info("Logging in user...")
@@ -628,7 +630,7 @@ class Mega:
             {
                 "a": "d",  # Action: delete
                 "n": file_id,  # Node: file Id
-                "i": self.api.request_id,  # Request Id
+                "i": self.api._client_id,  # Request Id
             }
         )
 
@@ -651,7 +653,7 @@ class Mega:
                     {
                         "a": "d",  # Action: delete
                         "n": file,  # Node: file #Id
-                        "i": self.api.request_id,  # Request Id
+                        "i": self.api._client_id,  # Request Id
                     }
                 )
             return await self.api.request(post_list)
@@ -675,7 +677,7 @@ class Mega:
                 {
                     "a": "l",  # Action: Export file
                     "n": node["h"],  # Node: file Id
-                    "i": self.api.request_id,  # Request #Id
+                    "i": self.api._client_id,  # Request #Id
                 }
             ]
         )
@@ -727,7 +729,7 @@ class Mega:
                         "r": 0,
                     }
                 ],
-                "i": self.api.request_id,
+                "i": self.api._client_id,
                 "ok": ok,
                 "ha": ha,
                 "cr": [[_node_id], [_node_id], [0, 0, encrypted_node_key]],
@@ -890,7 +892,7 @@ class Mega:
             chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
             _ = next(chunk_decryptor)  # Prime chunk decryptor
             bytes_written: int = 0
-            async with self.api.session.get(direct_file_url) as response:
+            async with self.api.__session.get(direct_file_url) as response:
                 for _, chunk_size in get_chunks(file_size):
                     raw_chunk = await response.content.readexactly(chunk_size)
                     decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
@@ -1022,14 +1024,12 @@ class Mega:
 
                     # encrypt file and upload
                     chunk = aes.encrypt(chunk)
-                    output_file = await self.api.session.post(
-                        ul_url + "/" + str(chunk_start), data=chunk, timeout=self.api.timeout
-                    )
+                    output_file = await self.api.__session.post(ul_url + "/" + str(chunk_start), data=chunk)
                     completion_file_handle = await output_file.text()
                     logger.info("%s of %s uploaded", upload_progress, file_size)
             else:
                 # empty file
-                output_file = await self.api.session.post(ul_url + "/0", data="", timeout=self.api.timeout)
+                output_file = await self.api.__session.post(ul_url + "/0", data="")
                 completion_file_handle = await output_file.text()
 
             logger.info("Chunks uploaded")
@@ -1061,7 +1061,7 @@ class Mega:
                 {
                     "a": "p",
                     "t": dest_node_id,
-                    "i": self.api.request_id,
+                    "i": self.api._client_id,
                     "n": [{"h": completion_file_handle, "t": 0, "a": encrypt_attribs, "k": encrypted_key}],
                 }
             )
@@ -1083,7 +1083,7 @@ class Mega:
                 "a": "p",
                 "t": parent_node_id,
                 "n": [{"h": "xxxxxxxx", "t": 1, "a": encrypt_attribs, "k": encrypted_key}],
-                "i": self.api.request_id,
+                "i": self.api._client_id,
             }
         )
         return folders["f"][0]
@@ -1114,7 +1114,7 @@ class Mega:
                 "attr": encrypt_attribs,
                 "key": encrypted_key,
                 "n": node["h"],
-                "i": self.api.request_id,
+                "i": self.api._client_id,
             }
         )
 
@@ -1150,7 +1150,7 @@ class Mega:
                 "a": "m",
                 "n": file_id,
                 "t": target_node_id,
-                "i": self.api.request_id,
+                "i": self.api._client_id,
             }
         )
 
@@ -1185,7 +1185,7 @@ class Mega:
                     "a": "ur",
                     "u": email,
                     "l": add_or_remove,
-                    "i": self.api.request_id,
+                    "i": self.api._client_id,
                 }
             )
 

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import base64
-import binascii
 import json
 import math
 import random
 import struct
-from typing import TYPE_CHECKING, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from Crypto.Cipher import AES
 from Crypto.Math.Numbers import Integer
@@ -27,17 +26,6 @@ class Chunk(NamedTuple):
 
 
 def pad_bytes(data: bytes, length: int = CHUNK_BLOCK_LEN) -> bytes:
-    """
-    Pads a bytes-like object with null bytes to a multiple of the specified length.
-
-    Args:
-        data: The bytes-like object to pad (bytes or memoryview).
-        lenght: The block size to pad to. Defaults to 16.
-
-    Returns:
-        A new bytes object that is padded with null bytes such that its length is a multiple of 'length'.
-    """
-
     if len(data) % length:
         padding = b"\0" * (length - len(data) % length)
         if isinstance(data, memoryview):
@@ -89,9 +77,6 @@ def prepare_key(arr: Array) -> Array:
 
 
 def encrypt_key(array: AnyArray, key: AnyArray) -> TupleArray:
-    # this sum, which is applied to a generator of tuples, actually flattens the output list of lists of that generator
-    # i.e. it's equivalent to tuple([item for t in generatorOfLists for item in t])
-
     return sum((_aes_cbc_encrypt_a32(array[index : index + 4], key) for index in range(0, len(array), 4)), ())
 
 
@@ -99,10 +84,9 @@ def decrypt_key(array: AnyArray, key: AnyArray) -> TupleArray:
     return sum((_aes_cbc_decrypt_a32(array[index : index + 4], key) for index in range(0, len(array), 4)), ())
 
 
-def encrypt_attr(attr_dict: dict, key: AnyArray) -> bytes:
-    attr: bytes = f"MEGA{json.dumps(attr_dict)}".encode()
-    attr = pad_bytes(attr)
-    return _aes_cbc_encrypt(attr, a32_to_bytes(key))
+def encrypt_attr(attrs: dict[str, Any], key: AnyArray) -> bytes:
+    attr_bytes: bytes = f"MEGA{json.dumps(attrs)}".encode()
+    return _aes_cbc_encrypt(pad_bytes(attr_bytes), a32_to_bytes(key))
 
 
 def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
@@ -113,17 +97,11 @@ def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
         attr_str = attr_bytes.decode("latin-1").rstrip("\0")
 
     if attr_str.startswith('MEGA{"'):
-        start = 4
-        end = attr_str.rfind("}") + 1
-        error = RuntimeError(f"Unable to decode file attributes, raw content is: {attr_str}")
-        if end > start:
-            content = attr_str[start:end]
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError as e:
-                raise error from e
-
-        raise error
+        content = attr_str[4 : attr_str.rfind("}") + 1]
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(f"Unable to decode file attributes, raw content is: {attr_str}") from e
 
     return {}
 
@@ -150,7 +128,8 @@ def mpi_to_int(data: bytes) -> int:
     order. The first two bytes are a header which tell the number of bits in
     the integer. The rest of the bytes are the integer.
     """
-    return int(binascii.hexlify(data[2:]), CHUNK_BLOCK_LEN)
+
+    return int(data[2:].hex(), CHUNK_BLOCK_LEN)
 
 
 def base64_url_decode(data: str) -> bytes:
@@ -167,8 +146,8 @@ def base64_to_a32(string: str) -> TupleArray:
 def base64_url_encode(data: bytes) -> str:
     data_bytes = base64.b64encode(data)
     data_str = data_bytes.decode()
-    for search, replace in (("+", "-"), ("/", "_"), ("=", "")):
-        data_str = data_str.replace(search, replace)
+    for old, replace in (("+", "-"), ("/", "_"), ("=", "")):
+        data_str = data_str.replace(old, replace)
     return data_str
 
 
@@ -191,37 +170,25 @@ def get_chunks(size: int) -> Generator[Chunk]:
 def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
     # The private_key contains 4 MPI integers concatenated together.
     rsa_private_key = [0, 0, 0, 0]
-    for i in range(4):
-        # An MPI integer has a 2-byte header which describes the number
-        # of bits in the integer.
-        bitlength = (private_key[0] * 256) + private_key[1]
-        bytelength = math.ceil(bitlength / 8)
-        # Add 2 bytes to accommodate the MPI header
-        bytelength += 2
-        rsa_private_key[i] = mpi_to_int(private_key[:bytelength])
-        private_key = private_key[bytelength:]
+    for idx in range(4):
+        key_len = (private_key[0] * 256) + private_key[1]
+        key_len_bytes = math.ceil(key_len / 8) + 2  # +2 for MPI header
+        rsa_private_key[idx] = mpi_to_int(private_key[:key_len_bytes])
+        private_key = private_key[key_len_bytes:]
 
-    first_factor_p = rsa_private_key[0]
-    second_factor_q = rsa_private_key[1]
-    private_exponent_d = rsa_private_key[2]
-    crt_coeficient_u = rsa_private_key[3]
-    # In MEGA's webclient javascript, they assign [3] to a variable
-    # called u, but I do not see how it corresponds to pycryptodome's
-    # RSA.construct and it does not seem to be necessary.
-
+    first_factor_p, second_factor_q, private_exponent_d, crt_coeficient_u = rsa_private_key[:4]
     rsa_modulus_n = first_factor_p * second_factor_q
     phi = (first_factor_p - 1) * (second_factor_q - 1)
-    public_exponent_e = int(Integer(private_exponent_d).inverse(phi))  # type: ignore
+    public_exponent_e = int(Integer(private_exponent_d).inverse(phi))
 
-    rsa_components = (
-        rsa_modulus_n,
-        public_exponent_e,
-        private_exponent_d,
-        first_factor_p,
-        second_factor_q,
-        crt_coeficient_u,
+    return RSA.construct(
+        rsa_components=(
+            rsa_modulus_n,
+            public_exponent_e,
+            private_exponent_d,
+            first_factor_p,
+            second_factor_q,
+            crt_coeficient_u,
+        ),
+        consistency_check=True,
     )
-
-    rsa_key = RSA.construct(rsa_components, consistency_check=True)
-
-    return rsa_key
