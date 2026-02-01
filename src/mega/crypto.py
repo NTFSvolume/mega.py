@@ -25,7 +25,7 @@ class Chunk(NamedTuple):
     size: int
 
 
-def pad_bytes(data: bytes, length: int = CHUNK_BLOCK_LEN) -> bytes:
+def pad_bytes(data: bytes | memoryview[int], length: int = CHUNK_BLOCK_LEN) -> bytes:
     if len(data) % length:
         padding = b"\0" * (length - len(data) % length)
         if isinstance(data, memoryview):

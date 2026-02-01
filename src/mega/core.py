@@ -19,6 +19,7 @@ from mega.api import MegaApi
 from mega.auth import MegaAuth
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
+    EMPTY_IV,
     a32_to_bytes,
     base64_to_a32,
     base64_url_decode,
@@ -306,22 +307,16 @@ class MegaNzCoreClient:
             self._new_progress() as progress_bar,
         ):
             task_id = progress_bar.add_task(output_path.name, total=file_size)
-            chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
-            _ = next(chunk_decryptor)  # Prime chunk decryptor
+            chunk_decryptor = MegaDecryptor(iv, k_decrypted, meta_mac)
 
             async with self._api._get_session().get(direct_file_url) as response:
                 for _, chunk_size in get_chunks(file_size):
                     raw_chunk = await response.content.readexactly(chunk_size)
-                    decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
-                    actual_size = len(decrypted_chunk)
-                    temp_file.write(decrypted_chunk)
-                    progress_bar.advance(task_id, actual_size)
+                    chunk: bytes = chunk_decryptor.decrypt(raw_chunk)
+                    temp_file.write(chunk)
+                    progress_bar.advance(task_id, len(chunk))
 
-        try:
-            # Stop chunk decryptor and do a mac integrity check
-            chunk_decryptor.send(None)  # type: ignore
-        except StopIteration:
-            pass
+        chunk_decryptor.check_integrity()
 
         def move() -> None:
             output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -329,63 +324,6 @@ class MegaNzCoreClient:
 
         await asyncio.to_thread(move)
         return output_path
-
-    def _decrypt_chunks(
-        self,
-        iv: TupleArray,
-        k_decrypted: TupleArray,
-        meta_mac: TupleArray,
-    ) -> Generator[bytes, bytes, None]:
-        """
-        Decrypts chunks of data received via `send()` and yields the decrypted chunks.
-        It decrypts chunks indefinitely until a sentinel value (`None`) is sent.
-
-        NOTE: You MUST send `None` after decrypting every chunk to execute the mac check
-
-        Args:
-            iv (AnyArray):  Initialization vector (iv) as a list or tuple of two 32-bit unsigned integers.
-            k_decrypted (TupleArray):  Decryption key as a tuple of four 32-bit unsigned integers.
-            meta_mac (AnyArray):  The expected MAC value of the final file.
-
-        Yields:
-            bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
-
-        """
-        k_bytes = a32_to_bytes(k_decrypted)
-        counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-        aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
-
-        # mega.nz improperly uses CBC as a MAC mode, so after each chunk
-        # the computed mac_bytes are used as IV for the next chunk MAC accumulation
-        mac_bytes = b"\0" * 16
-        mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
-        iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
-        raw_chunk = yield b""
-        while True:
-            if raw_chunk is None:
-                break
-            decrypted_chunk = aes.decrypt(raw_chunk)
-            raw_chunk = yield decrypted_chunk
-            encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
-
-            # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
-            mem_view = memoryview(decrypted_chunk)  # avoid copying memory for the entire chunk when slicing
-            modchunk = len(decrypted_chunk) % CHUNK_BLOCK_LEN
-            if modchunk == 0:
-                # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                modchunk = CHUNK_BLOCK_LEN
-
-            # pad last block to 16 bytes
-            last_block = pad_bytes(mem_view[-modchunk:])
-            rest_of_chunk = mem_view[:-modchunk]
-            _ = encryptor.encrypt(rest_of_chunk)
-            input_to_mac = encryptor.encrypt(last_block)
-            mac_bytes = mac_encryptor.encrypt(input_to_mac)
-
-        file_mac = str_to_a32(mac_bytes)
-        computed_mac = file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]
-        if computed_mac != meta_mac:
-            raise RuntimeError("Mismatched mac")
 
     async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
@@ -427,3 +365,68 @@ class MegaNzCoreClient:
 
         sorted_mapping = dict(sorted(path_mapping.items()))
         return sorted_mapping
+
+
+class MegaDecryptor:
+    def __init__(self, iv: TupleArray, k_decrypted: TupleArray, meta_mac: TupleArray) -> None:
+        self.chunk_decryptor = _decrypt_chunks(k_decrypted, iv, meta_mac)
+        _ = next(self.chunk_decryptor)  # Prime chunk decryptor
+
+    def decrypt(self, raw_chunk: bytes) -> bytes:
+        return self.chunk_decryptor.send(raw_chunk)
+
+    def check_integrity(self) -> None:
+        try:
+            _ = self.chunk_decryptor.send(None)
+        except StopIteration:
+            pass
+
+
+def _decrypt_chunks(
+    iv: TupleArray,
+    k_decrypted: TupleArray,
+    meta_mac: TupleArray,
+) -> Generator[bytes, bytes | None, None]:
+    """
+    Decrypts chunks of data received via `send()` and yields the decrypted chunks.
+    It decrypts chunks indefinitely until a sentinel value (`None`) is sent.
+
+    NOTE: You MUST send `None` once after all chunks are processed to execute the MAC check.
+
+    Args:
+        iv (AnyArray):  Initialization vector (iv) as a list or tuple of two 32-bit unsigned integers.
+        k_decrypted (TupleArray):  Decryption key as a tuple of four 32-bit unsigned integers.
+        meta_mac (AnyArray):  The expected MAC value of the final file.
+
+    Yields:
+        bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
+
+    """
+    k_bytes = a32_to_bytes(k_decrypted)
+    counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
+    aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
+
+    # mega.nz improperly uses CBC as a MAC mode, so after each chunk
+    # the last 16 bytes are used as IV for the next chunk MAC accumulation
+
+    mac_bytes = EMPTY_IV
+    mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
+    iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
+    chunk: bytes | None = yield b""
+
+    while chunk is not None:
+        decrypted_chunk = aes.decrypt(chunk)
+        chunk = yield decrypted_chunk
+        encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
+
+        mem_view = memoryview(decrypted_chunk)
+        modchunk = len(decrypted_chunk) % CHUNK_BLOCK_LEN or CHUNK_BLOCK_LEN
+
+        last_16b = pad_bytes(mem_view[-modchunk:])
+        encryptor.encrypt(mem_view[:-modchunk])
+        mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_16b))
+
+    file_mac = str_to_a32(mac_bytes)
+    computed_mac = file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]
+    if computed_mac != meta_mac:
+        raise RuntimeError("Mismatched mac")
