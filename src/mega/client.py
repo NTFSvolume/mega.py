@@ -144,7 +144,7 @@ class Mega(MegaNzCoreClient):
             }
         )
         _, file_key = file["k"].split(":", 1)
-        decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self.master_key))
+        decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self._master_key))
         return f"{self._primary_url}/#!{public_handle}!{decrypted_key}"
 
     async def get_link(self, file: File) -> str:
@@ -385,7 +385,7 @@ class Mega(MegaNzCoreClient):
             except (RequestError, KeyError):
                 pass
 
-        master_key_cipher = AES.new(a32_to_bytes(self.master_key), AES.MODE_ECB)
+        master_key_cipher = AES.new(a32_to_bytes(self._master_key), AES.MODE_ECB)
         ha = base64_url_encode(master_key_cipher.encrypt(node["h"].encode("utf8") + node["h"].encode("utf8")))
 
         share_key = random.randbytes(16)
@@ -479,7 +479,7 @@ class Mega(MegaNzCoreClient):
             file = cast("File", node)
             download_tasks.append(download_file(file, Path(path)))
 
-        with self._progress_bar:
+        with self._new_progress():
             results = await asyncio.gather(*download_tasks)
         return results
 
@@ -552,7 +552,7 @@ class Mega(MegaNzCoreClient):
 
         output_path = dest_path / file_name
 
-        with self._progress_bar:
+        with self._new_progress():
             return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
 
     async def upload(
@@ -640,7 +640,7 @@ class Mega(MegaNzCoreClient):
                 meta_mac[0],
                 meta_mac[1],
             ]
-            encrypted_key = a32_to_base64(encrypt_key(key, self.master_key))
+            encrypted_key = a32_to_base64(encrypt_key(key, self._master_key))
             logger.info("Sending request to update attributes")
             # update attributes
             data: FolderResponse = await self._api.request(
@@ -661,7 +661,7 @@ class Mega(MegaNzCoreClient):
         # encrypt attribs
         attribs = {"n": name}
         encrypt_attribs = base64_url_encode(encrypt_attr(attribs, ul_key[:4]))
-        encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self.master_key))
+        encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self._master_key))
 
         # This can return multiple folders if subfolders needed to be created
         folders: dict[str, list[Folder]] = await self._api.request(
@@ -692,7 +692,7 @@ class Mega(MegaNzCoreClient):
         attribs = {"n": new_name}
         # encrypt attribs
         encrypt_attribs = base64_url_encode(encrypt_attr(attribs, node["k_decrypted"]))
-        encrypted_key = a32_to_base64(encrypt_key(node["full_key"], self.master_key))
+        encrypted_key = a32_to_base64(encrypt_key(node["full_key"], self._master_key))
         # update attributes
         return await self._api.request(
             {
@@ -846,7 +846,7 @@ class Mega(MegaNzCoreClient):
         key = base64_to_a32(file_key)
         k: TupleArray = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
 
-        encrypted_key: str = a32_to_base64(encrypt_key(key, self.master_key))
+        encrypted_key: str = a32_to_base64(encrypt_key(key, self._master_key))
         encrypted_name: str = base64_url_encode(encrypt_attr({"n": dest_name}, k))
         return await self._api.request(
             {

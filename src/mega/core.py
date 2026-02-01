@@ -6,6 +6,7 @@ import logging
 import re
 import shutil
 import tempfile
+from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, cast
 
@@ -50,33 +51,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-class ProgressBar:
-    def __init__(self, enabled: bool = True) -> None:
-        progress_columns = (
-            SpinnerColumn(),
-            "{task.description}",
-            BarColumn(bar_width=None),
-            "[progress.percentage]{task.percentage:>6.2f}%",
-            "━",
-            DownloadColumn(),
-            "━",
-            TransferSpeedColumn(),
-            "━",
-            TimeRemainingColumn(compact=True, elapsed_when_finished=True),
-        )
-        self.progress = Progress(*progress_columns)
-        self.enabled = enabled
-
-    def __enter__(self) -> Progress:
-        if self.enabled:
-            self.progress.start()
-        return self.progress
-
-    def __exit__(self, *args, **kwargs) -> None:
-        if self.enabled:
-            self.progress.stop()
+_SHOW_PROGRESS = ContextVar[bool]("_SHOW_PROGRESS", default=False)
 
 
 @dataclasses.dataclass(slots=True)
@@ -95,16 +70,39 @@ class MegaNzCoreClient:
         self.inbox_id: str = ""
         self.trashbin_id: str = ""
         self._system_nodes = SystemNodes("", "", "")
-        self._progress_bar = ProgressBar(enabled=use_progress_bar)
         self._shared_keys: SharedKeysMap = {}
-        self.master_key: TupleArray
+        self._master_key: TupleArray
         self._auth = MegaAuth(self._api)
+
+    @property
+    def show_progress(self) -> bool:
+        return _SHOW_PROGRESS.get()
+
+    @show_progress.setter
+    def show_progress(self, value: bool) -> None:
+        _ = _SHOW_PROGRESS.set(value)
+
+    def _new_progress(self) -> Progress:
+        progress = Progress(
+            SpinnerColumn(),
+            "{task.description}",
+            BarColumn(bar_width=None),
+            "[progress.percentage]{task.percentage:>6.2f}%",
+            "━",
+            DownloadColumn(),
+            "━",
+            TransferSpeedColumn(),
+            "━",
+            TimeRemainingColumn(compact=True, elapsed_when_finished=True),
+        )
+        progress.disable = not self.show_progress
+        return progress
 
     async def login(self, email: str, password: str, _mfa: str | None = None) -> Self:
         if email and password:
-            self.master_key, self._api.session_id = await self._auth.login(email, password)
+            self._master_key, self._api.session_id = await self._auth.login(email, password)
         else:
-            self.master_key, self._api.session_id = await self._auth.login_anonymous()
+            self._master_key, self._api.session_id = await self._auth.login_anonymous()
         _ = await self._get_files()  # Required to get the special folders id
         self._logged_in = True
         logger.info(f"Special folders: {self._system_nodes}")
@@ -181,11 +179,11 @@ class MegaNzCoreClient:
         key = None
         # my objects
         if uid in keys:
-            key = decrypt_key(base64_to_a32(keys[uid]), self.master_key)
+            key = decrypt_key(base64_to_a32(keys[uid]), self._master_key)
 
         # shared folders
         elif (share_id := node.get("su")) and (share_key := node.get("sk")) and node_id in keys:
-            shared_key = decrypt_key(base64_to_a32(share_key), self.master_key)
+            shared_key = decrypt_key(base64_to_a32(share_key), self._master_key)
             key = decrypt_key(base64_to_a32(keys[node_id]), shared_key)
             self._shared_keys.setdefault(share_id, {})[node_id] = shared_key
 
@@ -232,7 +230,7 @@ class MegaNzCoreClient:
         shared_keys: SharedKeys = {}
         for node in files["ok"]:
             node_id: str = node["h"]
-            decrypted_shared_key = decrypt_key(base64_to_a32(node["k"]), self.master_key)
+            decrypted_shared_key = decrypt_key(base64_to_a32(node["k"]), self._master_key)
             shared_keys[node_id] = decrypted_shared_key
 
         for node in files["s"]:
@@ -303,29 +301,33 @@ class MegaNzCoreClient:
         meta_mac: TupleArray,
         k_decrypted: TupleArray,
     ):
-        with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
-            task_id = self._progress_bar.progress.add_task(output_path.name, total=file_size)
+        with (
+            tempfile.NamedTemporaryFile(prefix="megapy_", delete=False) as temp_file,
+            self._new_progress() as progress_bar,
+        ):
+            task_id = progress_bar.add_task(output_path.name, total=file_size)
             chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
             _ = next(chunk_decryptor)  # Prime chunk decryptor
-            bytes_written: int = 0
-            async with self._api.__session.get(direct_file_url) as response:
+
+            async with self._api._get_session().get(direct_file_url) as response:
                 for _, chunk_size in get_chunks(file_size):
                     raw_chunk = await response.content.readexactly(chunk_size)
                     decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
                     actual_size = len(decrypted_chunk)
-                    bytes_written += actual_size
-                    temp_output_file.write(decrypted_chunk)
-                    self._progress_bar.progress.advance(task_id, actual_size)
+                    temp_file.write(decrypted_chunk)
+                    progress_bar.advance(task_id, actual_size)
 
         try:
             # Stop chunk decryptor and do a mac integrity check
             chunk_decryptor.send(None)  # type: ignore
         except StopIteration:
             pass
-        finally:
-            self._progress_bar.progress.remove_task(task_id)
-        await asyncio.to_thread(output_path.parent.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(shutil.move, temp_output_file.name, output_path)
+
+        def move() -> None:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(temp_file.name, output_path)
+
+        await asyncio.to_thread(move)
         return output_path
 
     def _decrypt_chunks(
