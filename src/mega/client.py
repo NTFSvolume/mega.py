@@ -30,7 +30,7 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import NodeType, StorageUsage, TupleArray
+from mega.data_structures import NodeType, StorageUsage
 
 from .errors import MegaNzError, RequestError, ValidationError
 
@@ -531,8 +531,8 @@ class Mega(MegaNzCoreClient):
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
         # Strangely, files can come back later.
-        if "g" not in file_data:
-            raise RequestError("File not accessible anymore")
+        # if "g" not in file_data:
+        #    raise RequestError("File not accessible anymore")
 
         file_url = file_data["g"]
         file_size = file_data["s"]
@@ -540,17 +540,8 @@ class Mega(MegaNzCoreClient):
         attribs = decrypt_attr(attribs_bytes, k)
         attribs = cast("Attributes", attribs)
 
-        if dest_filename is not None:
-            file_name = dest_filename
-        else:
-            file_name: str = attribs["n"]
-
-        if dest_path is None:
-            dest_path = Path()
-        elif isinstance(dest_path, str):
-            dest_path = Path(dest_path)
-
-        output_path = dest_path / file_name
+        file_name = dest_filename or attribs["n"]
+        output_path = Path(dest_path or Path()) / file_name
 
         with self._new_progress():
             return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)

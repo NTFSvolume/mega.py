@@ -31,10 +31,10 @@ from mega.crypto import (
 )
 from mega.data_structures import NodeType, TupleArray
 
-from .errors import MegaNzError, ValidationError
+from .errors import ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Sequence
+    from collections.abc import Callable, Generator, Mapping, Sequence
 
     import aiohttp
 
@@ -312,7 +312,7 @@ class MegaNzCoreClient:
             async with self._api._get_session().get(direct_file_url) as response:
                 for _, chunk_size in get_chunks(file_size):
                     raw_chunk = await response.content.readexactly(chunk_size)
-                    chunk: bytes = chunk_decryptor.decrypt(raw_chunk)
+                    chunk = chunk_decryptor.decrypt(raw_chunk)
                     temp_file.write(chunk)
                     progress_bar.advance(task_id, len(chunk))
 
@@ -325,46 +325,38 @@ class MegaNzCoreClient:
         await asyncio.to_thread(move)
         return output_path
 
-    async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
+    async def build_file_system(self, nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
+        return await asyncio.to_thread(self._build_file_system, nodes_map, root_ids)
+
+    def _build_file_system(self, nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
         """Builds a flattened dictionary representing a file system from a list of items.
 
         Returns:
             A 1-level dictionary where the each keys is the full path to a file/folder, and each value is the actual file/folder
         """
-        if not self._logged_in:
-            raise MegaNzError("You must log in to build your file system")
 
-        path_mapping: dict[PurePosixPath, Node] = {}
-        parents_mapping: dict[str, list[Node]] = {}
+        fs: dict[PurePosixPath, Node] = {}
+        parents_map: dict[str, list[Node]] = {}
 
-        for _, item in nodes_map.items():
-            parent_id = item["p"]
-            if parent_id not in parents_mapping:
-                parents_mapping[parent_id] = []
-            parents_mapping[parent_id].append(item)
+        for item in nodes_map.values():
+            parents_map.setdefault(item["p"], []).append(item)
 
-        async def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
-            for item in parents_mapping.get(parent_id, []):
-                name = item["attributes"].get("n")
-                if not name:
-                    continue
-                item_path = current_path / name
-                path_mapping[item_path] = item
+        def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
+            for item in parents_map.get(parent_id, []):
+                item_path = current_path / item["attributes"]["n"]
+                fs[item_path] = item
 
                 if item["t"] == NodeType.FOLDER:
-                    await build_tree(item["h"], item_path)
-
-            await asyncio.sleep(0)
+                    build_tree(item["h"], item_path)
 
         for root_id in root_ids:
             root_item = nodes_map[root_id]
             name = root_item["attributes"]["n"]
             path = PurePosixPath(name if name != "Cloud Drive" else ".")
-            path_mapping[path] = root_item
-            await build_tree(root_id, path)
+            fs[path] = root_item
+            build_tree(root_id, path)
 
-        sorted_mapping = dict(sorted(path_mapping.items()))
-        return sorted_mapping
+        return dict(sorted(fs.items()))
 
 
 class MegaDecryptor:

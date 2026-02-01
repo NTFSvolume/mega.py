@@ -62,7 +62,7 @@ class MegaAuth:
 
         tsid = base64_url_decode(b64_temp_session_id)
         user_hash = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), master_key))
-        if user_hash == tsid[-16:]:
+        if user_hash != tsid[-16:]:
             raise RuntimeError
 
         return master_key, b64_temp_session_id
