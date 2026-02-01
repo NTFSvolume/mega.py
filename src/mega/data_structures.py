@@ -84,8 +84,8 @@ if TYPE_CHECKING:
         s: list[File | Folder]
 
     NodesMap = dict[str, Node]  # key is parent_id ('p')
-    SharedKey = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
-    SharedkeysDict = dict[str, SharedKey]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
+    SharedKeys = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
+    SharedKeysMap = dict[str, SharedKeys]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
 
 
 class StorageUsage(NamedTuple):

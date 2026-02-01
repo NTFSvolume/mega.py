@@ -7,18 +7,13 @@ import logging
 import os
 import random
 import re
-import shutil
-import tempfile
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal, TypeVar, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
-from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
-from typing_extensions import Self
 
-from mega.api import MegaApi
-from mega.auth import MegaAuth
+from mega.core import MegaNzCoreClient
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
     a32_to_base64,
@@ -40,10 +35,8 @@ from mega.data_structures import NodeType, StorageUsage, TupleArray
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine, Generator, Sequence
+    from collections.abc import Callable, Coroutine
     from typing import ParamSpec
-
-    import aiohttp
 
     from mega.data_structures import (
         AnyArray,
@@ -55,8 +48,6 @@ if TYPE_CHECKING:
         FolderResponse,
         Node,
         NodesMap,
-        SharedKey,
-        SharedkeysDict,
         TupleArray,
     )
 
@@ -65,33 +56,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-class ProgressBar:
-    def __init__(self, enabled: bool = True) -> None:
-        progress_columns = (
-            SpinnerColumn(),
-            "{task.description}",
-            BarColumn(bar_width=None),
-            "[progress.percentage]{task.percentage:>6.2f}%",
-            "━",
-            DownloadColumn(),
-            "━",
-            TransferSpeedColumn(),
-            "━",
-            TimeRemainingColumn(compact=True, elapsed_when_finished=True),
-        )
-        self.progress = Progress(*progress_columns)
-        self.enabled = enabled
-
-    def __enter__(self) -> Progress:
-        if self.enabled:
-            self.progress.start()
-        return self.progress
-
-    def __exit__(self, *args, **kwargs) -> None:
-        if self.enabled:
-            self.progress.stop()
 
 
 def requires_login(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, Coroutine[None, None, _R]]:
@@ -105,21 +69,6 @@ def requires_login(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P
     return wrapper
 
 
-@dataclasses.dataclass(slots=True)
-class SystemNodes:
-    root: str
-    inbox: str
-    trashbin: str
-
-
-@dataclasses.dataclass(slots=True, frozen=True)
-class AuthInfo:
-    email: str
-    password_aes_key: tuple[int, ...]
-    hash: str
-    mfa_key: str | None = None
-
-
 @dataclasses.dataclass(slots=True, frozen=True)
 class LoginResponse:
     session_id: str
@@ -128,152 +77,8 @@ class LoginResponse:
     master_key: str
 
 
-class Mega:
-    def __init__(self, use_progress_bar: bool = True, session: aiohttp.ClientSession | None = None) -> None:
-        self._api = MegaApi(session)
-        self._primary_url = "https://mega.nz"
-        self._logged_in = False
-        self.root_id: str = ""
-        self.inbox_id: str = ""
-        self.trashbin_id: str = ""
-        self._system_nodes = SystemNodes("", "", "")
-        self._progress_bar = ProgressBar(enabled=use_progress_bar)
-        self._shared_keys: SharedkeysDict = {}
-        self.master_key: TupleArray
-        self._auth = MegaAuth(self._api)
-
-    async def login(self, email: str, password: str, _mfa: str | None = None) -> None:
-        if email and password:
-            self.master_key, self._api.session_id = await self._auth.login(email, password)
-        else:
-            self.master_key, self._api.session_id = await self._auth.login_anonymous()
-
-    async def __enter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_) -> None:
-        await self.close()
-
-    @property
-    def use_progress_bar(self) -> bool:
-        return self._progress_bar.enabled
-
-    @use_progress_bar.setter
-    def set_progress_bar(self, value: bool) -> None:
-        if not isinstance(value, bool):
-            raise ValueError("Only bool values are valid")
-        self._progress_bar.enabled = value
-
-    async def close(self) -> None:
-        await self._api.close()
-
-    @staticmethod
-    def _parse_url(url: str) -> str:
-        """Parse file id and key from url."""
-        if "/file/" in url:
-            # V2 URL structure
-            # ex: https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq
-            url = url.replace(" ", "")
-            file_id = re.findall(r"\W\w\w\w\w\w\w\w\w\W", url)[0][1:-1]
-            match = re.search(file_id, url)
-            assert match
-            id_index = match.end()
-            key = url[id_index + 1 :]
-            return f"{file_id}!{key}"
-        elif "!" in url:
-            # V1 URL structure
-            # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
-            match = re.findall(r"/#!(.*)", url)
-            path = match[0]
-            return path
-        else:
-            raise ValueError(f"URL key missing from {url}")
-
-    def _process_node(self, node: Node) -> Node:
-        shared_keys: SharedkeysDict = self._shared_keys
-        if node["t"] == NodeType.FILE or node["t"] == NodeType.FOLDER:
-            node = cast("File | Folder", node)
-            keys = dict(keypart.split(":", 1) for keypart in node["k"].split("/") if ":" in keypart)
-            uid = node["u"]
-            key = None
-            # my objects
-            if uid in keys:
-                key = decrypt_key(base64_to_a32(keys[uid]), self.master_key)
-            # shared folders
-            elif "su" in node and "sk" in node and ":" in node["k"]:
-                shared_key = decrypt_key(base64_to_a32(node["sk"]), self.master_key)
-                key = decrypt_key(base64_to_a32(keys[node["h"]]), shared_key)
-                shared_keys.setdefault(node["su"], {})[node["h"]] = shared_key
-
-            # shared files
-            elif node["u"] and node["u"] in shared_keys:
-                for hkey in shared_keys[node["u"]]:
-                    shared_key = shared_keys[node["u"]][hkey]
-                    if hkey in keys:
-                        key = keys[hkey]
-                        key = decrypt_key(base64_to_a32(key), shared_key)
-                        break
-            if node["h"] and node["h"] in shared_keys.get("EXP", ()):
-                shared_key = shared_keys["EXP"][node["h"]]
-                encrypted_key = str_to_a32(base64_url_decode(node["k"].split(":")[-1]))
-                key = decrypt_key(encrypted_key, shared_key)
-                node["sk_decrypted"] = shared_key
-
-            if key is not None:
-                # file
-                if node["t"] == NodeType.FILE:
-                    node = cast("File", node)
-                    k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
-                    node["iv"] = (*key[4:6], 0, 0)
-                    node["meta_mac"] = key[6:8]
-                # folder
-                else:
-                    k = key
-
-                node["full_key"] = key
-                node["k_decrypted"] = k
-                attributes_bytes = base64_url_decode(node["a"])
-                attributes = decrypt_attr(attributes_bytes, k)
-                node["attributes"] = cast("Attributes", attributes)
-
-            # other => wrong object
-            elif node["k"] == "":
-                node = cast("Node", node)
-                node["attributes"] = {"n": "Unknown Object"}
-
-        elif node["t"] == NodeType.ROOT_FOLDER:
-            self.root_id: str = node["h"]
-            node["attributes"] = {"n": "Cloud Drive"}
-
-        elif node["t"] == NodeType.INBOX:
-            self.inbox_id = node["h"]
-            node["attributes"] = {"n": "Inbox"}
-
-        elif node["t"] == NodeType.TRASH:
-            self.trashbin_id = node["h"]
-            node["attributes"] = {"n": "Trash Bin"}
-
-        return node
-
-    def _init_shared_keys(self, files: FolderResponse) -> None:
-        """
-        Init shared key not associated with a user.
-        Seems to happen when a folder is shared,
-        some files are exchanged and then the
-        folder is un-shared.
-        Keys are stored in files['s'] and files['ok']
-        """
-        shared_key: SharedKey = {}
-        shared_keys: SharedkeysDict = {}
-        for ok_item in files["ok"]:
-            decrypted_shared_key = decrypt_key(base64_to_a32(ok_item["k"]), self.master_key)
-            shared_key[ok_item["h"]] = decrypted_shared_key
-
-        for s_item in files["s"]:
-            if s_item["h"] in shared_key:
-                shared_keys.setdefault(s_item["u"], {})[s_item["h"]] = shared_key[s_item["h"]]
-
-        self._shared_keys = shared_keys
+class Mega(MegaNzCoreClient):
+    """Interface with all the public methods of the API"""
 
     async def find(self, path: Path | str, exclude_deleted: bool = False) -> File | Folder | None:
         """
@@ -318,71 +123,9 @@ class Mega:
             return None
         return cast("File | Folder", file)
 
-    async def _get_files(self) -> NodesMap:
-        logger.info("Getting all files...")
-        return await self._get_nodes()
-
     @requires_login
     async def get_files(self) -> NodesMap:
         return await self._get_files()
-
-    async def _get_nodes(self) -> NodesMap:
-        files: FolderResponse = await self._api.request(
-            {
-                "a": "f",
-                "c": 1,
-                "r": 1,
-            }
-        )
-
-        if not self._shared_keys:
-            self._init_shared_keys(files)
-
-        return await self._process_nodes(files["f"])
-
-    async def _process_nodes(
-        self,
-        nodes: Sequence[Node],
-        public_key: str | None = None,
-        predicate: Callable[[Node], bool] | None = None,
-    ) -> dict[str, Node]:
-        """
-        Processes multiple nodes at once, decrypting their metadata and attributes.
-
-        If predicate is provided, only nodes for which `predicate(node)` returns `False` are included in the result.
-
-        This method is NOT thread safe. It modifies the internal state of the shared keys.
-        """
-        # User may already have access to this folder (the key is saved in their account)
-        folder_key = base64_to_a32(public_key) if public_key else None
-        self._shared_keys.setdefault("EXP", {})
-
-        async def process_nodes() -> dict[str, Node]:
-            results = {}
-            for index, node in enumerate(nodes):
-                node_id = node["h"]
-                if folder_key:
-                    self._shared_keys["EXP"][node_id] = folder_key
-                processed_node = self._process_node(node)
-                if predicate is None or not predicate(processed_node):
-                    results[node_id] = processed_node
-
-                if index % 500 == 0:
-                    await asyncio.sleep(0)
-
-            return results
-
-        return await process_nodes()
-
-    def _parse_folder_url(self, url: str) -> tuple[str, str]:
-        if "/folder/" in url:
-            _, parts = url.split("/folder/", 1)
-        elif "#F!" in url:
-            _, parts = url.split("#F!", 1)
-        else:
-            raise ValidationError("Not a valid folder URL")
-        root_folder_id, shared_key = parts.split("#")
-        return root_folder_id, shared_key
 
     @requires_login
     async def get_upload_link(self, folder: FolderResponse) -> str:
@@ -812,97 +555,6 @@ class Mega:
         with self._progress_bar:
             return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
 
-    async def _really_download_file(
-        self,
-        direct_file_url: str,
-        output_path: Path,
-        file_size: int,
-        iv: TupleArray,
-        meta_mac: TupleArray,
-        k_decrypted: TupleArray,
-    ):
-        with tempfile.NamedTemporaryFile(mode="w+b", prefix="megapy_", delete=False) as temp_output_file:
-            task_id = self._progress_bar.progress.add_task(output_path.name, total=file_size)
-            chunk_decryptor = self._decrypt_chunks(iv, k_decrypted, meta_mac)
-            _ = next(chunk_decryptor)  # Prime chunk decryptor
-            bytes_written: int = 0
-            async with self._api.__session.get(direct_file_url) as response:
-                for _, chunk_size in get_chunks(file_size):
-                    raw_chunk = await response.content.readexactly(chunk_size)
-                    decrypted_chunk: bytes = chunk_decryptor.send(raw_chunk)
-                    actual_size = len(decrypted_chunk)
-                    bytes_written += actual_size
-                    temp_output_file.write(decrypted_chunk)
-                    self._progress_bar.progress.advance(task_id, actual_size)
-
-        try:
-            # Stop chunk decryptor and do a mac integrity check
-            chunk_decryptor.send(None)  # type: ignore
-        except StopIteration:
-            pass
-        finally:
-            self._progress_bar.progress.remove_task(task_id)
-        await asyncio.to_thread(output_path.parent.mkdir, parents=True, exist_ok=True)
-        await asyncio.to_thread(shutil.move, temp_output_file.name, output_path)
-        return output_path
-
-    def _decrypt_chunks(
-        self,
-        iv: TupleArray,
-        k_decrypted: TupleArray,
-        meta_mac: TupleArray,
-    ) -> Generator[bytes, bytes, None]:
-        """
-        Decrypts chunks of data received via `send()` and yields the decrypted chunks.
-        It decrypts chunks indefinitely until a sentinel value (`None`) is sent.
-
-        NOTE: You MUST send `None` after decrypting every chunk to execute the mac check
-
-        Args:
-            iv (AnyArray):  Initialization vector (iv) as a list or tuple of two 32-bit unsigned integers.
-            k_decrypted (TupleArray):  Decryption key as a tuple of four 32-bit unsigned integers.
-            meta_mac (AnyArray):  The expected MAC value of the final file.
-
-        Yields:
-            bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
-
-        """
-        k_bytes = a32_to_bytes(k_decrypted)
-        counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-        aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
-
-        # mega.nz improperly uses CBC as a MAC mode, so after each chunk
-        # the computed mac_bytes are used as IV for the next chunk MAC accumulation
-        mac_bytes = b"\0" * 16
-        mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
-        iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
-        raw_chunk = yield b""
-        while True:
-            if raw_chunk is None:
-                break
-            decrypted_chunk = aes.decrypt(raw_chunk)
-            raw_chunk = yield decrypted_chunk
-            encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
-
-            # take last 16-N bytes from chunk (with N between 1 and 16, including extremes)
-            mem_view = memoryview(decrypted_chunk)  # avoid copying memory for the entire chunk when slicing
-            modchunk = len(decrypted_chunk) % CHUNK_BLOCK_LEN
-            if modchunk == 0:
-                # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                modchunk = CHUNK_BLOCK_LEN
-
-            # pad last block to 16 bytes
-            last_block = pad_bytes(mem_view[-modchunk:])
-            rest_of_chunk = mem_view[:-modchunk]
-            _ = encryptor.encrypt(rest_of_chunk)
-            input_to_mac = encryptor.encrypt(last_block)
-            mac_bytes = mac_encryptor.encrypt(input_to_mac)
-
-        file_mac = str_to_a32(mac_bytes)
-        computed_mac = file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]
-        if computed_mac != meta_mac:
-            raise RuntimeError("Mismatched mac")
-
     async def upload(
         self, filename: str, dest_node: Folder | None = None, dest_filename: str | None = None
     ) -> FolderResponse:
@@ -1214,44 +866,3 @@ class Mega:
     async def build_file_system(self) -> dict[PurePosixPath, Node]:
         nodes_map = await self._get_nodes()
         return await self._build_file_system(nodes_map, list(self.special_nodes_mapping.values()))
-
-    async def _build_file_system(self, nodes_map: dict[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
-        """Builds a flattened dictionary representing a file system from a list of items.
-
-        Returns:
-            A 1-level dictionary where the each keys is the full path to a file/folder, and each value is the actual file/folder
-        """
-        if not self._logged_in:
-            raise MegaNzError("You must log in to build your file system")
-
-        path_mapping: dict[PurePosixPath, Node] = {}
-        parents_mapping: dict[str, list[Node]] = {}
-
-        for _, item in nodes_map.items():
-            parent_id = item["p"]
-            if parent_id not in parents_mapping:
-                parents_mapping[parent_id] = []
-            parents_mapping[parent_id].append(item)
-
-        async def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
-            for item in parents_mapping.get(parent_id, []):
-                name = item["attributes"].get("n")
-                if not name:
-                    continue
-                item_path = current_path / name
-                path_mapping[item_path] = item
-
-                if item["t"] == NodeType.FOLDER:
-                    await build_tree(item["h"], item_path)
-
-            await asyncio.sleep(0)
-
-        for root_id in root_ids:
-            root_item = nodes_map[root_id]
-            name = root_item["attributes"]["n"]
-            path = PurePosixPath(name if name != "Cloud Drive" else ".")
-            path_mapping[path] = root_item
-            await build_tree(root_id, path)
-
-        sorted_mapping = dict(sorted(path_mapping.items()))
-        return sorted_mapping

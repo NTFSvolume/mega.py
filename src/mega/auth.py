@@ -42,14 +42,14 @@ class AuthInfo:
 @dataclasses.dataclass(slots=True, frozen=True)
 class LoginResponse:
     session_id: str
-    temp_session_id: str
+    temp_session_id: str | None
     private_key: str
     master_key: str
 
     @classmethod
     def parse(cls, resp: dict[str, Any]) -> Self:
         return cls(
-            session_id=resp.get("csid"),
+            session_id=resp.get("csid", ""),
             temp_session_id=resp.get("tsid"),
             master_key=resp["k"],
             private_key=resp["privk"],
@@ -97,10 +97,10 @@ class MegaAuth:
             }
         )
         login = LoginResponse.parse(resp)
-        master_key = decrypt_key(base64_to_a32(login.master_key), auth.password_aes_key)
+        master_key: tuple[int, int, int, int] = decrypt_key(base64_to_a32(login.master_key), auth.password_aes_key)
 
         encrypted_sid = mpi_to_int(base64_url_decode(login.session_id))
-        encrypted_private_key = base64_to_a32(login.private_key)
+        encrypted_private_key: tuple[int, ...] = base64_to_a32(login.private_key)
         private_key = a32_to_bytes(decrypt_key(encrypted_private_key, master_key))
         rsa_key = decrypt_rsa_key(private_key)
 
@@ -109,8 +109,7 @@ class MegaAuth:
         # The documentation suggests using Crypto.Cipher.PKCS1_OAEP,
         # but the algorithm differs and requires bytes as input instead of integers.
         decrypted_sid = int(rsa_key._decrypt(encrypted_sid))  # type: ignore  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownArgumentType]
-        sid_hex = f"{decrypted_sid:x}"
-        sid_bytes = bytes.fromhex("0" + sid_hex if len(sid_hex) % 2 else sid_hex)
+        sid_bytes = decrypted_sid.to_bytes((decrypted_sid.bit_length() + 7) // 8 or 1, "big")
         session_id = base64_url_encode(sid_bytes[:43])
         return master_key, session_id
 
