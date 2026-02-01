@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import aiohttp
 import tenacity
+import yarl
 from typing_extensions import Self
 
 from mega.crypto import random_u32int
@@ -42,7 +43,7 @@ class MegaApi:
         }
         self.__session: aiohttp.ClientSession | None = session
         self._managed_session: bool = session is not None
-        self._entrypoint: str = "https://g.api.mega.co.nz/cs"  # api still uses the old mega.co.nz domain
+        self._entrypoint: yarl.URL = yarl.URL("https://g.api.mega.co.nz/cs")  # api still uses the old mega.co.nz domain
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>  (session_id={self.session_id!r}, client_id={self._client_id!r})"
@@ -92,6 +93,7 @@ class MegaApi:
                 logger.info("Solving xhashcash login challenge, this could take a few seconds...")
                 xhashcash_token = generate_hashcash_token(xhashcash_challenge)
                 headers = self._default_headers | {"X-Hashcash": xhashcash_token}
+                continue
             break
         else:
             raise ValueError

@@ -54,7 +54,7 @@ def _aes_cbc_decrypt_a32(data: AnyArray, key: AnyArray) -> TupleArray:
     return str_to_a32(_aes_cbc_decrypt(a32_to_bytes(data), a32_to_bytes(key)))
 
 
-def make_hash(string: str, aeskey: AnyArray) -> str:
+def generate_v1_hash(string: str, aeskey: AnyArray) -> str:
     s32 = str_to_a32(string)
     h32 = [0, 0, 0, 0]
     for i in range(len(s32)):
@@ -64,7 +64,8 @@ def make_hash(string: str, aeskey: AnyArray) -> str:
     return a32_to_base64((h32[0], h32[2]))
 
 
-def prepare_key(arr: Array) -> Array:
+def prepare_v1_key(password: str) -> Array:
+    arr = str_to_a32(password)
     pkey: Array = [0x93C467E3, 0x7DB0C7A4, 0xD1BE3F81, 0x0152CB56]
     for _ in range(0x10000):
         for j in range(0, len(arr), 4):

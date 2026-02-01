@@ -10,7 +10,7 @@ from mega.client import Mega
 
 async def run() -> None:
     handler = RichHandler(show_time=False, rich_tracebacks=True)
-    logger = logging.getLogger()
+    logger = logging.getLogger(__name__)
     logger.setLevel(10)
     logger.addHandler(handler)
     parser = argparse.ArgumentParser(description="Download files from a Mega.nz URL.")

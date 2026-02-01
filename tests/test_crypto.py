@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from mega import crypto
+from mega import crypto, xhashcash
 from mega.data_structures import AnyArray
 
 
@@ -67,3 +67,20 @@ def test_decrypt_attr(attrs: bytes, key: AnyArray, expected_output: dict[str, An
 )
 def test_mpi(blob: bytes, expected: int) -> None:
     assert crypto.mpi_to_int(blob) == expected
+
+
+@pytest.mark.parametrize(
+    "input,expected",
+    [
+        (
+            "1:192:1769956228:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj",
+            "1:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj:jgEAAA",
+        ),
+        (
+            "1:192:1769956324:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77",
+            "1:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77:1wAAAA",
+        ),
+    ],
+)
+def test_hashcash(input: str, expected: str) -> None:
+    assert xhashcash.generate_hashcash_token(input) == expected

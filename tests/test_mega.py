@@ -69,7 +69,7 @@ def test_mega(mega: Mega) -> None:
 
 
 def test_login(mega: Mega) -> None:
-    assert mega.logged_in
+    assert mega._logged_in
     assert all((mega.root_id, mega.inbox_id, mega.trashbin_id))
 
 
@@ -260,4 +260,4 @@ class TestAPIRequest:
         with pytest.MonkeyPatch.context() as m:
             m.setattr(aiohttp.ClientResponse, "json", AsyncMock(return_value=response))
             with pytest.raises(RequestError):
-                await mega.api.request(data={})
+                await mega._api.request(data={})
