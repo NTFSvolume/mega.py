@@ -5,8 +5,6 @@ import hashlib
 import logging
 from typing import TYPE_CHECKING, Any
 
-from typing_extensions import Self
-
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
@@ -39,34 +37,18 @@ class AuthInfo:
     mfa_key: str | None = None
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class LoginResponse:
-    session_id: str
-    temp_session_id: str | None
-    private_key: str
-    master_key: str
-
-    @classmethod
-    def parse(cls, resp: dict[str, Any]) -> Self:
-        return cls(
-            session_id=resp.get("csid", ""),
-            temp_session_id=resp.get("tsid"),
-            master_key=resp["k"],
-            private_key=resp["privk"],
-        )
-
-
 class MegaAuth:
     def __init__(self, api: MegaApi) -> None:
         self._api = api
 
     async def login_anonymous(self) -> tuple[TupleArray, str]:
         logger.info("Logging as an anonymous temporary user...")
-        master_key = [random_u32int()] * 4
-        password_aes_key = [random_u32int()] * 4
-        session_self_challenge = [random_u32int()] * 4
 
-        user: str = await self._api.request(
+        master_key = tuple(random_u32int() for _ in range(4))
+        password_aes_key = tuple(random_u32int() for _ in range(4))
+        session_self_challenge = tuple(random_u32int() for _ in range(4))
+
+        user_id: str = await self._api.request(
             {
                 "a": "up",
                 "k": a32_to_base64(encrypt_key(master_key, password_aes_key)),
@@ -76,14 +58,14 @@ class MegaAuth:
             }
         )
 
-        resp = await self._api.request({"a": "us", "user": user})
-        login = LoginResponse.parse(resp)
+        b64_temp_session_id: str = (await self._api.request({"a": "us", "user": user_id}))["tsid"]
 
-        real_master_key = decrypt_key(base64_to_a32(login.master_key), password_aes_key)
-        tsid = base64_url_decode(login.temp_session_id)
-        key_encrypted = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), real_master_key))
-        assert key_encrypted == tsid[-16:]
-        return real_master_key, login.temp_session_id
+        tsid = base64_url_decode(b64_temp_session_id)
+        user_hash = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), master_key))
+        if user_hash == tsid[-16:]:
+            raise RuntimeError
+
+        return master_key, b64_temp_session_id
 
     async def login(self, email: str, password: str, _mfa: str | None = None) -> tuple[TupleArray, str]:
         email = email.lower()
@@ -96,13 +78,15 @@ class MegaAuth:
                 "uh": auth.hash,
             }
         )
-        login = LoginResponse.parse(resp)
-        master_key: tuple[int, int, int, int] = decrypt_key(base64_to_a32(login.master_key), auth.password_aes_key)
 
-        encrypted_sid = mpi_to_int(base64_url_decode(login.session_id))
-        encrypted_private_key: tuple[int, ...] = base64_to_a32(login.private_key)
-        private_key = a32_to_bytes(decrypt_key(encrypted_private_key, master_key))
+        b64_session_id: str = resp["csid"]
+        b64_master_key: str = resp["k"]
+        b64_private_key: str = resp["privk"]
+
+        master_key = decrypt_key(base64_to_a32(b64_master_key), auth.password_aes_key)
+        private_key = a32_to_bytes(decrypt_key(base64_to_a32(b64_private_key), master_key))
         rsa_key = decrypt_rsa_key(private_key)
+        encrypted_sid = mpi_to_int(base64_url_decode(b64_session_id))
 
         # TODO: Investigate how to decrypt using the current pycryptodome library.
         # The _decrypt method of RSA is deprecated and no longer available.
