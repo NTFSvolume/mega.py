@@ -8,9 +8,9 @@ from typing import TYPE_CHECKING, Any
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
-    base64_to_a32,
-    base64_url_decode,
-    base64_url_encode,
+    b64_to_a32,
+    b64_url_decode,
+    b64_url_encode,
     decrypt_key,
     decrypt_rsa_key,
     encrypt_key,
@@ -52,7 +52,7 @@ class MegaAuth:
             {
                 "a": "up",
                 "k": a32_to_base64(encrypt_key(master_key, password_aes_key)),
-                "ts": base64_url_encode(
+                "ts": b64_url_encode(
                     a32_to_bytes(session_self_challenge) + a32_to_bytes(encrypt_key(session_self_challenge, master_key))
                 ),
             }
@@ -60,7 +60,7 @@ class MegaAuth:
 
         b64_temp_session_id: str = (await self._api.request({"a": "us", "user": user_id}))["tsid"]
 
-        tsid = base64_url_decode(b64_temp_session_id)
+        tsid = b64_url_decode(b64_temp_session_id)
         user_hash = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), master_key))
         if user_hash != tsid[-16:]:
             raise RuntimeError
@@ -83,10 +83,10 @@ class MegaAuth:
         b64_master_key: str = resp["k"]
         b64_private_key: str = resp["privk"]
 
-        master_key = decrypt_key(base64_to_a32(b64_master_key), auth.password_aes_key)
-        private_key = a32_to_bytes(decrypt_key(base64_to_a32(b64_private_key), master_key))
+        master_key = decrypt_key(b64_to_a32(b64_master_key), auth.password_aes_key)
+        private_key = a32_to_bytes(decrypt_key(b64_to_a32(b64_private_key), master_key))
         rsa_key = decrypt_rsa_key(private_key)
-        encrypted_sid = mpi_to_int(base64_url_decode(b64_session_id))
+        encrypted_sid = mpi_to_int(b64_url_decode(b64_session_id))
 
         # TODO: Investigate how to decrypt using the current pycryptodome library.
         # The _decrypt method of RSA is deprecated and no longer available.
@@ -94,7 +94,7 @@ class MegaAuth:
         # but the algorithm differs and requires bytes as input instead of integers.
         decrypted_sid = int(rsa_key._decrypt(encrypted_sid))  # type: ignore  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownArgumentType]
         sid_bytes = decrypted_sid.to_bytes((decrypted_sid.bit_length() + 7) // 8 or 1, "big")
-        session_id = base64_url_encode(sid_bytes[:43])
+        session_id = b64_url_encode(sid_bytes[:43])
         return master_key, session_id
 
     async def _get_info(self, email: str, password: str, mfa_key: str | None = None) -> AuthInfo:
@@ -112,12 +112,12 @@ class MegaAuth:
             pbkdf2_key = hashlib.pbkdf2_hmac(
                 hash_name="sha512",
                 password=password.encode(),
-                salt=base64_url_decode(salt),
+                salt=b64_url_decode(salt),
                 iterations=100_000,
                 dklen=32,
             )
             password_aes = str_to_a32(pbkdf2_key[:16])
-            user_hash = base64_url_encode(pbkdf2_key[-16:])
+            user_hash = b64_url_encode(pbkdf2_key[-16:])
 
         elif version == 1:
             password_aes = prepare_v1_key(password)

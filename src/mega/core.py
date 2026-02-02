@@ -21,8 +21,8 @@ from mega.crypto import (
     CHUNK_BLOCK_LEN,
     EMPTY_IV,
     a32_to_bytes,
-    base64_to_a32,
-    base64_url_decode,
+    b64_to_a32,
+    b64_url_decode,
     decrypt_attr,
     decrypt_key,
     get_chunks,
@@ -147,7 +147,7 @@ class MegaCoreClient:
         if parsed_node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self._decrypt_keys(parsed_node)
             parsed_node._crypto = self._parse_crypto(parsed_node.type, full_key, share_key)
-            attributes = decrypt_attr(base64_url_decode(parsed_node._a), parsed_node._crypto.key)
+            attributes = decrypt_attr(b64_url_decode(parsed_node._a), parsed_node._crypto.key)
             parsed_node.attributes = Attributes(**attributes)
 
         else:
@@ -200,23 +200,23 @@ class MegaCoreClient:
         full_key: tuple[int, ...] | None = None
 
         if node.owner in node.keys:
-            full_key = decrypt_key(base64_to_a32(node.keys[node.owner]), self._master_key)
+            full_key = decrypt_key(b64_to_a32(node.keys[node.owner]), self._master_key)
 
         # shared folders
         elif node.share_id and node.share_key and node.id in node.keys:
-            share_key = decrypt_key(base64_to_a32(node.share_key), self._master_key)
-            full_key = decrypt_key(base64_to_a32(node.keys[node.id]), share_key)
+            share_key = decrypt_key(b64_to_a32(node.share_key), self._master_key)
+            full_key = decrypt_key(b64_to_a32(node.keys[node.id]), share_key)
             self._shared_keys.setdefault(node.share_id, {})[node.id] = share_key
 
         # shared files
         elif node.owner in self._shared_keys:
             for node_id, share_key in self._shared_keys[node.owner].items():
                 if node_id in node.keys:
-                    full_key = decrypt_key(base64_to_a32(node.keys[node_id]), share_key)
+                    full_key = decrypt_key(b64_to_a32(node.keys[node_id]), share_key)
                     break
 
         if share_key := self._shared_keys.get("EXP", {}).get(node.id):
-            encrypted_key = str_to_a32(base64_url_decode(next(iter(node.keys.values()))))
+            encrypted_key = str_to_a32(b64_url_decode(next(iter(node.keys.values()))))
             full_key = decrypt_key(encrypted_key, share_key)
 
         assert full_key
@@ -235,7 +235,7 @@ class MegaCoreClient:
         shared_keys: SharedKeys = {}
         for share_key in files["ok"]:
             node_id, key = share_key["h"], share_key["k"]
-            shared_keys[node_id] = decrypt_key(base64_to_a32(key), self._master_key)
+            shared_keys[node_id] = decrypt_key(b64_to_a32(key), self._master_key)
 
         for share_key in files["s"]:
             node_id, owner = share_key["h"], share_key["u"]
@@ -274,7 +274,7 @@ class MegaCoreClient:
         This method is NOT thread safe. It modifies the internal state of the shared keys.
         """
 
-        share_key = base64_to_a32(public_key) if public_key else None
+        share_key = b64_to_a32(public_key) if public_key else None
         self._shared_keys.setdefault("EXP", {})
 
         results: dict[str, Node] = {}

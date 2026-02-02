@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import math
 import random
@@ -31,7 +32,7 @@ def pad_bytes(data: bytes | memoryview[int], length: int = CHUNK_BLOCK_LEN) -> b
         if isinstance(data, memoryview):
             return data.tobytes() + padding
         return data + padding
-    return data
+    return data  # pyright: ignore[reportReturnType]
 
 
 def random_u32int() -> U32Int:
@@ -133,27 +134,21 @@ def mpi_to_int(data: bytes) -> int:
     return int(data[2:].hex(), CHUNK_BLOCK_LEN)
 
 
-def base64_url_decode(data: str) -> bytes:
-    data += "=="[(2 - len(data) * 3) % 4 :]
-    for search, replace in (("-", "+"), ("_", "/"), (",", "")):
-        data = data.replace(search, replace)
-    return base64.b64decode(data)
+def b64_url_decode(data: str) -> bytes:
+    # def d64(data_str: str) -> bytes:
+    return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
-def base64_to_a32(string: str) -> TupleArray:
-    return str_to_a32(base64_url_decode(string))
+def b64_to_a32(string: str) -> TupleArray:
+    return str_to_a32(b64_url_decode(string))
 
 
-def base64_url_encode(data: bytes) -> str:
-    data_bytes = base64.b64encode(data)
-    data_str = data_bytes.decode()
-    for old, replace in (("+", "-"), ("/", "_"), ("=", "")):
-        data_str = data_str.replace(old, replace)
-    return data_str
+def b64_url_encode(data: bytes | bytearray) -> str:
+    return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
 
 def a32_to_base64(array: AnyArray) -> str:
-    return base64_url_encode(a32_to_bytes(array))
+    return b64_url_encode(a32_to_bytes(array))
 
 
 def get_chunks(size: int) -> Generator[Chunk]:
@@ -193,3 +188,33 @@ def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
         ),
         consistency_check=True,
     )
+
+
+def generate_hashcash_token(challenge: str) -> str:
+    version, easiness, _, token = challenge.split(":")
+    version = int(version)
+    if version != 1:
+        raise ValueError("hashcash challenge is not version 1")
+
+    easiness = int(easiness)
+    token = b64_url_decode(token)
+
+    base = ((easiness & 63) << 1) + 1
+    shifts = (easiness >> 6) * 7 + 3
+    threshold = base << shifts
+
+    buffer = bytearray(4 + 262144 * 48)
+    for i in range(262144):
+        buffer[4 + i * 48 : 4 + (i + 1) * 48] = token
+
+    while True:
+        digest = hashlib.sha256(buffer).digest()
+        view = struct.unpack(">I", digest[:4])[0]  # big-endian uint32
+        if view <= threshold:
+            return f"1:{token}:{b64_url_encode(buffer[:4])}"
+
+        # Increment the first 4 bytes as a little-endian integer
+        for j in range(4):
+            buffer[j] = (buffer[j] + 1) & 0xFF
+            if buffer[j] != 0:
+                break

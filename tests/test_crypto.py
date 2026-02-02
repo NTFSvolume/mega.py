@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from mega import crypto, xhashcash
+from mega import crypto
 from mega.data_structures import AnyArray
 
 
@@ -83,4 +83,4 @@ def test_mpi(blob: bytes, expected: int) -> None:
     ],
 )
 def test_hashcash(input: str, expected: str) -> None:
-    assert xhashcash.generate_hashcash_token(input) == expected
+    assert crypto.generate_hashcash_token(input) == expected

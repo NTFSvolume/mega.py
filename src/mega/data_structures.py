@@ -45,9 +45,9 @@ class NodeType(IntEnum):
 class NodeSerialized(TypedDict):
     h: str  # ID
     p: str  # Parent ID
-    u: str  # Wwner
+    u: str  # Owner (user ID)
     t: ReadOnly[NodeType]
-    a: str  # Serialized  attributes
+    a: str  # Serialized attributes
     ts: int  # Timestamp (creation date)
 
     k: NotRequired[str]  # Node keys
@@ -67,16 +67,16 @@ class FolderSerialized(NodeSerialized):
 
 
 class ShareKeySerialized(TypedDict):
-    h: str
-    k: str
+    h: str  # ID of node for this key
+    k: str  # key
     ha: str  # ???
 
 
 class ShareKeySerialized2(TypedDict):
-    h: str
-    u: str
+    h: str  # ID of node for this key
+    u: str  # Owner (user ID)
     r: int
-    ts: int
+    ts: int  # timestamp
 
 
 class GetNodesResponse(TypedDict):

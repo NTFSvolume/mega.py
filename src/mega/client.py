@@ -18,9 +18,9 @@ from mega.crypto import (
     CHUNK_BLOCK_LEN,
     a32_to_base64,
     a32_to_bytes,
-    base64_to_a32,
-    base64_url_decode,
-    base64_url_encode,
+    b64_to_a32,
+    b64_url_decode,
+    b64_url_encode,
     decrypt_attr,
     encrypt_attr,
     encrypt_key,
@@ -309,14 +309,14 @@ class Mega(MegaCoreClient):
                 pass
 
         master_key_cipher = AES.new(a32_to_bytes(self._master_key), AES.MODE_ECB)
-        ha = base64_url_encode(master_key_cipher.encrypt(node["h"].encode("utf8") + node["h"].encode("utf8")))
+        ha = b64_url_encode(master_key_cipher.encrypt(node["h"].encode("utf8") + node["h"].encode("utf8")))
 
         share_key = random.randbytes(16)
-        ok = base64_url_encode(master_key_cipher.encrypt(share_key))
+        ok = b64_url_encode(master_key_cipher.encrypt(share_key))
 
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
         node_key = node["k_decrypted"]
-        encrypted_node_key = base64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
+        encrypted_node_key = b64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
 
         _node_id: str = node["h"]
         await self._api.request(
@@ -433,7 +433,7 @@ class Mega(MegaCoreClient):
         if file is None:
             assert file_key
             if isinstance(file_key, str):
-                _file_key = base64_to_a32(file_key)
+                _file_key = b64_to_a32(file_key)
             else:
                 _file_key = file_key
 
@@ -475,7 +475,7 @@ class Mega(MegaCoreClient):
 
         file_url = file_data["g"]
         file_size = file_data["s"]
-        attribs_bytes = base64_url_decode(file_data["at"])
+        attribs_bytes = b64_url_decode(file_data["at"])
         attribs = decrypt_attr(attribs_bytes, key)
         attribs = cast("Attributes", attribs)
 
@@ -559,7 +559,7 @@ class Mega(MegaCoreClient):
             dest_filename = dest_filename or os.path.basename(file_path)
             attribs = {"n": dest_filename}
 
-            encrypt_attribs = base64_url_encode(encrypt_attr(attribs, ul_key[:4]))
+            encrypt_attribs = b64_url_encode(encrypt_attr(attribs, ul_key[:4]))
             key: Array = [
                 ul_key[0] ^ ul_key[4],
                 ul_key[1] ^ ul_key[5],
@@ -590,7 +590,7 @@ class Mega(MegaCoreClient):
 
         # encrypt attribs
         attribs = {"n": name}
-        encrypt_attribs = base64_url_encode(encrypt_attr(attribs, ul_key[:4]))
+        encrypt_attribs = b64_url_encode(encrypt_attr(attribs, ul_key[:4]))
         encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self._master_key))
 
         # This can return multiple folders if subfolders needed to be created
@@ -628,7 +628,7 @@ class Mega(MegaCoreClient):
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
-        encrypt_attribs = base64_url_encode(encrypt_attr(attribs, node["k_decrypted"]))
+        encrypt_attribs = b64_url_encode(encrypt_attr(attribs, node["k_decrypted"]))
         encrypted_key = a32_to_base64(encrypt_key(node["full_key"], self._master_key))
         # update attributes
         return await self._api.request(
@@ -710,7 +710,7 @@ class Mega(MegaCoreClient):
             }
         )
 
-        full_key = base64_to_a32(public_key)
+        full_key = b64_to_a32(public_key)
         key: TupleArray = (
             full_key[0] ^ full_key[4],
             full_key[1] ^ full_key[5],
@@ -718,7 +718,7 @@ class Mega(MegaCoreClient):
             full_key[3] ^ full_key[7],
         )
 
-        unencrypted_attrs = decrypt_attr(base64_url_decode(data["at"]), key)
+        unencrypted_attrs = decrypt_attr(b64_url_decode(data["at"]), key)
         return Attributes(size=data["s"], name=unencrypted_attrs["n"])
 
     @requires_login
@@ -740,7 +740,7 @@ class Mega(MegaCoreClient):
             pl_info = await self.get_public_file_info(public_handle, public_key)
             dest_name = pl_info.name
 
-        full_key = base64_to_a32(public_key)
+        full_key = b64_to_a32(public_key)
         key: TupleArray = (
             full_key[0] ^ full_key[4],
             full_key[1] ^ full_key[5],
@@ -749,7 +749,7 @@ class Mega(MegaCoreClient):
         )
 
         encrypted_key = a32_to_base64(encrypt_key(full_key, self._master_key))
-        attributes = base64_url_encode(encrypt_attr({"n": dest_name}, key))
+        attributes = b64_url_encode(encrypt_attr({"n": dest_name}, key))
         return await self._api.request(
             {
                 "a": "p",
