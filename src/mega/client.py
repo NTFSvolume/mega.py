@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
-from mega.core import MegaCoreClient
+from mega.core import MegaCore
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
     a32_to_base64,
@@ -64,7 +64,7 @@ def requires_login(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P
     @functools.wraps(func)
     async def wrapper(*args, **kwargs) -> _R:
         self: Mega = args[0]
-        if not self._logged_in:
+        if not self.logged_in:
             raise RuntimeError("You need to log in to use this method")
         return await func(*args, **kwargs)
 
@@ -79,7 +79,7 @@ class LoginResponse:
     master_key: str
 
 
-class Mega(MegaCoreClient):
+class Mega(MegaCore):
     """Interface with all the public methods of the API"""
 
     async def find(self, path: Path | str, exclude_deleted: bool = False) -> NodeSerialized | FolderSerialized | None:
@@ -114,7 +114,7 @@ class Mega(MegaCoreClient):
             if filename_or_path in (path_str := path.as_posix()):
                 if strict and not path_str.startswith(filename_or_path):
                     continue
-                if exclude_deleted and item["p"] == self.trashbin_id:
+                if exclude_deleted and item["p"] == self.system_nodes.trash_bin.id:
                     continue
                 found.append(item)
         return found
@@ -125,13 +125,13 @@ class Mega(MegaCoreClient):
         """Return file object(s) from given filename or path"""
         files = await self.get_files()
         file = found if (found := files.get(handle)) else None
-        if not file or (file["p"] == self.trashbin_id and exclude_deleted):
+        if not file or (file["p"] == self.system_nodes.trash_bin.id and exclude_deleted):
             return None
         return file
 
     @requires_login
     async def get_files(self) -> dict[str, Node]:
-        return await self._get_files()
+        return await self._get_nodes()
 
     async def get_link(self, file: Node) -> str:
         """
@@ -489,7 +489,7 @@ class Mega(MegaCoreClient):
         self, file_path: str, dest_node: FolderSerialized | None = None, dest_filename: str | None = None
     ) -> GetNodesResponse:
         # determine storage node
-        dest_node_id = dest_node["h"] if dest_node else self.root_id
+        dest_node_id = dest_node["h"] if dest_node else self.system_nodes.root.id
         # request upload url, call 'u' method
         with open(file_path, "rb") as input_file:
             file_size = os.path.getsize(file_path)
@@ -613,7 +613,7 @@ class Mega(MegaCoreClient):
 
     async def create_folder(self, path: Path | str) -> FolderSerialized:
         path = Path(path)
-        last_parent = await self.find_by_handle(self.root_id)
+        last_parent = await self.find_by_handle(self.system_nodes.inbox.id)
         assert last_parent
         for parent in reversed(path.parents):
             node = await self.find(parent, exclude_deleted=True)

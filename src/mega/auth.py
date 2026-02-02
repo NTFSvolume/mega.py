@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import hashlib
 import logging
@@ -110,7 +111,8 @@ class MegaAuth:
         salt: str | None = resp.get("s")
 
         if version == 2 and salt:
-            pbkdf2_key = hashlib.pbkdf2_hmac(
+            pbkdf2_key = await asyncio.to_thread(
+                hashlib.pbkdf2_hmac,
                 hash_name="sha512",
                 password=password.encode(),
                 salt=b64_url_decode(salt),

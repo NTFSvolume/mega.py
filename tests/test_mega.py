@@ -67,7 +67,7 @@ def test_mega(mega: Mega) -> None:
 
 
 def test_login(mega: Mega) -> None:
-    assert mega._logged_in
+    assert mega.logged_in
     assert all((mega.root_id, mega.inbox_id, mega.trashbin_id))
 
 

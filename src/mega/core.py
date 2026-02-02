@@ -44,17 +44,17 @@ logger = logging.getLogger(__name__)
 _SHOW_PROGRESS = ContextVar[bool]("_SHOW_PROGRESS", default=False)
 
 
-@dataclasses.dataclass(slots=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class SystemNodes:
-    root: str
-    inbox: str
-    trash_bin: str
+    root: Node
+    inbox: Node
+    trash_bin: Node
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class MegaKeysVault:
     master_key: tuple[int, ...]
-    shared_keys: dict[str, SharedKeys] = dataclasses.field(default_factory=dict)
+    shared_keys: dict[str, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
 
     def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
         """
@@ -79,10 +79,10 @@ class MegaKeysVault:
                 self.shared_keys.setdefault(owner, {})[node_id] = key
 
     def decrypt_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
-        # my objects
         share_key: tuple[int, ...] | None = None
         full_key: tuple[int, ...] | None = None
 
+        # my objects
         if node.owner in node.keys:
             full_key = decrypt_key(b64_to_a32(node.keys[node.owner]), self.master_key)
 
@@ -125,17 +125,25 @@ class MegaKeysVault:
         return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
 
 
-class MegaCoreClient:
+class MegaCore:
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._api = MegaApi(session)
         self._primary_url = "https://mega.nz"
-        self._logged_in = False
-        self.root_id: str = ""
-        self.inbox_id: str = ""
-        self.trashbin_id: str = ""
-        self._system_nodes = SystemNodes("", "", "")
+        self._system_nodes: SystemNodes | None = None
         self._auth = MegaAuth(self._api)
         self._vault = MegaKeysVault(())
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}> (system_nodes={self._system_nodes!r}, vault={self._vault!r})"
+
+    @property
+    def logged_in(self) -> bool:
+        return bool(self._vault.master_key)
+
+    @property
+    def system_nodes(self) -> SystemNodes:
+        assert self._system_nodes is not None
+        return self._system_nodes
 
     @property
     def show_progress(self) -> bool:
@@ -168,9 +176,8 @@ class MegaCoreClient:
             master_key, self._api.session_id = await self._auth.login_anonymous()
 
         self._vault = MegaKeysVault(master_key)
-
-        _ = await self._get_files()  # Required to get the special folders id
-        self._logged_in = True
+        logger.info("Getting all files on the account...")
+        _ = await self._get_nodes()
         logger.info(f"Special folders: {self._system_nodes}")
         logger.info("Login complete")
         return self
@@ -255,10 +262,6 @@ class MegaCoreClient:
             _a=node["a"],
         )
 
-    async def _get_files(self) -> dict[str, Node]:
-        logger.info("Getting all files on the account...")
-        return await self._get_nodes()
-
     async def _get_nodes(self) -> dict[str, Node]:
         nodes_resp: GetNodesResponse = await self._api.request(
             {
@@ -281,15 +284,23 @@ class MegaCoreClient:
         share_key = b64_to_a32(public_key) if public_key else None
         results: dict[str, Node] = {}
 
+        system_nodes: list[Node] = [] * 3
+
         for idx, node in enumerate(nodes):
             node_id = node["h"]
             if share_key:
                 self._vault.shared_keys["EXP"][node_id] = share_key
 
-            results[node_id] = self.__deserialize_node(node)
+            results[node_id] = node = self.__deserialize_node(node)
+
+            if node.type in (NodeType.ROOT_FOLDER, NodeType.INBOX, NodeType.TRASH):
+                system_nodes[node.type - NodeType.ROOT_FOLDER] = node
 
             if idx % 500 == 0:
                 await asyncio.sleep(0)
+
+        if self._system_nodes is None and all(system_nodes):
+            self._system_nodes = SystemNodes(*system_nodes)
 
         return results
 
