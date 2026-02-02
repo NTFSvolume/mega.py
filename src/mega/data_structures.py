@@ -13,24 +13,16 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from typing import NotRequired
 
     from typing_extensions import ReadOnly
 
-U32Int: TypeAlias = int
-TupleArray: TypeAlias = tuple[U32Int, ...]
-ListArray: TypeAlias = list[U32Int]
-Array: TypeAlias = TupleArray | ListArray
-AnyArray: TypeAlias = Sequence[U32Int]
-AnyDict: TypeAlias = dict[str, Any]
-
-
-class Chunk(NamedTuple):
-    offset: int
-    size: int
+TupleArray: TypeAlias = tuple[int, ...]
+AnyArray: TypeAlias = Sequence[int]
+SharedKeys = dict[str, TupleArray]  # owner (User Id) -> share keys
 
 
 class NodeType(IntEnum):
@@ -141,40 +133,47 @@ class Crypto:
     share_key: TupleArray | None
 
 
-SharedKeys = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
-
-
 class Parser:
     __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
     @classmethod
-    def filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
+    def _filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
         fields = [f.name for f in dataclasses.fields(cls)]
         return {k: v for k, v in data.items() if k in fields}
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
-        return cls(**cls.filter_dict(data))
+        return cls(**cls._filter_dict(data))
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class AccountData(Parser):
+class AccountStats(Parser):
     balance: tuple[float, str]
     subs: list[str]
     plans: list[str]
     storage: StorageQuota
+    metrics: dict[str, StorageMetrics]  # Mapping of node_id > Storage metrics
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
         balance = (data.get("balance") or [[0.0, "EUR"]])[0]
-        clean_data = cls.filter_dict(data)
+
+        clean_data = cls._filter_dict(data)
         clean_data.update(
             {
                 "storage": StorageQuota.parse(data),
                 "balance": (float(balance[0]), str(balance[1])),
+                "metrics": {k: StorageMetrics(*v[0:3]) for k, v in data["cstrgn"].items()},
             }
         )
         return cls(**clean_data)
+
+
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+class StorageMetrics:
+    bytes_used: int
+    files: int
+    folders: int
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
@@ -199,18 +198,6 @@ class StorageQuota:
         )
 
 
-class User(TypedDict):
-    user: str  # User handle
-    uh: str  # Password hash
-    mfa: str  # Multi-Factor Authentication key
-    csid: str  # Session Id
-    privk: str  # Private Key
-    k: str  # Master key
-    tsid: str  # Temp session Id
-    u: str  # User Id
-    ach: int  # <UNKNOWN>
-
-
 class UserResponse(TypedDict, total=False):
     u: str  # user id
     since: int  # timestamp of account creation
@@ -223,15 +210,3 @@ class UserResponse(TypedDict, total=False):
 class Upload(TypedDict):
     s: int  # Size
     p: str  # URL
-
-
-class StorageMetrics(NamedTuple):
-    bytes_used: int
-    files_count: int
-    folders_count: int
-
-
-class AccountInformation(TypedDict):
-    mstrg: int  # Total Quota
-    cstrg: int  # Used Quota
-    cstrgn: dict[str, StorageMetrics]  # Metrics Serialized, Mapping of node_id > Storage metrics(tuple)

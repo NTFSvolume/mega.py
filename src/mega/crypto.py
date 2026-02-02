@@ -15,7 +15,7 @@ from Crypto.PublicKey import RSA
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from .data_structures import AnyArray, AnyDict, Array, TupleArray
+    from .data_structures import AnyArray, TupleArray
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
@@ -65,12 +65,12 @@ def generate_v1_hash(string: str, aeskey: AnyArray) -> str:
     return a32_to_base64((h32[0], h32[2]))
 
 
-def prepare_v1_key(password: str) -> Array:
+def prepare_v1_key(password: str) -> tuple[int, ...]:
     arr = str_to_a32(password)
-    pkey: Array = [0x93C467E3, 0x7DB0C7A4, 0xD1BE3F81, 0x0152CB56]
+    pkey = 0x93C467E3, 0x7DB0C7A4, 0xD1BE3F81, 0x0152CB56
     for _ in range(0x10000):
         for j in range(0, len(arr), 4):
-            key: Array = [0, 0, 0, 0]
+            key = [0, 0, 0, 0]
             for i in range(4):
                 if i + j < len(arr):
                     key[i] = arr[i + j]
@@ -91,7 +91,7 @@ def encrypt_attr(attrs: dict[str, Any], key: AnyArray) -> bytes:
     return _aes_cbc_encrypt(pad_bytes(attr_bytes), a32_to_bytes(key))
 
 
-def decrypt_attr(attr: bytes, key: AnyArray) -> AnyDict:
+def decrypt_attr(attr: bytes, key: AnyArray) -> dict[str, Any]:
     attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
     try:
         attr_str = attr_bytes.decode("utf-8").rstrip("\0")

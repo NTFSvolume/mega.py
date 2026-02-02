@@ -31,7 +31,7 @@ from mega.crypto import (
     str_to_a32,
 )
 from mega.data_structures import (
-    AccountData,
+    AccountStats,
     Attributes,
     File,
     FolderSerialized,
@@ -47,14 +47,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import ParamSpec
 
-    from mega.data_structures import (
-        AnyDict,
-        Array,
-        FolderSerialized,
-        GetNodesResponse,
-        NodeSerialized,
-        TupleArray,
-    )
+    from mega.data_structures import FolderSerialized, GetNodesResponse, NodeSerialized, TupleArray
 
     _R = TypeVar("_R")
     _P = ParamSpec("_P")
@@ -189,7 +182,7 @@ class Mega(MegaCore):
 
         return node_data["f"][0]["h"]
 
-    async def get_account_data(self) -> AccountData:
+    async def get_account_data(self) -> AccountStats:
         json_resp: dict[str, Any] = await self._api.request(
             {
                 "a": "uq",
@@ -200,19 +193,19 @@ class Mega(MegaCore):
                 "v": 2,
             }
         )
-        return AccountData.parse(json_resp)
+        return AccountStats.parse(json_resp)
 
-    async def delete(self, public_handle: str) -> AnyDict:
+    async def delete(self, public_handle: str) -> dict[str, Any]:
         """Delete a file by its public handle."""
         return await self.move(public_handle, NodeType.TRASH)
 
-    async def delete_url(self, url: str) -> AnyDict:
+    async def delete_url(self, url: str) -> dict[str, Any]:
         """Delete a file by its url"""
         public_handle, _ = self._parse_url(url).split("!")
         file_id = await self.get_id_from_public_handle(public_handle)
         return await self.move(file_id, NodeType.TRASH)
 
-    async def destroy(self, file_id: str) -> AnyDict:
+    async def destroy(self, file_id: str) -> dict[str, Any]:
         """Destroy a file or folder by its private id (bypass trash bin)"""
         return await self._api.request(
             {
@@ -222,13 +215,13 @@ class Mega(MegaCore):
             }
         )
 
-    async def destroy_url(self, url: str) -> AnyDict:
+    async def destroy_url(self, url: str) -> dict[str, Any]:
         """Destroy a file by its url (bypass trash bin)"""
         public_handle, *_ = self._parse_url(url).split("!")
         file_id = await self.get_id_from_public_handle(public_handle)
         return await self.destroy(file_id)
 
-    async def empty_trash(self) -> AnyDict | None:
+    async def empty_trash(self) -> dict[str, Any] | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
         # get list of files in rubbish out
         files = await self.get_files_in_node(NodeType.TRASH)
@@ -510,7 +503,7 @@ class Mega(MegaCore):
             attribs = {"n": dest_filename}
 
             encrypt_attribs = b64_url_encode(encrypt_attr(attribs, ul_key[:4]))
-            key: Array = [
+            key: tuple[int, ...] = [
                 ul_key[0] ^ ul_key[4],
                 ul_key[1] ^ ul_key[5],
                 ul_key[2] ^ meta_mac[0],
@@ -603,19 +596,19 @@ class Mega(MegaCore):
             }
         )
 
-    async def add_contact(self, email: str) -> AnyDict:
+    async def add_contact(self, email: str) -> dict[str, Any]:
         """
         Add another user to your mega contact list
         """
         return await self._edit_contact(email, True)
 
-    async def remove_contact(self, email: str) -> AnyDict:
+    async def remove_contact(self, email: str) -> dict[str, Any]:
         """
         Remove a user to your mega contact list
         """
         return await self._edit_contact(email, False)
 
-    async def _edit_contact(self, email: str, *, add: bool) -> AnyDict:
+    async def _edit_contact(self, email: str, *, add: bool) -> dict[str, Any]:
         """
         Editing contacts
         """
