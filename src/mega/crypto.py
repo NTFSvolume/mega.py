@@ -197,7 +197,7 @@ def generate_hashcash_token(challenge: str) -> str:
         raise ValueError("hashcash challenge is not version 1")
 
     easiness = int(easiness)
-    token = b64_url_decode(token)
+    token_bytes = b64_url_decode(token)
 
     base = ((easiness & 63) << 1) + 1
     shifts = (easiness >> 6) * 7 + 3
@@ -205,13 +205,13 @@ def generate_hashcash_token(challenge: str) -> str:
 
     buffer = bytearray(4 + 262144 * 48)
     for i in range(262144):
-        buffer[4 + i * 48 : 4 + (i + 1) * 48] = token
+        buffer[4 + i * 48 : 4 + (i + 1) * 48] = token_bytes
 
     while True:
         digest = hashlib.sha256(buffer).digest()
         view = struct.unpack(">I", digest[:4])[0]  # big-endian uint32
         if view <= threshold:
-            return f"1:{token}:{b64_url_encode(buffer[:4])}"
+            return f"{version}:{token}:{b64_url_encode(buffer[:4])}"
 
         # Increment the first 4 bytes as a little-endian integer
         for j in range(4):
