@@ -191,30 +191,25 @@ def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
 
 
 def generate_hashcash_token(challenge: str) -> str:
-    version, easiness, _, token = challenge.split(":")
+    version, easiness, _date, token = challenge.split(":")
     version = int(version)
     if version != 1:
-        raise ValueError("hashcash challenge is not version 1")
+        raise ValueError(f"Unsupported hashcash challenge {version = } {challenge = }")
 
     easiness = int(easiness)
+    threshold = ((easiness & 63) << 1) + 1 << (easiness >> 6) * 7 + 3
     token_bytes = b64_url_decode(token)
 
-    base = ((easiness & 63) << 1) + 1
-    shifts = (easiness >> 6) * 7 + 3
-    threshold = base << shifts
+    number_of_tokens = 262_144  # 2**18
+    buffer = bytearray(4) + token_bytes * number_of_tokens
 
-    buffer = bytearray(4 + 262144 * 48)
-    for i in range(262144):
-        buffer[4 + i * 48 : 4 + (i + 1) * 48] = token_bytes
-
+    nonce = 0
     while True:
+        buffer[:4] = nonce.to_bytes(4, "little")
         digest = hashlib.sha256(buffer).digest()
-        view = struct.unpack(">I", digest[:4])[0]  # big-endian uint32
-        if view <= threshold:
+        result = int.from_bytes(digest[:4], "big")
+
+        if result <= threshold:
             return f"{version}:{token}:{b64_url_encode(buffer[:4])}"
 
-        # Increment the first 4 bytes as a little-endian integer
-        for j in range(4):
-            buffer[j] = (buffer[j] + 1) & 0xFF
-            if buffer[j] != 0:
-                break
+        nonce += 1

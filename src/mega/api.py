@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import random
@@ -93,7 +94,7 @@ class MegaAPI:
                         raise RequestError(msg)
 
                     logger.info("Solving xhashcash login challenge, this could take a few seconds...")
-                    xhashcash_token = generate_hashcash_token(xhashcash_challenge)
+                    xhashcash_token = await asyncio.to_thread(generate_hashcash_token, xhashcash_challenge)
                     logger.debug(f"Solved xhashcash: challenge={xhashcash_challenge!r}, result={xhashcash_token}")
                     headers = self._default_headers | {"X-Hashcash": xhashcash_token}
                     continue
