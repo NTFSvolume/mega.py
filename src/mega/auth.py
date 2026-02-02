@@ -46,26 +46,27 @@ class MegaAuth:
 
         master_key = tuple(random_u32int() for _ in range(4))
         password_aes_key = tuple(random_u32int() for _ in range(4))
-        session_self_challenge = tuple(random_u32int() for _ in range(4))
+        session_challenge = tuple(random_u32int() for _ in range(4))
 
         user_id: str = await self._api.request(
             {
                 "a": "up",
                 "k": a32_to_base64(encrypt_key(master_key, password_aes_key)),
                 "ts": b64_url_encode(
-                    a32_to_bytes(session_self_challenge) + a32_to_bytes(encrypt_key(session_self_challenge, master_key))
+                    a32_to_bytes(session_challenge) + a32_to_bytes(encrypt_key(session_challenge, master_key))
                 ),
             }
         )
 
-        b64_temp_session_id: str = (await self._api.request({"a": "us", "user": user_id}))["tsid"]
+        temp_session_id: str = (await self._api.request({"a": "us", "user": user_id}))["tsid"]
+        self._verify_anon_login(temp_session_id, master_key)
+        return master_key, temp_session_id
 
+    def _verify_anon_login(self, b64_temp_session_id: str, master_key: tuple[int, ...]) -> None:
         tsid = b64_url_decode(b64_temp_session_id)
         user_hash = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), master_key))
         if user_hash != tsid[-16:]:
             raise RuntimeError
-
-        return master_key, b64_temp_session_id
 
     async def login(self, email: str, password: str, _mfa: str | None = None) -> tuple[TupleArray, str]:
         email = email.lower()

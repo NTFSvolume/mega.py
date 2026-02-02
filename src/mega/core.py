@@ -8,12 +8,11 @@ import shutil
 import tempfile
 from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
-from typing_extensions import Self
 
 from mega.api import MegaApi
 from mega.auth import MegaAuth
@@ -89,7 +88,7 @@ class MegaCoreClient:
         progress.disable = not self.show_progress
         return progress
 
-    async def login(self, email: str, password: str, _mfa: str | None = None) -> Self:
+    async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> Self:
         if email and password:
             self._master_key, self._api.session_id = await self._auth.login(email, password)
         else:
@@ -100,7 +99,7 @@ class MegaCoreClient:
         logger.info("Login complete")
         return self
 
-    async def __enter__(self) -> Self:
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_) -> None:
@@ -379,7 +378,7 @@ class MegaDecryptor:
 
 def _decrypt_chunks(
     iv: TupleArray,
-    k_decrypted: TupleArray,
+    key: TupleArray,
     meta_mac: TupleArray,
 ) -> Generator[bytes, bytes | None, None]:
     """
@@ -397,22 +396,22 @@ def _decrypt_chunks(
         bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
 
     """
-    k_bytes = a32_to_bytes(k_decrypted)
+    key_bytes = a32_to_bytes(key)
     counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-    aes = AES.new(k_bytes, AES.MODE_CTR, counter=counter)
+    aes = AES.new(key_bytes, AES.MODE_CTR, counter=counter)
 
     # mega.nz improperly uses CBC as a MAC mode, so after each chunk
     # the last 16 bytes are used as IV for the next chunk MAC accumulation
 
     mac_bytes = EMPTY_IV
-    mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
+    mac_encryptor = AES.new(key_bytes, AES.MODE_CBC, mac_bytes)
     iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
     chunk: bytes | None = yield b""
 
     while chunk is not None:
         decrypted_chunk = aes.decrypt(chunk)
         chunk = yield decrypted_chunk
-        encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
+        encryptor = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
 
         mem_view = memoryview(decrypted_chunk)
         modchunk = len(decrypted_chunk) % CHUNK_BLOCK_LEN or CHUNK_BLOCK_LEN

@@ -13,6 +13,7 @@ async def run() -> None:
     logger = logging.getLogger(__name__)
     logger.setLevel(10)
     logger.addHandler(handler)
+
     parser = argparse.ArgumentParser(description="Download files from a Mega.nz URL.")
     parser.add_argument(
         "url",
@@ -27,14 +28,12 @@ async def run() -> None:
         metavar="DIR",
     )
     args = parser.parse_args()
-    mega = Mega()
     email = os.getenv("EMAIL")
     password = os.getenv("PASS")
-    await mega.login(email, password)
-    download_url: str = args.url
-    output_dir: str = args.output_dir
-    await mega.download_url(url=download_url, dest_path=output_dir)
-    await mega.close()
+
+    async with Mega() as mega:
+        await mega.login(email, password)
+        await mega.download_url(url=args.url, dest_path=args.output_dir)
 
 
 def main() -> None:

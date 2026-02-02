@@ -3,17 +3,15 @@ from __future__ import annotations
 import logging
 import random
 import string
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import aiohttp
 import tenacity
 import yarl
-from typing_extensions import Self
 
-from mega.crypto import random_u32int
+from mega.crypto import generate_hashcash_token, random_u32int
 
 from .errors import RequestError
-from .xhashcash import generate_hashcash_token
 
 if TYPE_CHECKING:
     from mega.data_structures import U32Int

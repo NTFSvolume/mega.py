@@ -15,7 +15,7 @@ from Crypto.PublicKey import RSA
 if TYPE_CHECKING:
     from collections.abc import Generator
 
-    from .data_structures import AnyArray, AnyDict, Array, TupleArray, U32Int
+    from .data_structures import AnyArray, AnyDict, Array, TupleArray
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
@@ -35,7 +35,7 @@ def pad_bytes(data: bytes | memoryview[int], length: int = CHUNK_BLOCK_LEN) -> b
     return data  # pyright: ignore[reportReturnType]
 
 
-def random_u32int() -> U32Int:
+def random_u32int() -> int:
     return random.randint(0, 0xFFFFFFFF)
 
 

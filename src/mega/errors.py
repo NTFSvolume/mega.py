@@ -1,3 +1,6 @@
+from typing import Final
+
+
 class MegaNzError(Exception): ...
 
 
@@ -5,50 +8,37 @@ class ValidationError(MegaNzError):
     """Error in validation stage"""
 
 
-_CODE_TO_DESCRIPTIONS = {
-    -1: (
-        "EINTERNAL",
-        (
-            "An internal error has occurred. Please submit a bug report, "
-            "detailing the exact circumstances in which this error occurred"
-        ),
-    ),
+_CODE_TO_DESCRIPTIONS: Final = {
+    -1: ("EINTERNAL", "An internal error has occurred"),
     -2: ("EARGS", "You have passed invalid arguments to this command"),
-    -3: (
-        "EAGAIN",
-        (
-            "(always at the request level) A temporary congestion or server "
-            "malfunction prevented your request from being processed. "
-            "No data was altered. Retry. Retries must be spaced with "
-            "exponential backoff"
-        ),
-    ),
-    -4: (
-        "ERATELIMIT",
-        (
-            "You have exceeded your command weight per time quota. Please "
-            "wait a few seconds, then try again (this should never happen "
-            "in sane real-life applications)"
-        ),
-    ),
+    -3: ("EAGAIN", "Request failed. No data was altered. Please retry"),
+    -4: ("ERATELIMIT", "Rate limited. Please wait a few seconds, then try again"),
     -5: ("EFAILED", "The upload failed. Please restart it from scratch"),
-    -6: ("ETOOMANY", "Too many concurrent IP addresses are accessing this upload target URL"),
-    -7: ("ERANGE", ("The upload file packet is out of range or not starting and ending on a chunk boundary")),
-    -8: ("EEXPIRED", ("The upload target URL you are trying to access has expired. Please request a fresh one")),
-    -9: ("ENOENT", "Object (typically, node or user) not found"),
+    -6: ("ETOOMANY", "Too many concurrent connections or transfers"),
+    -7: ("ERANGE", "The upload file packet is out of range or not starting and ending on a chunk boundary"),
+    -8: ("EEXPIRED", "The URL has expired"),
+    -9: ("ENOENT", "Resource not found"),
     -10: ("ECIRCULAR", "Circular linkage attempted"),
     -11: ("EACCESS", "Access violation (e.g., trying to write to a read-only share)"),
     -12: ("EEXIST", "Trying to create an object that already exists"),
     -13: ("EINCOMPLETE", "Trying to access an incomplete resource"),
-    -14: ("EKEY", "A decryption operation failed (never returned by the API)"),
+    -14: ("EKEY", "Cryptographic error, invalid key"),  # Only used within the client. Never returned by the API
     -15: ("ESID", "Invalid or expired user session, please relogin"),
-    -16: ("EBLOCKED", "User blocked"),
-    -17: ("EOVERQUOTA", "Request over quota"),
+    -16: (
+        "EBLOCKED",
+        "File can't be downloaded as it violates our Terms of Service",
+    ),  # or Suspended account during login
+    -17: ("EOVERQUOTA", "Request exceeds transfer quota"),
     -18: ("ETEMPUNAVAIL", "Resource temporarily not available, please try again later"),
-    -19: ("ETOOMANYCONNECTIONS", "many connections on this resource"),
-    -20: ("EWRITE", "Write failed"),
-    -21: ("EREAD", "Read failed"),
-    -22: ("EAPPKEY", "Invalid application key; request not processed"),
+    -19: ("ETOOMANYCONNECTIONS", "Too many connections"),
+    -24: ("EGOINGOVERQUOTA", "Not enough quota"),
+    -25: ("EROLLEDBACK", "Request rolled back"),
+    -26: ("EMFAREQUIRED", "Multi-Factor Authentication Required"),
+    -27: ("EMASTERONLY", "Access denied for sub-users"),
+    -28: ("EBUSINESSPASTDUE", "Business account expired"),
+    -29: ("EPAYWALL", "Over Disk Quota Paywall"),
+    -400: ("ETOOERR", "Too many concurrent errors"),
+    -401: ("ESHAREROVERQUOTA", "Share owner is over storage quota"),
 }
 
 
@@ -64,6 +54,8 @@ class RequestError(MegaNzError):
             self.message = f"{code_desc}, {long_desc}"
         else:
             self.message = str(msg)
+
+        super().__init__(msg)
 
     def __str__(self) -> str:
         return self.message
