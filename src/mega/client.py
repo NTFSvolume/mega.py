@@ -365,7 +365,7 @@ class Mega(MegaCoreClient):
             {"n": public_handle},
         )
 
-        return await self._process_nodes(folder["f"], public_key)
+        return await self._deserialize_nodes(folder["f"], public_key)
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)

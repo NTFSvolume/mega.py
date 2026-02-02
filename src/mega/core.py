@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Self
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -33,7 +33,7 @@ from mega.data_structures import Attributes, Crypto, Node, NodeType
 from .errors import ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Iterable, Mapping
+    from collections.abc import Generator, Iterable, Mapping
 
     import aiohttp
 
@@ -51,6 +51,80 @@ class SystemNodes:
     trash_bin: str
 
 
+@dataclasses.dataclass(slots=True, frozen=True)
+class MegaKeysVault:
+    master_key: tuple[int, ...]
+    shared_keys: dict[str, SharedKeys] = dataclasses.field(default_factory=dict)
+
+    def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
+        """
+        Init shared key not associated with a user.
+        Seems to happen when a folder is shared,
+        some files are exchanged and then the
+        folder is un-shared.
+        Keys are stored in files['s'] and files['ok']
+        """
+        if self.shared_keys:
+            return
+
+        self.shared_keys["EXP"] = {}
+        shared_keys: SharedKeys = {}
+        for share_key in nodes_response["ok"]:
+            node_id, key = share_key["h"], share_key["k"]
+            shared_keys[node_id] = decrypt_key(b64_to_a32(key), self.master_key)
+
+        for share_key in nodes_response["s"]:
+            node_id, owner = share_key["h"], share_key["u"]
+            if key := shared_keys.get(node_id):
+                self.shared_keys.setdefault(owner, {})[node_id] = key
+
+    def decrypt_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
+        # my objects
+        share_key: tuple[int, ...] | None = None
+        full_key: tuple[int, ...] | None = None
+
+        if node.owner in node.keys:
+            full_key = decrypt_key(b64_to_a32(node.keys[node.owner]), self.master_key)
+
+        # shared folders
+        elif node.share_id and node.share_key and node.id in node.keys:
+            share_key = decrypt_key(b64_to_a32(node.share_key), self.master_key)
+            full_key = decrypt_key(b64_to_a32(node.keys[node.id]), share_key)
+            self.shared_keys.setdefault(node.share_id, {})[node.id] = share_key
+
+        # shared files
+        elif node.owner in self.shared_keys:
+            for node_id, share_key in self.shared_keys[node.owner].items():
+                if node_id in node.keys:
+                    full_key = decrypt_key(b64_to_a32(node.keys[node_id]), share_key)
+                    break
+
+        if share_key := self.shared_keys.get("EXP", {}).get(node.id):
+            encrypted_key = str_to_a32(b64_url_decode(next(iter(node.keys.values()))))
+            full_key = decrypt_key(encrypted_key, share_key)
+
+        assert full_key
+
+        return full_key, share_key
+
+    @staticmethod
+    def get_crypto(node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None) -> Crypto:
+        if node_type is NodeType.FILE:
+            key = (
+                full_key[0] ^ full_key[4],
+                full_key[1] ^ full_key[5],
+                full_key[2] ^ full_key[6],
+                full_key[3] ^ full_key[7],
+            )
+
+        else:
+            key = full_key
+
+        iv = *full_key[4:6], 0, 0
+        meta_mac = full_key[6:8]
+        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
+
+
 class MegaCoreClient:
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._api = MegaApi(session)
@@ -60,9 +134,8 @@ class MegaCoreClient:
         self.inbox_id: str = ""
         self.trashbin_id: str = ""
         self._system_nodes = SystemNodes("", "", "")
-        self._shared_keys: dict[str, SharedKeys] = {}
-        self._master_key: TupleArray
         self._auth = MegaAuth(self._api)
+        self._vault = MegaKeysVault(())
 
     @property
     def show_progress(self) -> bool:
@@ -90,9 +163,12 @@ class MegaCoreClient:
 
     async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> Self:
         if email and password:
-            self._master_key, self._api.session_id = await self._auth.login(email, password)
+            master_key, self._api.session_id = await self._auth.login(email, password)
         else:
-            self._master_key, self._api.session_id = await self._auth.login_anonymous()
+            master_key, self._api.session_id = await self._auth.login_anonymous()
+
+        self._vault = MegaKeysVault(master_key)
+
         _ = await self._get_files()  # Required to get the special folders id
         self._logged_in = True
         logger.info(f"Special folders: {self._system_nodes}")
@@ -140,12 +216,12 @@ class MegaCoreClient:
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
 
-    def _process_node(self, node: NodeSerialized) -> Node:
-        parsed_node = Node(**self._deserialize_node(node))
+    def __deserialize_node(self, node: NodeSerialized) -> Node:
+        parsed_node = self.__transform_node(node)
 
         if parsed_node.type in (NodeType.FILE, NodeType.FOLDER):
-            full_key, share_key = self._decrypt_keys(parsed_node)
-            parsed_node._crypto = self._parse_crypto(parsed_node.type, full_key, share_key)
+            full_key, share_key = self._vault.decrypt_keys(parsed_node)
+            parsed_node._crypto = self._vault.get_crypto(parsed_node.type, full_key, share_key)
             attributes = decrypt_attr(b64_url_decode(parsed_node._a), parsed_node._crypto.key)
             parsed_node.attributes = Attributes(**attributes)
 
@@ -160,93 +236,31 @@ class MegaCoreClient:
         return parsed_node
 
     @staticmethod
-    def _deserialize_node(node: NodeSerialized) -> dict[str, Any]:
+    def __transform_node(node: NodeSerialized) -> Node:
         if k := node.get("k"):
             keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
         else:
             keys = {}
 
-        return dict(  # noqa: C408
+        return Node(
             id=node["h"],
             parent_id=node["p"],
             owner=node["u"],
+            creation_date=0,
             type=NodeType(node["t"]),
             keys=keys,
             share_id=node.get("su"),
             share_key=node.get("sk"),
+            attributes=Attributes(""),
+            _a=node["a"],
         )
-
-    @staticmethod
-    def _parse_crypto(node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None) -> Crypto:
-        if node_type is NodeType.FILE:
-            key = (
-                full_key[0] ^ full_key[4],
-                full_key[1] ^ full_key[5],
-                full_key[2] ^ full_key[6],
-                full_key[3] ^ full_key[7],
-            )
-
-        else:
-            key = full_key
-
-        iv = *full_key[4:6], 0, 0
-        meta_mac = full_key[6:8]
-        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
-
-    def _decrypt_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
-        # my objects
-        share_key: tuple[int, ...] | None = None
-        full_key: tuple[int, ...] | None = None
-
-        if node.owner in node.keys:
-            full_key = decrypt_key(b64_to_a32(node.keys[node.owner]), self._master_key)
-
-        # shared folders
-        elif node.share_id and node.share_key and node.id in node.keys:
-            share_key = decrypt_key(b64_to_a32(node.share_key), self._master_key)
-            full_key = decrypt_key(b64_to_a32(node.keys[node.id]), share_key)
-            self._shared_keys.setdefault(node.share_id, {})[node.id] = share_key
-
-        # shared files
-        elif node.owner in self._shared_keys:
-            for node_id, share_key in self._shared_keys[node.owner].items():
-                if node_id in node.keys:
-                    full_key = decrypt_key(b64_to_a32(node.keys[node_id]), share_key)
-                    break
-
-        if share_key := self._shared_keys.get("EXP", {}).get(node.id):
-            encrypted_key = str_to_a32(b64_url_decode(next(iter(node.keys.values()))))
-            full_key = decrypt_key(encrypted_key, share_key)
-
-        assert full_key
-
-        return full_key, share_key
-
-    def _init_shared_keys(self, files: GetNodesResponse, shared_keys_map: dict[str, SharedKeys]) -> None:
-        """
-        Init shared key not associated with a user.
-        Seems to happen when a folder is shared,
-        some files are exchanged and then the
-        folder is un-shared.
-        Keys are stored in files['s'] and files['ok']
-        """
-
-        shared_keys: SharedKeys = {}
-        for share_key in files["ok"]:
-            node_id, key = share_key["h"], share_key["k"]
-            shared_keys[node_id] = decrypt_key(b64_to_a32(key), self._master_key)
-
-        for share_key in files["s"]:
-            node_id, owner = share_key["h"], share_key["u"]
-            if key := shared_keys.get(node_id):
-                shared_keys_map.setdefault(owner, {})[node_id] = key
 
     async def _get_files(self) -> dict[str, Node]:
         logger.info("Getting all files on the account...")
         return await self._get_nodes()
 
     async def _get_nodes(self) -> dict[str, Node]:
-        files: GetNodesResponse = await self._api.request(
+        nodes_resp: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
                 "c": 1,
@@ -254,46 +268,30 @@ class MegaCoreClient:
             }
         )
 
-        if not self._shared_keys:
-            self._init_shared_keys(files, self._shared_keys)
+        self._vault.init_shared_keys(nodes_resp)
+        return await self._deserialize_nodes(nodes_resp["f"])
 
-        return await self._process_nodes(files["f"])
-
-    async def _process_nodes(
-        self,
-        nodes: Iterable[NodeSerialized],
-        public_key: str | None = None,
-        predicate: Callable[[Node], bool] | None = None,
+    async def _deserialize_nodes(
+        self, nodes: Iterable[NodeSerialized], public_key: str | None = None
     ) -> dict[str, Node]:
         """
         Processes multiple nodes at once, decrypting their metadata and attributes.
-
-        If predicate is provided, only nodes for which `predicate(node)` returns `False` are included in the result.
-
-        This method is NOT thread safe. It modifies the internal state of the shared keys.
         """
 
         share_key = b64_to_a32(public_key) if public_key else None
-        self._shared_keys.setdefault("EXP", {})
-
         results: dict[str, Node] = {}
 
-        async def process_nodes() -> dict[str, Node]:
-            for idx, node in enumerate(nodes):
-                node_id = node["h"]
-                if share_key:
-                    self._shared_keys["EXP"][node_id] = share_key
+        for idx, node in enumerate(nodes):
+            node_id = node["h"]
+            if share_key:
+                self._vault.shared_keys["EXP"][node_id] = share_key
 
-                processed_node = self._process_node(node)
-                if predicate is None or not predicate(processed_node):
-                    results[node_id] = processed_node
+            results[node_id] = self.__deserialize_node(node)
 
-                if idx % 500 == 0:
-                    await asyncio.sleep(0)
+            if idx % 500 == 0:
+                await asyncio.sleep(0)
 
-            return results
-
-        return await process_nodes()
+        return results
 
     async def _really_download_file(
         self,
