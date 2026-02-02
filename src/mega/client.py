@@ -7,8 +7,8 @@ import logging
 import os
 import random
 import re
-from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Literal, TypeVar, cast
+from pathlib import Path
+from typing import TYPE_CHECKING, TypeVar, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -22,7 +22,6 @@ from mega.crypto import (
     base64_url_decode,
     base64_url_encode,
     decrypt_attr,
-    decrypt_key,
     encrypt_attr,
     encrypt_key,
     get_chunks,
@@ -30,7 +29,13 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import NodeType, StorageUsage
+from mega.data_structures import (
+    Attributes,
+    FolderSerialized,
+    Node,
+    NodeType,
+    StorageUsage,
+)
 
 from .errors import MegaNzError, RequestError, ValidationError
 
@@ -42,11 +47,9 @@ if TYPE_CHECKING:
         AnyArray,
         AnyDict,
         Array,
-        Attributes,
-        File,
-        Folder,
-        FolderResponse,
-        Node,
+        FolderSerialized,
+        GetNodesResponse,
+        NodeSerialized,
         NodesMap,
         TupleArray,
     )
@@ -80,14 +83,16 @@ class LoginResponse:
 class Mega(MegaNzCoreClient):
     """Interface with all the public methods of the API"""
 
-    async def find(self, path: Path | str, exclude_deleted: bool = False) -> File | Folder | None:
+    async def find(self, path: Path | str, exclude_deleted: bool = False) -> NodeSerialized | FolderSerialized | None:
         """
         Returns file or folder from given path( if exists)
         """
         results = await self._search(path, exclude_deleted, strict=True)
         return results[0] if results else None
 
-    async def search(self, filename_or_path: Path | str, exclude_deleted: bool = False) -> list[File | Folder]:
+    async def search(
+        self, filename_or_path: Path | str, exclude_deleted: bool = False
+    ) -> list[NodeSerialized | FolderSerialized]:
         """
         Return file object(s) from given filename or path
         """
@@ -96,7 +101,7 @@ class Mega(MegaNzCoreClient):
     @requires_login
     async def _search(
         self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False
-    ) -> list[File | Folder]:
+    ) -> list[NodeSerialized | FolderSerialized]:
         """
         Return file object(s) from given filename or path
         """
@@ -115,73 +120,51 @@ class Mega(MegaNzCoreClient):
                 found.append(item)
         return found
 
-    async def find_by_handle(self, handle: str, exclude_deleted: bool = False) -> File | Folder | None:
+    async def find_by_handle(
+        self, handle: str, exclude_deleted: bool = False
+    ) -> NodeSerialized | FolderSerialized | None:
         """Return file object(s) from given filename or path"""
         files = await self.get_files()
         file = found if (found := files.get(handle)) else None
         if not file or (file["p"] == self.trashbin_id and exclude_deleted):
             return None
-        return cast("File | Folder", file)
+        return file
 
     @requires_login
     async def get_files(self) -> NodesMap:
         return await self._get_files()
 
-    @requires_login
-    async def get_upload_link(self, folder: FolderResponse) -> str:
+    async def get_link(self, file: Node) -> str:
         """
-        Get a files public link inc. decrypted key
-        Requires upload() response as input
+        Get a files public link inc
         """
-        if "f" not in folder:
-            raise ValueError("""Upload() response required as input, use get_link() for regular file input""")
+        assert file.type in (NodeType.FILE, NodeType.FOLDER)
+        assert file._crypto
+        public_handle: str = await self._get_public_handle(file.id)
+        # file_key = next(iter(file.keys.values()))
+        # decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self._master_key))
+        public_key = a32_to_base64(file._crypto.full_key)
+        return f"{self._primary_url}/#!{public_handle}!{public_key}"
 
-        file = cast("File", folder["f"][0])
-        public_handle: str = await self._api.request(
-            {
-                "a": "l",
-                "n": file["h"],
-            }
-        )
-        _, file_key = file["k"].split(":", 1)
-        decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self._master_key))
-        return f"{self._primary_url}/#!{public_handle}!{decrypted_key}"
+    async def get_folder_link(self, folder: Node) -> str:
+        assert folder.type in (NodeType.FILE, NodeType.FOLDER)
+        assert folder._crypto and folder._crypto.share_key
+        public_handle: str = await self._get_public_handle(folder.id)
+        public_key = a32_to_base64(folder._crypto.share_key)
+        return f"{self._primary_url}/#F!{public_handle}!{public_key}"
 
-    async def get_link(self, file: File) -> str:
-        """
-        Get a file public link from given file object
-        """
-
-        if not ("h" in file and "full_key" in file):
-            raise ValidationError("File id and key must be present")
-
-        public_handle: str = await self._get_public_handle(file)
-        decrypted_key = a32_to_base64(file["full_key"])
-        return f"{self._primary_url}/#!{public_handle}!{decrypted_key}"
-
-    async def get_folder_link(self, folder: Folder) -> str:
-        if not ("h" in folder and "sk_decrypted" in folder):
-            raise ValidationError("Folder id and key must be present")
-
-        public_handle: str = await self._get_public_handle(folder)
-        decrypted_key = a32_to_base64(folder["sk_decrypted"])
-        return f"{self._primary_url}/#F!{public_handle}!{decrypted_key}"
-
-    @requires_login
-    async def _get_public_handle(self, file: File | Folder) -> str:
+    async def _get_public_handle(self, file_id: str) -> str:
         try:
-            public_handle: str = await self._api.request(
+            return await self._api.request(
                 {
                     "a": "l",
-                    "n": file["h"],
+                    "n": file_id,
                 }
             )
         except RequestError as e:
             if e.code == -11:
                 raise MegaNzError("Can't get a public link from that file (is this a shared file?)") from e
             raise
-        else:
-            return public_handle
 
     @requires_login
     async def get_user(self) -> AnyDict:
@@ -192,45 +175,8 @@ class Mega(MegaNzCoreClient):
         )
         return user_data
 
-    async def get_node_by_type(self, node_type: NodeType | int) -> Node | None:
-        """
-        Get a node by it's numeric type id, e.g:
-        0: file
-        1: dir
-        2: special: root cloud drive
-        3: special: inbox
-        4: special trash bin
-        """
-        nodes = await self.get_files()
-        for _, node in nodes.items():
-            if node["t"] == node_type:
-                return node
-
-    @requires_login
-    async def get_files_in_node(
-        self, target: Literal[NodeType.INBOX, NodeType.TRASH, NodeType.ROOT_FOLDER]
-    ) -> NodesMap:
-        """
-        Get all files in a given target, e.g. 4=trash
-        """
-        folder: FolderResponse = await self._api.request(
-            {
-                "a": "f",
-                "c": 1,
-            }
-        )
-        files_dict: NodesMap = {}
-        target_id = self.special_nodes_mapping.get(target)
-        for index, file in enumerate(folder["f"], 1):
-            processed_file = cast("File | Folder", self._process_node(file))
-            if processed_file["a"] and processed_file["p"] == target_id:
-                files_dict[file["h"]] = processed_file
-            if index % 100 == 0:
-                await asyncio.sleep(0)
-        return files_dict
-
     async def get_id_from_public_handle(self, public_handle: str) -> str:
-        node_data: FolderResponse = await self._api.request(
+        node_data: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
                 "f": 1,
@@ -238,25 +184,13 @@ class Mega(MegaNzCoreClient):
             }
         )
 
-        node_id = self.get_id_from_resp_obj(node_data)
-        assert node_id
-        return node_id
-
-    @staticmethod
-    def get_id_from_resp_obj(resp: FolderResponse) -> str | None:
-        """
-        Get node id from a file object
-        """
-
-        for i in resp["f"]:
-            if i["h"] != "":
-                return i["h"]
+        return node_data["f"][0]["h"]
 
     async def get_quota(self) -> int:
         """Get current remaining disk quota."""
         json_resp: AnyDict = await self._api.request(
             {
-                "a": "uq",  # Action: user quota
+                "a": "uq",
                 "xfer": 1,
                 "strg": 1,
                 "v": 1,
@@ -265,13 +199,6 @@ class Mega(MegaNzCoreClient):
         return json_resp["mstrg"]
 
     async def get_storage_space(self) -> StorageUsage:
-        """
-        Get the current storage space.
-        Return a dict containing at least:
-          'used' : the used space on the account
-          'total' : the maximum space allowed with current plan
-        All storage space are in bytes unless asked differently.
-        """
         json_resp: AnyDict = await self._api.request(
             {
                 "a": "uq",
@@ -336,7 +263,7 @@ class Mega(MegaNzCoreClient):
             return await self._api.request(post_list)
 
     async def download(
-        self, file: File | None, dest_path: Path | str | None = None, dest_filename: str | None = None
+        self, file: NodeSerialized | None, dest_path: Path | str | None = None, dest_filename: str | None = None
     ) -> Path:
         """Download a file by it's file object."""
         return await self._download_file(
@@ -348,15 +275,13 @@ class Mega(MegaNzCoreClient):
             is_public=False,
         )
 
-    async def _export_file(self, node: File) -> str:
-        await self._api.request(
-            [
-                {
-                    "a": "l",  # Action: Export file
-                    "n": node["h"],  # Node: file Id
-                    "i": self._api._client_id,  # Request #Id
-                }
-            ]
+    async def _export_file(self, node: NodeSerialized) -> str:
+        _ = await self._api.request(
+            {
+                "a": "l",  # Action: Export file
+                "n": node["h"],  # Node: file Id
+                "i": self._api._client_id,  # Request #Id
+            }
         )
         return await self.get_link(node)
 
@@ -364,7 +289,7 @@ class Mega(MegaNzCoreClient):
         files = await self.get_files()
         if node_id:
             _node_id = node_id
-            node: Node = files[_node_id]
+            node: NodeSerialized = files[_node_id]
         elif path:
             found = await self.find(path)
             if not found:
@@ -374,10 +299,9 @@ class Mega(MegaNzCoreClient):
             raise ValueError
 
         if node["t"] == NodeType.FILE:
-            folder = cast("File", node)
+            folder = node
             return await self._export_file(folder)
 
-        node = cast("File | Folder", node)
         if node["t"] == NodeType.FOLDER:
             try:
                 # If already exported
@@ -413,7 +337,7 @@ class Mega(MegaNzCoreClient):
             }
         )
         files = await self.get_files()
-        folder = cast("Folder", files[_node_id])
+        folder = cast("FolderSerialized", files[_node_id])
         return await self.get_folder_link(folder)
 
     async def download_url(self, url: str, dest_path: str | None = None, dest_filename: str | None = None) -> Path:
@@ -429,15 +353,20 @@ class Mega(MegaNzCoreClient):
             is_public=True,
         )
 
-    async def get_nodes_public_folder(self, url: str) -> dict[str, File | Folder]:
+    async def get_nodes_public_folder(self, url: str) -> dict[str, NodeSerialized | FolderSerialized]:
         folder_id, b64_share_key = self._parse_folder_url(url)
 
-        folder: FolderResponse = await self._api.request(
-            {"a": "f", "c": 1, "ca": 1, "r": 1},
+        folder: GetNodesResponse = await self._api.request(
+            {
+                "a": "f",
+                "c": 1,
+                "ca": 1,
+                "r": 1,
+            },
             {"n": folder_id},
         )
 
-        return cast("dict[str, File | Folder]", await self._process_nodes(folder["f"], b64_share_key))
+        return await self._process_nodes(folder["f"], b64_share_key)
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)
@@ -449,7 +378,7 @@ class Mega(MegaNzCoreClient):
             if node["t"] != NodeType.FILE:
                 continue
 
-            async def download_file(file: File, file_path: Path) -> None:
+            async def download_file(file: NodeSerialized, file_path: Path) -> None:
                 file_data = await self._api.request(
                     {
                         "a": "g",
@@ -476,7 +405,7 @@ class Mega(MegaNzCoreClient):
                     file["k_decrypted"],
                 )
 
-            file = cast("File", node)
+            file = node
             download_tasks.append(download_file(file, Path(path)))
 
         with self._new_progress():
@@ -490,7 +419,7 @@ class Mega(MegaNzCoreClient):
         dest_path: Path | str | None = None,
         dest_filename: str | None = None,
         is_public: bool = False,
-        file: File | None = None,
+        file: NodeSerialized | None = None,
     ) -> Path:
         if file is None:
             assert file_key
@@ -499,7 +428,7 @@ class Mega(MegaNzCoreClient):
             else:
                 _file_key = file_key
 
-            file_data: File = await self._api.request(
+            file_data: NodeSerialized = await self._api.request(
                 {
                     "a": "g",
                     "g": 1,
@@ -547,8 +476,8 @@ class Mega(MegaNzCoreClient):
             return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
 
     async def upload(
-        self, filename: str, dest_node: Folder | None = None, dest_filename: str | None = None
-    ) -> FolderResponse:
+        self, filename: str, dest_node: FolderSerialized | None = None, dest_filename: str | None = None
+    ) -> GetNodesResponse:
         # determine storage node
         dest_node_id = dest_node["h"] if dest_node else self.root_id
         # request upload url, call 'u' method
@@ -634,7 +563,7 @@ class Mega(MegaNzCoreClient):
             encrypted_key = a32_to_base64(encrypt_key(key, self._master_key))
             logger.info("Sending request to update attributes")
             # update attributes
-            data: FolderResponse = await self._api.request(
+            data: GetNodesResponse = await self._api.request(
                 {
                     "a": "p",
                     "t": dest_node_id,
@@ -645,7 +574,7 @@ class Mega(MegaNzCoreClient):
             logger.info("Upload complete")
             return data
 
-    async def _mkdir(self, name: str, parent_node_id: str) -> Folder:
+    async def _mkdir(self, name: str, parent_node_id: str) -> FolderSerialized:
         # generate random aes key (128) for folder
         ul_key = [random_u32int() for _ in range(6)]
 
@@ -655,7 +584,7 @@ class Mega(MegaNzCoreClient):
         encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self._master_key))
 
         # This can return multiple folders if subfolders needed to be created
-        folders: dict[str, list[Folder]] = await self._api.request(
+        folders: dict[str, list[FolderSerialized]] = await self._api.request(
             {
                 "a": "p",
                 "t": parent_node_id,
@@ -665,7 +594,7 @@ class Mega(MegaNzCoreClient):
         )
         return folders["f"][0]
 
-    async def create_folder(self, path: Path | str) -> Folder:
+    async def create_folder(self, path: Path | str) -> FolderSerialized:
         path = Path(path)
         last_parent = await self.find_by_handle(self.root_id)
         assert last_parent
@@ -678,7 +607,7 @@ class Mega(MegaNzCoreClient):
 
         return await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
 
-    async def rename(self, node: File | Folder, new_name: str) -> int:
+    async def rename(self, node: NodeSerialized | FolderSerialized, new_name: str) -> int:
         # create new attribs
         attribs = {"n": new_name}
         # encrypt attribs
@@ -695,38 +624,14 @@ class Mega(MegaNzCoreClient):
             }
         )
 
-    async def move(self, file_id: str, target: FolderResponse | NodeType | str) -> AnyDict:
-        """
-        Move a file to another parent node
-        params:
-        a : command
-        n : node we're moving
-        t : id of target parent node, moving to
-        i : request id
+    async def move(self, file_id: str, target: NodeType | int) -> AnyDict:
+        target = NodeType(target)
 
-        targets
-        2 : root
-        3 : inbox
-        4 : trash
-
-        or...
-        target's id
-        or...
-        target's structure returned by find()
-        """
-
-        if isinstance(target, int):
-            result = await self.get_node_by_type(target)
-            if not result:
-                raise MegaNzError(f"Node type {target} does not exists")
-            target_node_id = result["h"]
-        else:
-            target_node_id = target
         return await self._api.request(
             {
                 "a": "m",
                 "n": file_id,
-                "t": target_node_id,
+                "t": target,
                 "i": self._api._client_id,
             }
         )
@@ -743,117 +648,102 @@ class Mega(MegaNzCoreClient):
         """
         return await self._edit_contact(email, False)
 
-    async def _edit_contact(self, email: str, add: bool) -> AnyDict:
+    async def _edit_contact(self, email: str, *, add: bool) -> AnyDict:
         """
         Editing contacts
         """
-        if add is True:
-            add_or_remove = "1"  # add command
-        elif add is False:
-            add_or_remove = "0"  # remove command
-        else:
-            raise ValidationError("add parameter must be of type bool")
 
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             raise ValidationError("add_contact requires a valid email address")
-        else:
-            return await self._api.request(
-                {
-                    "a": "ur",
-                    "u": email,
-                    "l": add_or_remove,
-                    "i": self._api._client_id,
-                }
-            )
+
+        return await self._api.request(
+            {
+                "a": "ur",
+                "u": email,
+                "l": "1" if add else "0",
+                "i": self._api._client_id,
+            }
+        )
 
     async def get_public_url_info(self, url: str) -> AnyDict | None:
         """
         Get size and name from a public url, dict returned
         """
-        file_handle, file_key = self._parse_url(url).split("!")
-        return await self.get_public_file_info(file_handle, file_key)
+        public_handle, public_key = self._parse_url(url).split("!")
+        return await self.get_public_file_info(public_handle, public_key)
 
     async def import_public_url(
-        self, url: str, dest_node: Folder | str | None = None, dest_name: str | None = None
-    ) -> FolderResponse:
+        self, url: str, dest_node: FolderSerialized | str | None = None, dest_name: str | None = None
+    ) -> GetNodesResponse:
         """
         Import the public url into user account
         """
-        file_handle, file_key = self._parse_url(url).split("!")
-        return await self.import_public_file(file_handle, file_key, dest_node=dest_node, dest_name=dest_name)
+        public_handle, public_key = self._parse_url(url).split("!")
+        return await self.import_public_file(public_handle, public_key, dest_node=dest_node, dest_name=dest_name)
 
-    async def get_public_file_info(self, file_handle: str, file_key: str) -> AnyDict | None:
+    async def get_public_file_info(self, public_handle: str, public_key: str) -> Attributes:
         """
         Get size and name of a public file
         """
-        data: FolderResponse = await self._api.request(
+        data: GetNodesResponse = await self._api.request(
             {
                 "a": "g",
-                "p": file_handle,
+                "p": public_handle,
                 "ssm": 1,
             }
         )
-        if "at" not in data or "s" not in data:
-            raise ValueError("Unexpected result", data)
 
-        key = base64_to_a32(file_key)
-        k: TupleArray = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
+        full_key = base64_to_a32(public_key)
+        key: TupleArray = (
+            full_key[0] ^ full_key[4],
+            full_key[1] ^ full_key[5],
+            full_key[2] ^ full_key[6],
+            full_key[3] ^ full_key[7],
+        )
 
-        size = data["s"]
-        unencrypted_attrs = decrypt_attr(base64_url_decode(data["at"]), k)
-        if not unencrypted_attrs:
-            return None
-        result = {"size": size, "name": unencrypted_attrs["n"]}
-        return result
+        unencrypted_attrs = decrypt_attr(base64_url_decode(data["at"]), key)
+        return Attributes(size=data["s"], name=unencrypted_attrs["n"])
 
+    @requires_login
     async def import_public_file(
         self,
-        file_handle: str,
-        file_key: str,
-        dest_node: Folder | str | None = None,
+        public_handle: str,
+        public_key: str,
+        dest_node_id: str | None = None,
         dest_name: str | None = None,
-    ) -> FolderResponse:
+    ) -> GetNodesResponse:
         """
         Import the public file into user account
         """
-        # Providing dest_node spare an API call to retrieve it.
-        if not self._logged_in:
-            raise MegaNzError("You have to log in to import files")
 
-        if dest_node is None:
-            # Get '/Cloud Drive' folder no dest node specified
-            dest_node_id: str = self.root_id
-        elif isinstance(dest_node, str):
-            dest_node_id = dest_node
-        else:
-            dest_node_id = dest_node["h"]
+        dest_node_id = dest_node_id or self._system_nodes.root
 
         # Providing dest_name spares an API call to retrieve it.
         if dest_name is None:
-            pl_info = await self.get_public_file_info(file_handle, file_key)
-            assert pl_info
-            dest_name = pl_info["name"]
+            pl_info = await self.get_public_file_info(public_handle, public_key)
+            dest_name = pl_info.name
 
-        key = base64_to_a32(file_key)
-        k: TupleArray = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
+        full_key = base64_to_a32(public_key)
+        key: TupleArray = (
+            full_key[0] ^ full_key[4],
+            full_key[1] ^ full_key[5],
+            full_key[2] ^ full_key[6],
+            full_key[3] ^ full_key[7],
+        )
 
-        encrypted_key: str = a32_to_base64(encrypt_key(key, self._master_key))
-        encrypted_name: str = base64_url_encode(encrypt_attr({"n": dest_name}, k))
+        encrypted_key = a32_to_base64(encrypt_key(full_key, self._master_key))
+        attributes = base64_url_encode(encrypt_attr({"n": dest_name}, key))
         return await self._api.request(
             {
                 "a": "p",
                 "t": dest_node_id,
                 "n": [
                     {
-                        "ph": file_handle,
+                        "ph": public_handle,
                         "t": 0,
-                        "a": encrypted_name,
+                        "a": attributes,
                         "k": encrypted_key,
                     },
                 ],
             }
         )
-
-    async def build_file_system(self) -> dict[PurePosixPath, Node]:
-        nodes_map = await self._get_nodes()
-        return await self._build_file_system(nodes_map, list(self.special_nodes_mapping.values()))

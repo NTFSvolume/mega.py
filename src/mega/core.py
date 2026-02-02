@@ -8,7 +8,7 @@ import shutil
 import tempfile
 from contextvars import ContextVar
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -29,21 +29,24 @@ from mega.crypto import (
     pad_bytes,
     str_to_a32,
 )
-from mega.data_structures import NodeType, TupleArray
+from mega.data_structures import (
+    Attributes,
+    Crypto,
+    Node,
+    NodeType,
+    TupleArray,
+)
 
 from .errors import ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator, Mapping, Sequence
+    from collections.abc import Callable, Generator, Iterable, Mapping
 
     import aiohttp
 
     from mega.data_structures import (
-        Attributes,
-        File,
-        Folder,
-        FolderResponse,
-        Node,
+        GetNodesResponse,
+        NodeSerialized,
         NodesMap,
         SharedKeys,
         SharedKeysMap,
@@ -151,75 +154,89 @@ class MegaNzCoreClient:
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
 
-    def _process_node(self, node: Node) -> Node:
-        node_type = NodeType(node["t"])
+    def _process_node(self, node: NodeSerialized) -> Node:
+        parsed_node = Node(**self._deserialize_node(node))
 
-        match node_type:
-            case NodeType.ROOT_FOLDER:
-                self._system_nodes.root = node["h"]
-                node["attributes"] = {"n": "Cloud Drive"}
+        if parsed_node.type in (NodeType.FILE, NodeType.FOLDER):
+            full_key, share_key = self._decrypt_keys(parsed_node)
+            parsed_node._crypto = self._parse_crypto(parsed_node.type, full_key, share_key)
+            attributes = decrypt_attr(base64_url_decode(parsed_node._a), parsed_node._crypto.key)
+            parsed_node.attributes = Attributes(**attributes)
 
-            case NodeType.INBOX:
-                self._system_nodes.inbox = node["h"]
-                node["attributes"] = {"n": "Inbox"}
+        else:
+            name = {
+                NodeType.ROOT_FOLDER: "Cloud Drive",
+                NodeType.INBOX: "Inbox",
+                NodeType.TRASH: "Trash Bin",
+            }[parsed_node.type]
+            parsed_node.attributes = Attributes(name)
 
-            case NodeType.TRASH:
-                self._system_nodes.trash_bin = node["h"]
-                node["attributes"] = {"n": "Trash Bin"}
+        return parsed_node
 
-            case NodeType.FILE | NodeType.FOLDER:
-                node = cast("File | Folder", node)
-                node = self._process_file_or_folder(node)
+    @staticmethod
+    def _deserialize_node(node: NodeSerialized) -> dict[str, Any]:
+        if k := node.get("k"):
+            keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
+        else:
+            keys = {}
 
-        return node
+        return dict(  # noqa: C408
+            id=node["h"],
+            parent_id=node["p"],
+            owner=node["u"],
+            type=NodeType(node["t"]),
+            keys=keys,
+            share_id=node.get("su"),
+            share_key=node.get("sk"),
+        )
 
-    def _process_file_or_folder(self, node: File | Folder) -> Node:
-        keys = dict(keypart.split(":", 1) for keypart in node["k"].split("/") if ":" in keypart)
-        node_id: str = node["h"]
-        uid: str = node["u"]
-        key = None
+    @staticmethod
+    def _parse_crypto(node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None) -> Crypto:
+        if node_type is NodeType.FILE:
+            key = (
+                full_key[0] ^ full_key[4],
+                full_key[1] ^ full_key[5],
+                full_key[2] ^ full_key[6],
+                full_key[3] ^ full_key[7],
+            )
+
+        else:
+            key = full_key
+
+        iv = *full_key[4:6], 0, 0
+        meta_mac = full_key[6:8]
+        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
+
+    def _decrypt_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
         # my objects
-        if uid in keys:
-            key = decrypt_key(base64_to_a32(keys[uid]), self._master_key)
+        share_key: tuple[int, ...] | None = None
+        full_key: tuple[int, ...] | None = None
+
+        if node.owner in node.keys:
+            full_key = decrypt_key(base64_to_a32(node.keys[node.owner]), self._master_key)
 
         # shared folders
-        elif (share_id := node.get("su")) and (share_key := node.get("sk")) and node_id in keys:
-            shared_key = decrypt_key(base64_to_a32(share_key), self._master_key)
-            key = decrypt_key(base64_to_a32(keys[node_id]), shared_key)
-            self._shared_keys.setdefault(share_id, {})[node_id] = shared_key
+        elif node.share_id and node.share_key and node.id in node.keys:
+            share_key = decrypt_key(base64_to_a32(node.share_key), self._master_key)
+            full_key = decrypt_key(base64_to_a32(node.keys[node.id]), share_key)
+            self._shared_keys.setdefault(node.share_id, {})[node.id] = share_key
 
         # shared files
-        elif (owner := node.get("u")) and owner in self._shared_keys:
-            for hkey, shared_key in self._shared_keys[owner].items():
-                if hkey in keys:
-                    key = decrypt_key(base64_to_a32(keys[hkey]), shared_key)
+        elif node.owner in self._shared_keys:
+            for node_id, share_key in self._shared_keys[node.owner].items():
+                if node_id in node.keys:
+                    full_key = decrypt_key(base64_to_a32(node.keys[node_id]), share_key)
                     break
 
-        if shared_key := self._shared_keys.get("EXP", {}).get(node_id):
-            encrypted_key = str_to_a32(base64_url_decode(node["k"].split(":")[-1]))
-            key = decrypt_key(encrypted_key, shared_key)
-            node["sk_decrypted"] = shared_key
+        if share_key := self._shared_keys.get("EXP", {}).get(node.id):
+            encrypted_key = str_to_a32(base64_url_decode(next(iter(node.keys.values()))))
+            full_key = decrypt_key(encrypted_key, share_key)
 
-        if key is not None:
-            # file
-            if node["t"] == NodeType.FILE:
-                node = cast("File", node)
-                k = (key[0] ^ key[4], key[1] ^ key[5], key[2] ^ key[6], key[3] ^ key[7])
-                node["iv"] = (*key[4:6], 0, 0)
-                node["meta_mac"] = key[6:8]
-            # folder
-            else:
-                k = key
+        assert full_key
 
-            node["full_key"] = key
-            node["k_decrypted"] = k
-            attributes_bytes = base64_url_decode(node["a"])
-            attributes = decrypt_attr(attributes_bytes, k)
-            node["attributes"] = cast("Attributes", attributes)
+        return full_key, share_key
 
-        return node
-
-    def _init_shared_keys(self, files: FolderResponse) -> None:
+    def _init_shared_keys(self, files: GetNodesResponse) -> None:
         """
         Init shared key not associated with a user.
         Seems to happen when a folder is shared,
@@ -231,8 +248,7 @@ class MegaNzCoreClient:
         shared_keys: SharedKeys = {}
         for node in files["ok"]:
             node_id: str = node["h"]
-            decrypted_shared_key = decrypt_key(base64_to_a32(node["k"]), self._master_key)
-            shared_keys[node_id] = decrypted_shared_key
+            shared_keys[node_id] = decrypt_key(base64_to_a32(node["k"]), self._master_key)
 
         for node in files["s"]:
             node_id = node["h"]
@@ -245,11 +261,11 @@ class MegaNzCoreClient:
         return await self._get_nodes()
 
     async def _get_nodes(self) -> NodesMap:
-        files: FolderResponse = await self._api.request(
+        files: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
                 "c": 1,
-                "r": 1,
+                "r": 1,  # recursive
             }
         )
 
@@ -260,10 +276,10 @@ class MegaNzCoreClient:
 
     async def _process_nodes(
         self,
-        nodes: Sequence[Node],
+        nodes: Iterable[NodeSerialized],
         public_key: str | None = None,
         predicate: Callable[[Node], bool] | None = None,
-    ) -> dict[str, Node]:
+    ) -> dict[str, NodeSerialized]:
         """
         Processes multiple nodes at once, decrypting their metadata and attributes.
 
@@ -272,15 +288,15 @@ class MegaNzCoreClient:
         This method is NOT thread safe. It modifies the internal state of the shared keys.
         """
         # User may already have access to this folder (the key is saved in their account)
-        folder_key = base64_to_a32(public_key) if public_key else None
+        share_key = base64_to_a32(public_key) if public_key else None
         self._shared_keys.setdefault("EXP", {})
 
-        async def process_nodes() -> dict[str, Node]:
+        async def process_nodes() -> dict[str, NodeSerialized]:
             results = {}
             for index, node in enumerate(nodes):
                 node_id = node["h"]
-                if folder_key:
-                    self._shared_keys["EXP"][node_id] = folder_key
+                if share_key:
+                    self._shared_keys["EXP"][node_id] = share_key
 
                 processed_node = self._process_node(node)
                 if predicate is None or not predicate(processed_node):
@@ -300,14 +316,14 @@ class MegaNzCoreClient:
         file_size: int,
         iv: TupleArray,
         meta_mac: TupleArray,
-        k_decrypted: TupleArray,
+        key: TupleArray,
     ):
         with (
             tempfile.NamedTemporaryFile(prefix="megapy_", delete=False) as temp_file,
             self._new_progress() as progress_bar,
         ):
             task_id = progress_bar.add_task(output_path.name, total=file_size)
-            chunk_decryptor = MegaDecryptor(iv, k_decrypted, meta_mac)
+            chunk_decryptor = MegaDecryptor(iv, key, meta_mac)
 
             async with self._api._get_session().get(direct_file_url) as response:
                 for _, chunk_size in get_chunks(file_size):
@@ -335,28 +351,28 @@ class MegaNzCoreClient:
             A 1-level dictionary where the each keys is the full path to a file/folder, and each value is the actual file/folder
         """
 
-        fs: dict[PurePosixPath, Node] = {}
+        filesystem: dict[PurePosixPath, Node] = {}
         parents_map: dict[str, list[Node]] = {}
 
-        for item in nodes_map.values():
-            parents_map.setdefault(item["p"], []).append(item)
+        for node in nodes_map.values():
+            parents_map.setdefault(node.parent_id, []).append(node)
 
         def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
-            for item in parents_map.get(parent_id, []):
-                item_path = current_path / item["attributes"]["n"]
-                fs[item_path] = item
+            for node in parents_map.get(parent_id, []):
+                node_path = current_path / node.attributes.name
+                filesystem[node_path] = node
 
-                if item["t"] == NodeType.FOLDER:
-                    build_tree(item["h"], item_path)
+                if node.type is NodeType.FOLDER:
+                    build_tree(node.id, node_path)
 
         for root_id in root_ids:
-            root_item = nodes_map[root_id]
-            name = root_item["attributes"]["n"]
-            path = PurePosixPath(name if name != "Cloud Drive" else ".")
-            fs[path] = root_item
+            root_node = nodes_map[root_id]
+            name = root_node.attributes.name
+            path = PurePosixPath("." if root_node.type is NodeType.ROOT_FOLDER else name)
+            filesystem[path] = root_node
             build_tree(root_id, path)
 
-        return dict(sorted(fs.items()))
+        return dict(sorted(filesystem.items()))
 
 
 class MegaDecryptor:

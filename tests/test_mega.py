@@ -17,7 +17,7 @@ from mega.errors import RequestError
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
 
-    from mega.data_structures import File, Folder
+    from mega.data_structures import FolderSerialized, NodeSerialized
 
 TEST_CONTACT = "test@mega.nz"
 TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
@@ -46,22 +46,20 @@ async def mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGen
 
 
 @pytest.fixture
-async def folder(mega: Mega, folder_name: str) -> AsyncGenerator[Folder]:
+async def folder(mega: Mega, folder_name: str) -> AsyncGenerator[FolderSerialized]:
     node = await mega.find(folder_name)
     assert node
     assert node["t"] == NodeType.FOLDER
-    folder = cast("Folder", node)
+    folder = cast("FolderSerialized", node)
     yield folder
 
 
 @pytest.fixture
-async def uploaded_file(mega: Mega, folder_name: str, folder: Folder) -> AsyncGenerator[File]:
+async def uploaded_file(mega: Mega, folder_name: str, folder: FolderSerialized) -> AsyncGenerator[NodeSerialized]:
     await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
     path = f"{folder_name}/test.py"
     node = await mega.find(path)
-    assert node
-    file = cast("File", node)
-    yield file
+    yield node
 
 
 def test_mega(mega: Mega) -> None:
@@ -94,7 +92,7 @@ async def test_get_files(mega: Mega) -> None:
 
 
 @pytest.mark.xfail(reason="Public links won't work with temp account")
-async def test_get_link(mega: Mega, uploaded_file: File) -> None:
+async def test_get_link(mega: Mega, uploaded_file: NodeSerialized) -> None:
     link = await mega.get_link(uploaded_file)
     assert isinstance(link, str)
 
@@ -124,7 +122,7 @@ class TestExport:
         result_public_share_url = await mega.export(node_id=node_id)
         assert result_public_share_url.startswith("https://mega.nz/#F!")
 
-    async def test_export_single_file(self, mega: Mega, folder_name: str, folder: Folder) -> None:
+    async def test_export_single_file(self, mega: Mega, folder_name: str, folder: FolderSerialized) -> None:
         # Upload a single file into a folder
 
         await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
@@ -161,7 +159,7 @@ async def test_create_folder_with_sub_folders(mega: Mega, folder_name: str) -> N
 
 
 class TestFind:
-    async def test_find_file(self, mega: Mega, folder_name: str, folder: Folder) -> None:
+    async def test_find_file(self, mega: Mega, folder_name: str, folder: FolderSerialized) -> None:
         _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
         file1 = await mega.find(f"{folder_name}/test.py")
         assert file1
@@ -178,34 +176,34 @@ class TestFind:
         result = await mega.find("not_found")
         assert result is None
 
-    async def test_exclude_deleted_files(self, mega: Mega, folder_name: str, folder: Folder) -> None:
+    async def test_exclude_deleted_files(self, mega: Mega, folder_name: str, folder: FolderSerialized) -> None:
         assert await mega.find(folder_name)
         _ = await mega.delete(folder["h"])
         assert await mega.search(folder_name)
         assert not await mega.search(folder_name, exclude_deleted=True)
 
 
-async def test_rename(mega: Mega, folder_name: str, folder: Folder) -> None:
+async def test_rename(mega: Mega, folder_name: str, folder: FolderSerialized) -> None:
     resp = await mega.rename(folder, folder_name)
     assert resp == 0
 
 
-async def test_delete_folder(mega: Mega, folder: Folder) -> None:
+async def test_delete_folder(mega: Mega, folder: FolderSerialized) -> None:
     resp = await mega.delete(folder["h"])
     assert isinstance(resp, int)
 
 
-async def test_delete(mega: Mega, uploaded_file: File | Folder) -> None:
+async def test_delete(mega: Mega, uploaded_file: NodeSerialized | FolderSerialized) -> None:
     resp = await mega.delete(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
-async def test_destroy(mega: Mega, uploaded_file: File | Folder) -> None:
+async def test_destroy(mega: Mega, uploaded_file: NodeSerialized | FolderSerialized) -> None:
     resp = await mega.destroy(uploaded_file["h"])
     assert isinstance(resp, int)
 
 
-async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Folder) -> None:
+async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: FolderSerialized) -> None:
     # Upload a single file into a folder
     _ = await mega.upload(__file__, dest_node=folder, dest_filename="test.py")
     path = f"{folder_name}/test.py"

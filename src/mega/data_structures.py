@@ -10,9 +10,12 @@ Mega API information
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, TypeAlias, TypedDict, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict
+
+from typing_extensions import ReadOnly
 
 if TYPE_CHECKING:
     from typing_extensions import NotRequired
@@ -30,10 +33,6 @@ class Chunk(NamedTuple):
     size: int
 
 
-class Attributes(TypedDict):
-    n: str  # Name
-
-
 class NodeType(IntEnum):
     DUMMY = -1
     FILE = 0
@@ -43,49 +42,71 @@ class NodeType(IntEnum):
     TRASH = 4
 
 
-if TYPE_CHECKING:
-    _N = TypeVar("_N", bound=NodeType)
+class NodeSerialized(TypedDict):
+    h: str  # ID
+    p: str  # Parent ID
+    u: str  # Wwner
+    t: ReadOnly[NodeType]
+    a: str  # Serialized  attributes
+    ts: int  # Timestamp (creation date)
 
-    class Node(TypedDict, Generic[_N]):
-        h: str  # Id
-        p: str  # Parent Id
-        u: str  # User Id
-        t: _N
-        a: str  # Encrypted attributes (within this: 'n' Name)
-        ts: int  # Timestamp
+    k: NotRequired[str]  # Node keys
+    su: NotRequired[str]  # Shared user Id, only present present in shared (public) files / folder
+    sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
 
-        #  Non standard properties, only used internally by mega.py
-        attributes: Attributes  # Decrypted attributes
 
-    class _FileOrFolder(Node, Generic[_N]):
-        k: str  # Node key
-        su: NotRequired[str]  # Shared user Id, only present present in shared files / folder
-        sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
+@dataclasses.dataclass(slots=True, order=True)
+class Node:
+    id: str
+    parent_id: str
+    owner: str
+    type: NodeType
+    attributes: Attributes
+    creation_date: int
+    keys: dict[str, str]
+    share_id: str | None
+    share_key: str | None
 
-        #  Non standard properties, only used internally by mega.py
-        iv: TupleArray
-        meta_mac: TupleArray
-        k_decrypted: TupleArray
-        sk_decrypted: TupleArray
-        full_key: TupleArray  # Decrypted access key (for folders, its values if the same as 'k_decrypted')
+    _a: str
+    _crypto: Crypto | None = None
 
-    class File(_FileOrFolder[Literal[NodeType.FILE]]):
-        s: int  # size
-        fa: str  # file attributes
 
-    class Folder(_FileOrFolder[Literal[NodeType.FOLDER]]): ...
+@dataclasses.dataclass(slots=True, order=True, frozen=True)
+class Attributes:
+    name: str
+    size: int | None = None
 
-    class PublicFile(File):
-        g: str  # direct download URL
 
-    class FolderResponse(_FileOrFolder):
-        f: list[Node]
-        ok: list[File | Folder]
-        s: list[File | Folder]
+@dataclasses.dataclass(slots=True, order=True, frozen=True)
+class Crypto:
+    key: tuple[int, int, int, int, int, int, int, int]
+    iv: tuple[int, int, int, int]
+    meta_mac: tuple[int, int]
 
-    NodesMap = dict[str, Node]  # key is parent_id ('p')
-    SharedKeys = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
-    SharedKeysMap = dict[str, SharedKeys]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
+    full_key: tuple[int, int, int, int]
+    share_key: TupleArray | None
+
+
+class FileSerialized(NodeSerialized):
+    t: ReadOnly[Literal[NodeType.FILE]]
+    s: int  # Size
+    fa: str  # Serialized file attributes
+    g: NotRequired[str]  # Direct download URL
+
+
+class FolderSerialized(NodeSerialized):
+    t: ReadOnly[Literal[NodeType.FOLDER]]
+
+
+class GetNodesResponse(TypedDict):
+    f: list[NodeSerialized]
+    ok: list[FileSerialized | FolderSerialized]
+    s: list[FileSerialized | FolderSerialized]
+
+
+NodesMap = dict[str, NodeSerialized]  # key is parent_id ('p')
+SharedKeys = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
+SharedKeysMap = dict[str, SharedKeys]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
 
 
 class StorageUsage(NamedTuple):
