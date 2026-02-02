@@ -8,11 +8,12 @@ import os
 import random
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
+from mega.api import MegaAPI
 from mega.core import MegaCore
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
@@ -81,6 +82,18 @@ class LoginResponse:
 
 class Mega(MegaCore):
     """Interface with all the public methods of the API"""
+
+    def __init__(self) -> None:
+        super().__init__(api=MegaAPI())
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        await self._api.close()
 
     async def find(self, path: Path | str, exclude_deleted: bool = False) -> NodeSerialized | FolderSerialized | None:
         """

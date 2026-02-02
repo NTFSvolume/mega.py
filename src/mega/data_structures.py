@@ -97,6 +97,7 @@ class Node:
     share_id: str | None
     share_key: str | None
 
+    _a: str
     _crypto: Crypto | None = None
 
 

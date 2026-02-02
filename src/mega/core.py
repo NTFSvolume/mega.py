@@ -2,19 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import errno
 import logging
 import re
 import shutil
 import tempfile
-from contextvars import ContextVar
+from collections.abc import Generator
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
-from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
 
-from mega.api import MegaAPI
 from mega.auth import MegaAuth
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
@@ -29,19 +28,18 @@ from mega.crypto import (
     str_to_a32,
 )
 from mega.data_structures import Attributes, Crypto, Node, NodeType
+from mega.progress import ProgressManager
 
 from .errors import ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Mapping
 
-    import aiohttp
-
+    from mega.api import MegaAPI
     from mega.data_structures import GetNodesResponse, NodeSerialized, SharedKeys, TupleArray
 
 
 logger = logging.getLogger(__name__)
-_SHOW_PROGRESS = ContextVar[bool]("_SHOW_PROGRESS", default=False)
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -79,9 +77,8 @@ class MegaKeysVault:
             if key := new_keys.get(node_id):
                 self.shared_keys.setdefault(owner, {})[node_id] = key
 
-    def decrypt_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
+    def get_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
         share_key: tuple[int, ...] | None = None
-        full_key: tuple[int, ...] | None = None
 
         # my files/folders
         if node.owner in node.keys:
@@ -104,13 +101,12 @@ class MegaKeysVault:
             full_key = decrypt_key(encrypted_key, share_key)
 
         else:
-            raise RuntimeError(f"We do not have keys for {node=}")
+            raise RuntimeError(f"We do not have keys for {node = }")
 
-        assert full_key
         return full_key, share_key
 
     @staticmethod
-    def get_crypto(node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None) -> Crypto:
+    def compose_crypto(node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None) -> Crypto:
         if node_type is NodeType.FILE:
             key = (
                 full_key[0] ^ full_key[4],
@@ -126,17 +122,37 @@ class MegaKeysVault:
         meta_mac = full_key[6:8]
         return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
 
+    def decrypt(self, node: Node) -> Node:
+        if node.type in (NodeType.FILE, NodeType.FOLDER):
+            full_key, share_key = self.get_keys(node)
+            node._crypto = self.compose_crypto(node.type, full_key, share_key)
+            attributes = decrypt_attr(b64_url_decode(node._a), node._crypto.key)
+            if "n" not in attributes or len(attributes) != 1:
+                logger.warning(f"Node with unknown attributes: node_id = {node.id} {attributes}")
+            node.attributes = Attributes(name=attributes["n"])
+
+        else:
+            name = {
+                NodeType.ROOT_FOLDER: "Cloud Drive",
+                NodeType.INBOX: "Inbox",
+                NodeType.TRASH: "Trash Bin",
+            }[node.type]
+            node.attributes = Attributes(name)
+
+        return node
+
 
 class MegaCore:
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self._api = MegaAPI(session)
+    def __init__(self, api: MegaAPI) -> None:
+        self._api = api
         self._primary_url = "https://mega.nz"
         self._system_nodes: SystemNodes | None = None
         self._auth = MegaAuth(self._api)
         self._vault = MegaKeysVault(())
+        self._progress = ProgressManager()
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}> (system_nodes={self._system_nodes!r}, vault={self._vault!r})"
+        return f"<{type(self).__name__}>(system_nodes={self._system_nodes!r}, vault={self._vault!r})"
 
     @property
     def logged_in(self) -> bool:
@@ -147,51 +163,40 @@ class MegaCore:
         assert self._system_nodes is not None
         return self._system_nodes
 
-    @property
-    def show_progress(self) -> bool:
-        return _SHOW_PROGRESS.get()
-
-    @show_progress.setter
-    def show_progress(self, value: bool) -> None:
-        _ = _SHOW_PROGRESS.set(value)
-
-    def _new_progress(self) -> Progress:
-        progress = Progress(
-            SpinnerColumn(),
-            "{task.description}",
-            BarColumn(bar_width=None),
-            "[progress.percentage]{task.percentage:>6.2f}%",
-            "━",
-            DownloadColumn(),
-            "━",
-            TransferSpeedColumn(),
-            "━",
-            TimeRemainingColumn(compact=True, elapsed_when_finished=True),
-        )
-        progress.disable = not self.show_progress
-        return progress
-
-    async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> Self:
+    async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> None:
         if email and password:
             master_key, self._api.session_id = await self._auth.login(email, password)
         else:
             master_key, self._api.session_id = await self._auth.login_anonymous()
 
         self._vault = MegaKeysVault(master_key)
-        logger.info("Getting all files on the account...")
+        logger.info("Getting all files and decryption keys of the account...")
         _ = await self._get_nodes()
         logger.info(f"Special folders: {self._system_nodes}")
         logger.info("Login complete")
-        return self
 
-    async def __aenter__(self) -> Self:
-        return self
+    def _deserialize_node(self, node: NodeSerialized) -> Node:
+        return self._vault.decrypt(self._transform_node(node))
 
-    async def __aexit__(self, *_) -> None:
-        await self.close()
+    @staticmethod
+    def _transform_node(node: NodeSerialized) -> Node:
+        if k := node.get("k"):
+            keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
+        else:
+            keys = {}
 
-    async def close(self) -> None:
-        await self._api.close()
+        return Node(
+            id=node["h"],
+            parent_id=node["p"],
+            owner=node["u"],
+            creation_date=node["ts"],
+            type=NodeType(node["t"]),
+            keys=keys,
+            share_id=node.get("su"),
+            share_key=node.get("sk"),
+            attributes=Attributes(""),
+            _a=node["a"],
+        )
 
     @staticmethod
     def _parse_url(url: str) -> str:
@@ -215,7 +220,8 @@ class MegaCore:
         else:
             raise ValueError(f"URL key missing from {url}")
 
-    def _parse_folder_url(self, url: str) -> tuple[str, str]:
+    @staticmethod
+    def _parse_folder_url(url: str) -> tuple[str, str]:
         if "/folder/" in url:
             _, parts = url.split("/folder/", 1)
         elif "#F!" in url:
@@ -224,46 +230,6 @@ class MegaCore:
             raise ValidationError("Not a valid folder URL")
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
-
-    def __deserialize_node(self, node: NodeSerialized) -> Node:
-        parsed_node = self.__transform_node(node)
-
-        if parsed_node.type in (NodeType.FILE, NodeType.FOLDER):
-            full_key, share_key = self._vault.decrypt_keys(parsed_node)
-            parsed_node._crypto = self._vault.get_crypto(parsed_node.type, full_key, share_key)
-            attributes = decrypt_attr(b64_url_decode(node["a"]), parsed_node._crypto.key)
-            if "n" not in attributes or len(attributes) != 1:
-                logger.warning(f"Node with unknown attributes: node_id = {parsed_node.id} {attributes}")
-            parsed_node.attributes = Attributes(name=attributes["n"])
-
-        else:
-            name = {
-                NodeType.ROOT_FOLDER: "Cloud Drive",
-                NodeType.INBOX: "Inbox",
-                NodeType.TRASH: "Trash Bin",
-            }[parsed_node.type]
-            parsed_node.attributes = Attributes(name)
-
-        return parsed_node
-
-    @staticmethod
-    def __transform_node(node: NodeSerialized) -> Node:
-        if k := node.get("k"):
-            keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
-        else:
-            keys = {}
-
-        return Node(
-            id=node["h"],
-            parent_id=node["p"],
-            owner=node["u"],
-            creation_date=node["ts"],
-            type=NodeType(node["t"]),
-            keys=keys,
-            share_id=node.get("su"),
-            share_key=node.get("sk"),
-            attributes=Attributes(""),
-        )
 
     async def _get_nodes(self) -> dict[str, Node]:
         nodes_resp: GetNodesResponse = await self._api.request(
@@ -281,12 +247,11 @@ class MegaCore:
         self, nodes: Iterable[NodeSerialized], public_key: str | None = None
     ) -> dict[str, Node]:
         """
-        Processes multiple nodes at once, decrypting their metadata and attributes.
+        Processes multiple nodes at once, decrypting their keys and attributes.
         """
 
         share_key = b64_to_a32(public_key) if public_key else None
         results: dict[str, Node] = {}
-
         system_nodes: list[Node] = [None] * 3  # pyright: ignore[reportAssignmentType]
 
         for idx, node in enumerate(nodes):
@@ -294,7 +259,7 @@ class MegaCore:
             if share_key:
                 self._vault.shared_keys["EXP"][node_id] = share_key
 
-            results[node_id] = node = self.__deserialize_node(node)
+            results[node_id] = node = self._deserialize_node(node)
 
             if node.type in (NodeType.ROOT_FOLDER, NodeType.INBOX, NodeType.TRASH):
                 system_nodes[node.type - NodeType.ROOT_FOLDER] = node
@@ -313,14 +278,16 @@ class MegaCore:
         output_path: Path,
         file_size: int,
         iv: TupleArray,
-        meta_mac: TupleArray,
+        meta_mac: tuple[int, int],
         key: TupleArray,
     ):
+        if await asyncio.to_thread(output_path.exists):
+            raise FileExistsError(errno.EEXIST, output_path)
+
         with (
             tempfile.NamedTemporaryFile(prefix="megapy_", delete=False) as temp_file,
-            self._new_progress() as progress_bar,
+            self._progress.new_task(output_path.name, total=file_size) as advance,
         ):
-            task_id = progress_bar.add_task(output_path.name, total=file_size)
             chunk_decryptor = MegaDecryptor(iv, key, meta_mac)
 
             async with self._api.download(direct_file_url) as response:
@@ -328,11 +295,11 @@ class MegaCore:
                     raw_chunk = await response.content.readexactly(chunk_size)
                     chunk = chunk_decryptor.decrypt(raw_chunk)
                     temp_file.write(chunk)
-                    progress_bar.advance(task_id, len(chunk))
+                    advance(len(chunk))
 
         chunk_decryptor.check_integrity()
 
-        def move() -> None:
+        def move():
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(temp_file.name, output_path)
 
@@ -373,17 +340,23 @@ class MegaCore:
         return dict(sorted(filesystem.items()))
 
 
+@dataclasses.dataclass(slots=True, weakref_slot=True)
 class MegaDecryptor:
-    def __init__(self, iv: TupleArray, k_decrypted: TupleArray, meta_mac: TupleArray) -> None:
-        self.chunk_decryptor = _decrypt_chunks(k_decrypted, iv, meta_mac)
-        _ = next(self.chunk_decryptor)  # Prime chunk decryptor
+    iv: tuple[int, ...]
+    key: tuple[int, ...]
+    meta_mac: tuple[int, int]
+    _gen: Generator[bytes, bytes | None, None] = dataclasses.field(init=False)
+
+    def __post_init__(self) -> None:
+        self._gen = _decrypt_chunks(self.iv, self.key, self.meta_mac)
+        _ = next(self._gen)
 
     def decrypt(self, raw_chunk: bytes) -> bytes:
-        return self.chunk_decryptor.send(raw_chunk)
+        return self._gen.send(raw_chunk)
 
     def check_integrity(self) -> None:
         try:
-            _ = self.chunk_decryptor.send(None)
+            _ = self._gen.send(None)
         except StopIteration:
             pass
 
@@ -391,7 +364,7 @@ class MegaDecryptor:
 def _decrypt_chunks(
     iv: TupleArray,
     key: TupleArray,
-    meta_mac: TupleArray,
+    meta_mac: tuple[int, int],
 ) -> Generator[bytes, bytes | None, None]:
     """
     Decrypts chunks of data received via `send()` and yields the decrypted chunks.
