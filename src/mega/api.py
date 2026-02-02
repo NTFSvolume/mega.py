@@ -98,7 +98,7 @@ class MegaAPI:
                     headers = self._default_headers | {"X-Hashcash": xhashcash_token}
                     continue
 
-                return self._process_resp(response)
+                return await self._process_resp(response)
 
         else:
             raise ValueError

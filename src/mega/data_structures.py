@@ -15,10 +15,10 @@ from collections.abc import Sequence
 from enum import IntEnum
 from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict
 
-from typing_extensions import ReadOnly
-
 if TYPE_CHECKING:
-    from typing_extensions import NotRequired
+    from typing import NotRequired
+
+    from typing_extensions import ReadOnly
 
 U32Int: TypeAlias = int
 TupleArray: TypeAlias = tuple[U32Int, ...]
@@ -97,7 +97,6 @@ class Node:
     share_id: str | None
     share_key: str | None
 
-    _a: str
     _crypto: Crypto | None = None
 
 

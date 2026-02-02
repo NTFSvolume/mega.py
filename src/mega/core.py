@@ -55,6 +55,7 @@ class SystemNodes:
 class MegaKeysVault:
     master_key: tuple[int, ...]
     shared_keys: dict[str, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
+    # This is a mapping of owner (user_id) to shared keys. An special owner "EXP" is used for exported (AKA public) file/folders
 
     def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
         """
@@ -68,43 +69,44 @@ class MegaKeysVault:
             return
 
         self.shared_keys["EXP"] = {}
-        shared_keys: SharedKeys = {}
+        new_keys: SharedKeys = {}
         for share_key in nodes_response["ok"]:
             node_id, key = share_key["h"], share_key["k"]
-            shared_keys[node_id] = decrypt_key(b64_to_a32(key), self.master_key)
+            new_keys[node_id] = decrypt_key(b64_to_a32(key), self.master_key)
 
         for share_key in nodes_response["s"]:
             node_id, owner = share_key["h"], share_key["u"]
-            if key := shared_keys.get(node_id):
+            if key := new_keys.get(node_id):
                 self.shared_keys.setdefault(owner, {})[node_id] = key
 
     def decrypt_keys(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
         share_key: tuple[int, ...] | None = None
         full_key: tuple[int, ...] | None = None
 
-        # my objects
+        # my files/folders
         if node.owner in node.keys:
             full_key = decrypt_key(b64_to_a32(node.keys[node.owner]), self.master_key)
 
-        # shared folders
+        # folders shared with me
         elif node.share_id and node.share_key and node.id in node.keys:
             share_key = decrypt_key(b64_to_a32(node.share_key), self.master_key)
             full_key = decrypt_key(b64_to_a32(node.keys[node.id]), share_key)
             self.shared_keys.setdefault(node.share_id, {})[node.id] = share_key
 
-        # shared files
+        # files shared with me
         elif node.owner in self.shared_keys:
-            for node_id, share_key in self.shared_keys[node.owner].items():
-                if node_id in node.keys:
-                    full_key = decrypt_key(b64_to_a32(node.keys[node_id]), share_key)
-                    break
+            real_node_id, share_key = next(p for p in self.shared_keys[node.owner].items() if p[0] in node.keys)
+            full_key = decrypt_key(b64_to_a32(node.keys[real_node_id]), share_key)
 
-        if share_key := self.shared_keys.get("EXP", {}).get(node.id):
+        # public files/folders
+        elif share_key := self.shared_keys.get("EXP", {}).get(node.id):
             encrypted_key = str_to_a32(b64_url_decode(next(iter(node.keys.values()))))
             full_key = decrypt_key(encrypted_key, share_key)
 
-        assert full_key
+        else:
+            raise RuntimeError(f"We do not have keys for {node=}")
 
+        assert full_key
         return full_key, share_key
 
     @staticmethod
@@ -229,8 +231,10 @@ class MegaCore:
         if parsed_node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self._vault.decrypt_keys(parsed_node)
             parsed_node._crypto = self._vault.get_crypto(parsed_node.type, full_key, share_key)
-            attributes = decrypt_attr(b64_url_decode(parsed_node._a), parsed_node._crypto.key)
-            parsed_node.attributes = Attributes(**attributes)
+            attributes = decrypt_attr(b64_url_decode(node["a"]), parsed_node._crypto.key)
+            if "n" not in attributes or len(attributes) != 1:
+                logger.warning(f"Node with unknown attributes: node_id = {parsed_node.id} {attributes}")
+            parsed_node.attributes = Attributes(name=attributes["n"])
 
         else:
             name = {
@@ -253,13 +257,12 @@ class MegaCore:
             id=node["h"],
             parent_id=node["p"],
             owner=node["u"],
-            creation_date=0,
+            creation_date=node["ts"],
             type=NodeType(node["t"]),
             keys=keys,
             share_id=node.get("su"),
             share_key=node.get("sk"),
             attributes=Attributes(""),
-            _a=node["a"],
         )
 
     async def _get_nodes(self) -> dict[str, Node]:
@@ -284,7 +287,7 @@ class MegaCore:
         share_key = b64_to_a32(public_key) if public_key else None
         results: dict[str, Node] = {}
 
-        system_nodes: list[Node] = [] * 3
+        system_nodes: list[Node] = [None] * 3  # pyright: ignore[reportAssignmentType]
 
         for idx, node in enumerate(nodes):
             node_id = node["h"]
