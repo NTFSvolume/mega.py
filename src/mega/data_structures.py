@@ -13,7 +13,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from typing import NotRequired
@@ -85,6 +85,20 @@ class GetNodesResponse(TypedDict):
     s: list[ShareKeySerialized2]
 
 
+class GetNodeResponse(TypedDict):
+    s: int
+    at: str
+    fa: str  # file attributes (thumb, audio or video)
+    g: NotRequired[str]  # direct download URL
+
+
+@dataclasses.dataclass(slots=True, order=True)
+class File:
+    name: str
+    size: int
+    url: str | None
+
+
 @dataclasses.dataclass(slots=True, order=True)
 class Node:
     id: str
@@ -104,7 +118,17 @@ class Node:
 @dataclasses.dataclass(slots=True, order=True, frozen=True)
 class Attributes:
     name: str
-    size: int | None = None
+    label: str = ""
+    favorited: bool = False
+
+    @classmethod
+    def parse(cls, attrs: dict[str, Any]) -> Self:
+        labels = ["", "red", "orange", "yellow", "green", "blue", "purple", "grey"]
+        return cls(
+            name=attrs["n"],
+            label=labels[attrs.get("lbl", 0)],
+            favorited=bool(attrs.get("fav")),
+        )
 
 
 @dataclasses.dataclass(slots=True, order=True, frozen=True)

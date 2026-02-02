@@ -77,7 +77,9 @@ class MegaKeysVault:
         return full_key, share_key
 
     @staticmethod
-    def compose_crypto(node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None) -> Crypto:
+    def compose_crypto(
+        node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None = None
+    ) -> Crypto:
         if node_type is NodeType.FILE:
             key = (
                 full_key[0] ^ full_key[4],
@@ -98,9 +100,7 @@ class MegaKeysVault:
             full_key, share_key = self.get_keys(node)
             node._crypto = self.compose_crypto(node.type, full_key, share_key)
             attributes = decrypt_attr(b64_url_decode(node._a), node._crypto.key)
-            if "n" not in attributes or len(attributes) != 1:
-                logger.warning(f"Node with unknown attributes: node_id = {node.id} {attributes}")
-            node.attributes = Attributes(name=attributes["n"])
+            node.attributes = Attributes.parse(attributes)
 
         else:
             name = {

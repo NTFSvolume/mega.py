@@ -32,7 +32,9 @@ from mega.crypto import (
 )
 from mega.data_structures import (
     Attributes,
+    File,
     FolderSerialized,
+    GetNodeResponse,
     Node,
     NodeType,
     StorageUsage,
@@ -45,7 +47,6 @@ if TYPE_CHECKING:
     from typing import ParamSpec
 
     from mega.data_structures import (
-        AnyArray,
         AnyDict,
         Array,
         FolderSerialized,
@@ -436,67 +437,32 @@ class Mega(MegaCore):
 
     async def _download_file(
         self,
-        file_handle: str | None = None,
-        file_key: TupleArray | str | None = None,
+        file_handle: str,
+        file_key: tuple[int, ...],
         dest_path: Path | str | None = None,
-        dest_filename: str | None = None,
         is_public: bool = False,
-        file: Node | None = None,
     ) -> Path:
-        if file is None:
-            assert file_key
-            if isinstance(file_key, str):
-                _file_key = b64_to_a32(file_key)
-            else:
-                _file_key = file_key
-
-            file_data: NodeSerialized = await self._api.request(
-                {
-                    "a": "g",
-                    "g": 1,
-                    "p" if is_public else "n": file_handle,
-                },
-            )
-
-            key: AnyArray = (
-                _file_key[0] ^ _file_key[4],
-                _file_key[1] ^ _file_key[5],
-                _file_key[2] ^ _file_key[6],
-                _file_key[3] ^ _file_key[7],
-            )
-            iv: AnyArray = (*_file_key[4:6], 0, 0)
-            meta_mac: TupleArray = _file_key[6:8]
-        else:
-            file_handle = file.id
-            file_data = await self._api.request(
-                {
-                    "a": "g",
-                    "g": 1,
-                    "p" if is_public else "n": file_handle,
-                }
-            )
-            assert file._crypto
-            key = file._crypto.key
-            iv = file._crypto.iv
-            meta_mac = file._crypto.meta_mac
+        resp = await self._get_file_info(file_handle, is_public=is_public)
+        crypto = self._vault.compose_crypto(NodeType.FILE, file_key)
+        attrs = decrypt_attr(b64_url_decode(resp["at"]), crypto.key)
+        file = File(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
 
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
         # Strangely, files can come back later.
-        # if "g" not in file_data:
-        #    raise RequestError("File not accessible anymore")
+        if not file.url:
+            raise RequestError("File not accessible anymore")
 
-        file_url = file_data["g"]
-        file_size = file_data["s"]
-        attribs_bytes = b64_url_decode(file_data["at"])
-        attribs = decrypt_attr(attribs_bytes, key)
-        attribs = cast("Attributes", attribs)
+        output_path = Path(dest_path or Path()) / file.name
 
-        file_name = dest_filename or attribs["n"]
-        output_path = Path(dest_path or Path()) / file_name
-
-        with self._new_progress():
-            return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, key)
+        return await self._really_download_file(
+            file.url,
+            output_path,
+            file.size,
+            crypto.iv,
+            crypto.meta_mac,
+            crypto.key,
+        )
 
     async def upload(
         self, file_path: str, dest_node: FolderSerialized | None = None, dest_filename: str | None = None
@@ -695,7 +661,7 @@ class Mega(MegaCore):
             }
         )
 
-    async def get_public_url_info(self, url: str) -> AnyDict | None:
+    async def get_public_url_info(self, url: str) -> tuple[str, int]:
         """
         Get size and name from a public url, dict returned
         """
@@ -711,28 +677,24 @@ class Mega(MegaCore):
         public_handle, public_key = self._parse_url(url).split("!")
         return await self.import_public_file(public_handle, public_key, dest_node=dest_node, dest_name=dest_name)
 
-    async def get_public_file_info(self, public_handle: str, public_key: str) -> Attributes:
-        """
-        Get size and name of a public file
-        """
-        data: GetNodesResponse = await self._api.request(
+    async def _get_file_info(self, handle: str, is_public: bool = False) -> GetNodeResponse:
+        return await self._api.request(
             {
                 "a": "g",
-                "p": public_handle,
-                "ssm": 1,
+                "g": 1,
+                "p" if is_public else "n": handle,
             }
         )
 
+    async def get_public_file_info(self, public_handle: str, public_key: str) -> File:
+        """
+        Get size and name of a public file
+        """
+        resp = await self._get_file_info(public_handle, is_public=True)
         full_key = b64_to_a32(public_key)
-        key: TupleArray = (
-            full_key[0] ^ full_key[4],
-            full_key[1] ^ full_key[5],
-            full_key[2] ^ full_key[6],
-            full_key[3] ^ full_key[7],
-        )
-
-        unencrypted_attrs = decrypt_attr(b64_url_decode(data["at"]), key)
-        return Attributes(size=data["s"], name=unencrypted_attrs["n"])
+        key = self._vault.compose_crypto(NodeType.FILE, full_key).key
+        attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
+        return File(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
 
     @requires_login
     async def import_public_file(
