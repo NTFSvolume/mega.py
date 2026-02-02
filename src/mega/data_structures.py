@@ -55,6 +55,36 @@ class NodeSerialized(TypedDict):
     sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
 
 
+class FileSerialized(NodeSerialized):
+    t: ReadOnly[Literal[NodeType.FILE]]
+    s: int  # Size
+    fa: str  # Serialized file attributes
+    g: NotRequired[str]  # Direct download URL
+
+
+class FolderSerialized(NodeSerialized):
+    t: ReadOnly[Literal[NodeType.FOLDER]]
+
+
+class ShareKeySerialized(TypedDict):
+    h: str
+    k: str
+    ha: str  # ???
+
+
+class ShareKeySerialized2(TypedDict):
+    h: str
+    u: str
+    r: int
+    ts: int
+
+
+class GetNodesResponse(TypedDict):
+    f: list[NodeSerialized]
+    ok: list[ShareKeySerialized]
+    s: list[ShareKeySerialized2]
+
+
 @dataclasses.dataclass(slots=True, order=True)
 class Node:
     id: str
@@ -87,26 +117,7 @@ class Crypto:
     share_key: TupleArray | None
 
 
-class FileSerialized(NodeSerialized):
-    t: ReadOnly[Literal[NodeType.FILE]]
-    s: int  # Size
-    fa: str  # Serialized file attributes
-    g: NotRequired[str]  # Direct download URL
-
-
-class FolderSerialized(NodeSerialized):
-    t: ReadOnly[Literal[NodeType.FOLDER]]
-
-
-class GetNodesResponse(TypedDict):
-    f: list[NodeSerialized]
-    ok: list[FileSerialized | FolderSerialized]
-    s: list[FileSerialized | FolderSerialized]
-
-
-NodesMap = dict[str, NodeSerialized]  # key is parent_id ('p')
 SharedKeys = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
-SharedKeysMap = dict[str, SharedKeys]  # Mapping: (owner) Shared User Id ('su') -> SharedKey
 
 
 class StorageUsage(NamedTuple):

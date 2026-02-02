@@ -42,7 +42,7 @@ async def test():
         print(file)
 
     # upload file
-    print(await m.upload(filename="examples.py", dest_filename=f"examples_{unique}.py"))
+    print(await m.upload(file_path="examples.py", dest_filename=f"examples_{unique}.py"))
 
     # search for a file in account
     file = await m.find(f"examples_{unique}.py")

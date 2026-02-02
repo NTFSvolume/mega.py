@@ -29,13 +29,7 @@ from mega.crypto import (
     pad_bytes,
     str_to_a32,
 )
-from mega.data_structures import (
-    Attributes,
-    Crypto,
-    Node,
-    NodeType,
-    TupleArray,
-)
+from mega.data_structures import Attributes, Crypto, Node, NodeType
 
 from .errors import ValidationError
 
@@ -44,14 +38,7 @@ if TYPE_CHECKING:
 
     import aiohttp
 
-    from mega.data_structures import (
-        GetNodesResponse,
-        NodeSerialized,
-        NodesMap,
-        SharedKeys,
-        SharedKeysMap,
-        TupleArray,
-    )
+    from mega.data_structures import GetNodesResponse, NodeSerialized, SharedKeys, TupleArray
 
 
 logger = logging.getLogger(__name__)
@@ -65,8 +52,8 @@ class SystemNodes:
     trash_bin: str
 
 
-class MegaNzCoreClient:
-    def __init__(self, use_progress_bar: bool = True, session: aiohttp.ClientSession | None = None) -> None:
+class MegaCoreClient:
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._api = MegaApi(session)
         self._primary_url = "https://mega.nz"
         self._logged_in = False
@@ -74,7 +61,7 @@ class MegaNzCoreClient:
         self.inbox_id: str = ""
         self.trashbin_id: str = ""
         self._system_nodes = SystemNodes("", "", "")
-        self._shared_keys: SharedKeysMap = {}
+        self._shared_keys: dict[str, SharedKeys] = {}
         self._master_key: TupleArray
         self._auth = MegaAuth(self._api)
 
@@ -236,7 +223,7 @@ class MegaNzCoreClient:
 
         return full_key, share_key
 
-    def _init_shared_keys(self, files: GetNodesResponse) -> None:
+    def _init_shared_keys(self, files: GetNodesResponse, shared_keys_map: dict[str, SharedKeys]) -> None:
         """
         Init shared key not associated with a user.
         Seems to happen when a folder is shared,
@@ -246,21 +233,20 @@ class MegaNzCoreClient:
         """
 
         shared_keys: SharedKeys = {}
-        for node in files["ok"]:
-            node_id: str = node["h"]
-            shared_keys[node_id] = decrypt_key(base64_to_a32(node["k"]), self._master_key)
+        for share_key in files["ok"]:
+            node_id, key = share_key["h"], share_key["k"]
+            shared_keys[node_id] = decrypt_key(base64_to_a32(key), self._master_key)
 
-        for node in files["s"]:
-            node_id = node["h"]
+        for share_key in files["s"]:
+            node_id, owner = share_key["h"], share_key["u"]
             if key := shared_keys.get(node_id):
-                owner = node["u"]
-                self._shared_keys.setdefault(owner, {})[node_id] = key
+                shared_keys_map.setdefault(owner, {})[node_id] = key
 
-    async def _get_files(self) -> NodesMap:
+    async def _get_files(self) -> dict[str, Node]:
         logger.info("Getting all files on the account...")
         return await self._get_nodes()
 
-    async def _get_nodes(self) -> NodesMap:
+    async def _get_nodes(self) -> dict[str, Node]:
         files: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
@@ -270,7 +256,7 @@ class MegaNzCoreClient:
         )
 
         if not self._shared_keys:
-            self._init_shared_keys(files)
+            self._init_shared_keys(files, self._shared_keys)
 
         return await self._process_nodes(files["f"])
 
@@ -279,7 +265,7 @@ class MegaNzCoreClient:
         nodes: Iterable[NodeSerialized],
         public_key: str | None = None,
         predicate: Callable[[Node], bool] | None = None,
-    ) -> dict[str, NodeSerialized]:
+    ) -> dict[str, Node]:
         """
         Processes multiple nodes at once, decrypting their metadata and attributes.
 
@@ -287,13 +273,14 @@ class MegaNzCoreClient:
 
         This method is NOT thread safe. It modifies the internal state of the shared keys.
         """
-        # User may already have access to this folder (the key is saved in their account)
+
         share_key = base64_to_a32(public_key) if public_key else None
         self._shared_keys.setdefault("EXP", {})
 
-        async def process_nodes() -> dict[str, NodeSerialized]:
-            results = {}
-            for index, node in enumerate(nodes):
+        results: dict[str, Node] = {}
+
+        async def process_nodes() -> dict[str, Node]:
+            for idx, node in enumerate(nodes):
                 node_id = node["h"]
                 if share_key:
                     self._shared_keys["EXP"][node_id] = share_key
@@ -302,7 +289,7 @@ class MegaNzCoreClient:
                 if predicate is None or not predicate(processed_node):
                     results[node_id] = processed_node
 
-                if index % 500 == 0:
+                if idx % 500 == 0:
                     await asyncio.sleep(0)
 
             return results

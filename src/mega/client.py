@@ -8,12 +8,12 @@ import os
 import random
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
-from mega.core import MegaNzCoreClient
+from mega.core import MegaCoreClient
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
     a32_to_base64,
@@ -50,7 +50,6 @@ if TYPE_CHECKING:
         FolderSerialized,
         GetNodesResponse,
         NodeSerialized,
-        NodesMap,
         TupleArray,
     )
 
@@ -80,7 +79,7 @@ class LoginResponse:
     master_key: str
 
 
-class Mega(MegaNzCoreClient):
+class Mega(MegaCoreClient):
     """Interface with all the public methods of the API"""
 
     async def find(self, path: Path | str, exclude_deleted: bool = False) -> NodeSerialized | FolderSerialized | None:
@@ -131,7 +130,7 @@ class Mega(MegaNzCoreClient):
         return file
 
     @requires_login
-    async def get_files(self) -> NodesMap:
+    async def get_files(self) -> dict[str, Node]:
         return await self._get_files()
 
     async def get_link(self, file: Node) -> str:
@@ -353,8 +352,8 @@ class Mega(MegaNzCoreClient):
             is_public=True,
         )
 
-    async def get_nodes_public_folder(self, url: str) -> dict[str, NodeSerialized | FolderSerialized]:
-        folder_id, b64_share_key = self._parse_folder_url(url)
+    async def get_nodes_public_folder(self, url: str) -> dict[str, Node]:
+        public_handle, public_key = self._parse_folder_url(url)
 
         folder: GetNodesResponse = await self._api.request(
             {
@@ -363,27 +362,28 @@ class Mega(MegaNzCoreClient):
                 "ca": 1,
                 "r": 1,
             },
-            {"n": folder_id},
+            {"n": public_handle},
         )
 
-        return await self._process_nodes(folder["f"], b64_share_key)
+        return await self._process_nodes(folder["f"], public_key)
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)
         nodes = await self.get_nodes_public_folder(url)
         download_tasks = []
         root_id = next(iter(nodes))
-        fs = await self._build_file_system(nodes, [root_id])  # type: ignore
-        for path, node in fs.items():
-            if node["t"] != NodeType.FILE:
-                continue
+        fs = await self.build_file_system(nodes, [root_id])
 
-            async def download_file(file: NodeSerialized, file_path: Path) -> None:
+        sem = asyncio.BoundedSemaphore(10)
+
+        async def download_file(file: Node, file_path: Path) -> tuple[Path, bool]:
+            download_path = Path(dest_path or ".") / file_path
+            try:
                 file_data = await self._api.request(
                     {
                         "a": "g",
                         "g": 1,
-                        "n": file["h"],
+                        "n": file.id,
                     },
                     {"n": folder_id},
                 )
@@ -391,26 +391,35 @@ class Mega(MegaNzCoreClient):
                 file_url = file_data["g"]
                 file_size = file_data["s"]
 
-                if dest_path:
-                    download_path = Path(dest_path) / file_path
-                else:
-                    download_path = file_path
-
+                assert file._crypto
                 await self._really_download_file(
                     file_url,
                     download_path,
                     file_size,
-                    file["iv"],
-                    file["meta_mac"],
-                    file["k_decrypted"],
+                    file._crypto.iv,
+                    file._crypto.meta_mac,
+                    file._crypto.key,
                 )
+                return download_path, True
+            except Exception:
+                logger.exception(f"Unable to download {file}")
+                return download_path, False
 
-            file = node
-            download_tasks.append(download_file(file, Path(path)))
+            finally:
+                sem.release()
 
-        with self._new_progress():
-            results = await asyncio.gather(*download_tasks)
-        return results
+        results = []
+        async with asyncio.TaskGroup() as tg:
+            self.show_progress = False
+            for path, node in fs.items():
+                if node.type != NodeType.FILE:
+                    continue
+
+                file = node
+                await sem.acquire()
+                results.append(tg.create_task(download_file(file, Path(path))))
+
+        return await asyncio.gather(*download_tasks)
 
     async def _download_file(
         self,
@@ -419,7 +428,7 @@ class Mega(MegaNzCoreClient):
         dest_path: Path | str | None = None,
         dest_filename: str | None = None,
         is_public: bool = False,
-        file: NodeSerialized | None = None,
+        file: Node | None = None,
     ) -> Path:
         if file is None:
             assert file_key
@@ -436,7 +445,7 @@ class Mega(MegaNzCoreClient):
                 },
             )
 
-            k: AnyArray = (
+            key: AnyArray = (
                 _file_key[0] ^ _file_key[4],
                 _file_key[1] ^ _file_key[5],
                 _file_key[2] ^ _file_key[6],
@@ -445,7 +454,7 @@ class Mega(MegaNzCoreClient):
             iv: AnyArray = (*_file_key[4:6], 0, 0)
             meta_mac: TupleArray = _file_key[6:8]
         else:
-            file_handle = file["h"]
+            file_handle = file.id
             file_data = await self._api.request(
                 {
                     "a": "g",
@@ -453,9 +462,10 @@ class Mega(MegaNzCoreClient):
                     "p" if is_public else "n": file_handle,
                 }
             )
-            k = file["k_decrypted"]
-            iv = file["iv"]
-            meta_mac = file["meta_mac"]
+            assert file._crypto
+            key = file._crypto.key
+            iv = file._crypto.iv
+            meta_mac = file._crypto.meta_mac
 
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
@@ -466,24 +476,24 @@ class Mega(MegaNzCoreClient):
         file_url = file_data["g"]
         file_size = file_data["s"]
         attribs_bytes = base64_url_decode(file_data["at"])
-        attribs = decrypt_attr(attribs_bytes, k)
+        attribs = decrypt_attr(attribs_bytes, key)
         attribs = cast("Attributes", attribs)
 
         file_name = dest_filename or attribs["n"]
         output_path = Path(dest_path or Path()) / file_name
 
         with self._new_progress():
-            return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, k)
+            return await self._really_download_file(file_url, output_path, file_size, iv, meta_mac, key)
 
     async def upload(
-        self, filename: str, dest_node: FolderSerialized | None = None, dest_filename: str | None = None
+        self, file_path: str, dest_node: FolderSerialized | None = None, dest_filename: str | None = None
     ) -> GetNodesResponse:
         # determine storage node
         dest_node_id = dest_node["h"] if dest_node else self.root_id
         # request upload url, call 'u' method
-        with open(filename, "rb") as input_file:
-            file_size = os.path.getsize(filename)
-            ul_url: str = (
+        with open(file_path, "rb") as input_file:
+            file_size = os.path.getsize(file_path)
+            upload_url: str = (
                 await self._api.request(
                     {
                         "a": "u",
@@ -530,12 +540,12 @@ class Mega(MegaNzCoreClient):
 
                     # encrypt file and upload
                     chunk = aes.encrypt(chunk)
-                    output_file = await self._api.__session.post(ul_url + "/" + str(chunk_start), data=chunk)
+                    output_file = await self._api.__session.post(upload_url + "/" + str(chunk_start), data=chunk)
                     completion_file_handle = await output_file.text()
                     logger.info("%s of %s uploaded", upload_progress, file_size)
             else:
                 # empty file
-                output_file = await self._api.__session.post(ul_url + "/0", data="")
+                output_file = await self._api.__session.post(upload_url + "/0", data="")
                 completion_file_handle = await output_file.text()
 
             logger.info("Chunks uploaded")
@@ -546,7 +556,7 @@ class Mega(MegaNzCoreClient):
             # determine meta mac
             meta_mac = (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3])
 
-            dest_filename = dest_filename or os.path.basename(filename)
+            dest_filename = dest_filename or os.path.basename(file_path)
             attribs = {"n": dest_filename}
 
             encrypt_attribs = base64_url_encode(encrypt_attr(attribs, ul_key[:4]))
@@ -588,7 +598,14 @@ class Mega(MegaNzCoreClient):
             {
                 "a": "p",
                 "t": parent_node_id,
-                "n": [{"h": "xxxxxxxx", "t": 1, "a": encrypt_attribs, "k": encrypted_key}],
+                "n": [
+                    {
+                        "h": "xxxxxxxx",
+                        "t": 1,
+                        "a": encrypt_attribs,
+                        "k": encrypted_key,
+                    }
+                ],
                 "i": self._api._client_id,
             }
         )
@@ -624,7 +641,7 @@ class Mega(MegaNzCoreClient):
             }
         )
 
-    async def move(self, file_id: str, target: NodeType | int) -> AnyDict:
+    async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
         target = NodeType(target)
 
         return await self._api.request(
