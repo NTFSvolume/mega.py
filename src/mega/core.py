@@ -14,7 +14,7 @@ from Crypto.Cipher import AES
 from Crypto.Util import Counter
 from rich.progress import BarColumn, DownloadColumn, Progress, SpinnerColumn, TimeRemainingColumn, TransferSpeedColumn
 
-from mega.api import MegaApi
+from mega.api import MegaAPI
 from mega.auth import MegaAuth
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
@@ -127,7 +127,7 @@ class MegaKeysVault:
 
 class MegaCore:
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self._api = MegaApi(session)
+        self._api = MegaAPI(session)
         self._primary_url = "https://mega.nz"
         self._system_nodes: SystemNodes | None = None
         self._auth = MegaAuth(self._api)
@@ -320,7 +320,7 @@ class MegaCore:
             task_id = progress_bar.add_task(output_path.name, total=file_size)
             chunk_decryptor = MegaDecryptor(iv, key, meta_mac)
 
-            async with self._api._get_session().get(direct_file_url) as response:
+            async with self._api.download(direct_file_url) as response:
                 for _, chunk_size in get_chunks(file_size):
                     raw_chunk = await response.content.readexactly(chunk_size)
                     chunk = chunk_decryptor.decrypt(raw_chunk)

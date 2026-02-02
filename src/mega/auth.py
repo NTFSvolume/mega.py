@@ -23,7 +23,7 @@ from mega.crypto import (
 )
 
 if TYPE_CHECKING:
-    from mega.api import MegaApi
+    from mega.api import MegaAPI
     from mega.data_structures import TupleArray
 
 
@@ -39,7 +39,7 @@ class AuthInfo:
 
 
 class MegaAuth:
-    def __init__(self, api: MegaApi) -> None:
+    def __init__(self, api: MegaAPI) -> None:
         self._api = api
 
     async def login_anonymous(self) -> tuple[TupleArray, str]:
