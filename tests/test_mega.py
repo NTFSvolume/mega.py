@@ -11,7 +11,7 @@ import aiohttp
 import pytest
 
 from mega.client import Mega
-from mega.data_structures import NodeType, StorageUsage
+from mega.data_structures import NodeType, StorageQuota
 from mega.errors import RequestError
 
 if TYPE_CHECKING:
@@ -77,23 +77,23 @@ async def test_get_user(mega: Mega) -> None:
 
 
 async def test_get_quota(mega: Mega) -> None:
-    resp = await mega.get_quota()
+    resp = await mega.get_transfer_quota()
     assert isinstance(resp, int)
 
 
 async def test_get_storage_space(mega: Mega) -> None:
     resp = await mega.get_storage_space()
-    assert isinstance(resp, StorageUsage)
+    assert isinstance(resp, StorageQuota)
 
 
 async def test_get_files(mega: Mega) -> None:
-    files = await mega.get_files()
+    files = await mega.get_nodes()
     assert isinstance(files, dict)
 
 
 @pytest.mark.xfail(reason="Public links won't work with temp account")
 async def test_get_link(mega: Mega, uploaded_file: NodeSerialized) -> None:
-    link = await mega.get_link(uploaded_file)
+    link = await mega.get_public_link(uploaded_file)
     assert isinstance(link, str)
 
 

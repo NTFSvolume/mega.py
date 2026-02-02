@@ -13,7 +13,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, Literal, NamedTuple, Self, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, NamedTuple, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from typing import NotRequired
@@ -92,14 +92,14 @@ class GetNodeResponse(TypedDict):
     g: NotRequired[str]  # direct download URL
 
 
-@dataclasses.dataclass(slots=True, order=True)
+@dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
 class File:
     name: str
     size: int
     url: str | None
 
 
-@dataclasses.dataclass(slots=True, order=True)
+@dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
 class Node:
     id: str
     parent_id: str
@@ -108,14 +108,14 @@ class Node:
     attributes: Attributes
     creation_date: int
     keys: dict[str, str]
-    share_id: str | None
+    share_owner: str | None
     share_key: str | None
 
     _a: str
     _crypto: Crypto | None = None
 
 
-@dataclasses.dataclass(slots=True, order=True, frozen=True)
+@dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
 class Attributes:
     name: str
     label: str = ""
@@ -131,7 +131,7 @@ class Attributes:
         )
 
 
-@dataclasses.dataclass(slots=True, order=True, frozen=True)
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class Crypto:
     key: tuple[int, int, int, int, int, int, int, int]
     iv: tuple[int, int, int, int]
@@ -144,9 +144,59 @@ class Crypto:
 SharedKeys = dict[str, TupleArray]  # Mapping: (recipient) User Id ('u') -> decrypted value of shared key ('sk')
 
 
-class StorageUsage(NamedTuple):
+class Parser:
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
+
+    @classmethod
+    def filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
+        fields = [f.name for f in dataclasses.fields(cls)]
+        return {k: v for k, v in data.items() if k in fields}
+
+    @classmethod
+    def parse(cls, data: dict[str, Any]) -> Self:
+        return cls(**cls.filter_dict(data))
+
+
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+class AccountData(Parser):
+    balance: tuple[float, str]
+    subs: list[str]
+    plans: list[str]
+    storage: StorageQuota
+
+    @classmethod
+    def parse(cls, data: dict[str, Any]) -> Self:
+        balance = (data.get("balance") or [[0.0, "EUR"]])[0]
+        clean_data = cls.filter_dict(data)
+        clean_data.update(
+            {
+                "storage": StorageQuota.parse(data),
+                "balance": (float(balance[0]), str(balance[1])),
+            }
+        )
+        return cls(**clean_data)
+
+
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+class StorageQuota:
     used: int
     total: int
+
+    percent: int
+    is_full: bool
+    is_almost_full: bool
+
+    @classmethod
+    def parse(cls, data: dict[str, Any]) -> Self:
+        total, used, threshold = map(int, (data["mstrg"], data["cstrg"], data["uslw"]))
+        ratio = used / total
+        return cls(
+            used=used,
+            total=total,
+            is_full=ratio >= 1,
+            percent=int(ratio * 100),
+            is_almost_full=ratio >= (threshold / 10000),
+        )
 
 
 class User(TypedDict):
@@ -159,6 +209,15 @@ class User(TypedDict):
     tsid: str  # Temp session Id
     u: str  # User Id
     ach: int  # <UNKNOWN>
+
+
+class UserResponse(TypedDict, total=False):
+    u: str  # user id
+    since: int  # timestamp of account creation
+    email: str
+    emails: list[str]
+    pemails: list[str]
+    name: str
 
 
 class Upload(TypedDict):

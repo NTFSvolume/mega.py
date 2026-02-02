@@ -56,10 +56,10 @@ class MegaKeysVault:
             full_key = decrypt_key(b64_to_a32(node.keys[node.owner]), self.master_key)
 
         # folders shared with me
-        elif node.share_id and node.share_key and node.id in node.keys:
+        elif node.share_owner and node.share_key and node.id in node.keys:
             share_key = decrypt_key(b64_to_a32(node.share_key), self.master_key)
             full_key = decrypt_key(b64_to_a32(node.keys[node.id]), share_key)
-            self.shared_keys.setdefault(node.share_id, {})[node.id] = share_key
+            self.shared_keys.setdefault(node.share_owner, {})[node.id] = share_key
 
         # files shared with me
         elif node.owner in self.shared_keys:
@@ -96,11 +96,11 @@ class MegaKeysVault:
         return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
 
     def decrypt(self, node: Node) -> Node:
+        crypto = attributes = None
         if node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self.get_keys(node)
-            node._crypto = self.compose_crypto(node.type, full_key, share_key)
-            attributes = decrypt_attr(b64_url_decode(node._a), node._crypto.key)
-            node.attributes = Attributes.parse(attributes)
+            crypto = self.compose_crypto(node.type, full_key, share_key)
+            attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
 
         else:
             name = {
@@ -108,6 +108,6 @@ class MegaKeysVault:
                 NodeType.INBOX: "Inbox",
                 NodeType.TRASH: "Trash Bin",
             }[node.type]
-            node.attributes = Attributes(name)
+            attributes = Attributes(name)
 
-        return node
+        return dataclasses.replace(node, _crypto=crypto, attributes=attributes)

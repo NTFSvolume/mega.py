@@ -33,6 +33,7 @@ async def run() -> None:
 
     async with Mega() as mega:
         await mega.login(email, password)
+        await mega.get_account_data()
         await mega.download_url(url=args.url, dest_path=args.output_dir)
 
 

@@ -89,7 +89,7 @@ class MegaCore:
             creation_date=node["ts"],
             type=NodeType(node["t"]),
             keys=keys,
-            share_id=node.get("su"),
+            share_owner=node.get("su"),
             share_key=node.get("sk"),
             attributes=Attributes(""),
             _a=node["a"],
@@ -204,37 +204,34 @@ class MegaCore:
         return output_path
 
     async def build_file_system(self, nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
-        return await asyncio.to_thread(self._build_file_system, nodes_map, root_ids)
+        return await asyncio.to_thread(_build_file_system, nodes_map, root_ids)
 
-    def _build_file_system(self, nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
-        """Builds a flattened dictionary representing a file system from a list of items.
 
-        Returns:
-            A 1-level dictionary where the each keys is the full path to a file/folder, and each value is the actual file/folder
-        """
+def _build_file_system(nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
+    """Builds a flattened dictionary representing the users' file system"""
 
-        filesystem: dict[PurePosixPath, Node] = {}
-        parents_map: dict[str, list[Node]] = {}
+    filesystem: dict[PurePosixPath, Node] = {}
+    parents_map: dict[str, list[Node]] = {}
 
-        for node in nodes_map.values():
-            parents_map.setdefault(node.parent_id, []).append(node)
+    for node in nodes_map.values():
+        parents_map.setdefault(node.parent_id, []).append(node)
 
-        def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
-            for node in parents_map.get(parent_id, []):
-                node_path = current_path / node.attributes.name
-                filesystem[node_path] = node
+    def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
+        for node in parents_map.get(parent_id, []):
+            node_path = current_path / node.attributes.name
+            filesystem[node_path] = node
 
-                if node.type is NodeType.FOLDER:
-                    build_tree(node.id, node_path)
+            if node.type is NodeType.FOLDER:
+                build_tree(node.id, node_path)
 
-        for root_id in root_ids:
-            root_node = nodes_map[root_id]
-            name = root_node.attributes.name
-            path = PurePosixPath("." if root_node.type is NodeType.ROOT_FOLDER else name)
-            filesystem[path] = root_node
-            build_tree(root_id, path)
+    for root_id in root_ids:
+        root_node = nodes_map[root_id]
+        name = root_node.attributes.name
+        path = PurePosixPath("." if root_node.type is NodeType.ROOT_FOLDER else name)
+        filesystem[path] = root_node
+        build_tree(root_id, path)
 
-        return dict(sorted(filesystem.items()))
+    return dict(sorted(filesystem.items()))
 
 
 @dataclasses.dataclass(slots=True, weakref_slot=True)

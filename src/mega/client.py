@@ -7,7 +7,7 @@ import logging
 import os
 import random
 import re
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
 
 from Crypto.Cipher import AES
@@ -31,13 +31,14 @@ from mega.crypto import (
     str_to_a32,
 )
 from mega.data_structures import (
+    AccountData,
     Attributes,
     File,
     FolderSerialized,
     GetNodeResponse,
     Node,
     NodeType,
-    StorageUsage,
+    UserResponse,
 )
 
 from .errors import MegaNzError, RequestError, ValidationError
@@ -86,6 +87,7 @@ class Mega(MegaCore):
 
     def __init__(self) -> None:
         super().__init__(api=MegaAPI())
+        self._cache: dict[str, dict[Any, Any]] = {}
 
     async def __aenter__(self) -> Self:
         return self
@@ -96,73 +98,66 @@ class Mega(MegaCore):
     async def close(self) -> None:
         await self._api.close()
 
-    async def find(self, path: Path | str, exclude_deleted: bool = False) -> NodeSerialized | FolderSerialized | None:
-        """
-        Returns file or folder from given path( if exists)
-        """
-        results = await self._search(path, exclude_deleted, strict=True)
-        return results[0] if results else None
+    async def get_filesystem(self) -> dict[PurePosixPath, Node]:
+        """Builds a flattened dictionary representing the users' file system"""
+        if fs := self._cache.get("fs"):
+            return fs.copy()
 
-    async def search(
-        self, filename_or_path: Path | str, exclude_deleted: bool = False
-    ) -> list[NodeSerialized | FolderSerialized]:
-        """
-        Return file object(s) from given filename or path
-        """
-        return await self._search(filename_or_path, exclude_deleted)
+        nodes = await self.get_nodes()
+        fs = self._cache["fs"] = await self.build_file_system(nodes, [self.system_nodes.root.id])
+        return fs
+
+    def _is_on_trash_bin(self, node: Node) -> bool:
+        return node.parent_id == self.system_nodes.trash_bin.id
 
     @requires_login
-    async def _search(
-        self, filename_or_path: Path | str, exclude_deleted: bool = False, strict=False
-    ) -> list[NodeSerialized | FolderSerialized]:
+    async def _search(self, query: Path | str, *, exclude_deleted: bool = True) -> list[Node]:
         """
-        Return file object(s) from given filename or path
+        Return nodes that have "query" as a substring on their path
         """
 
-        filename_or_path = Path(filename_or_path).as_posix()
+        query = PurePosixPath(query).as_posix()
 
-        fs = await self.build_file_system()
+        fs = await self.get_filesystem()
 
-        found = []
-        for path, item in fs.items():
-            if filename_or_path in (path_str := path.as_posix()):
-                if strict and not path_str.startswith(filename_or_path):
+        def walk():
+            for path, node in fs.items():
+                if exclude_deleted and self._is_on_trash_bin(node):
                     continue
-                if exclude_deleted and item["p"] == self.system_nodes.trash_bin.id:
-                    continue
-                found.append(item)
-        return found
+                if query in path.as_posix():
+                    yield node
 
-    async def find_by_handle(
-        self, handle: str, exclude_deleted: bool = False
-    ) -> NodeSerialized | FolderSerialized | None:
-        """Return file object(s) from given filename or path"""
-        files = await self.get_files()
-        file = found if (found := files.get(handle)) else None
-        if not file or (file["p"] == self.system_nodes.trash_bin.id and exclude_deleted):
-            return None
+        return list(walk())
+
+    async def find_by_handle(self, handle: str, exclude_deleted: bool = True) -> Node | None:
+        files = await self.get_nodes()
+        file = files.get(handle)
+        if not file:
+            return
+        if exclude_deleted and self._is_on_trash_bin(file):
+            return
         return file
 
-    @requires_login
-    async def get_files(self) -> dict[str, Node]:
-        return await self._get_nodes()
+    async def get_nodes(self) -> dict[str, Node]:
+        if nodes := self._cache.get("nodes"):
+            return nodes.copy()
 
-    async def get_link(self, file: Node) -> str:
-        """
-        Get a files public link inc
-        """
-        assert file.type in (NodeType.FILE, NodeType.FOLDER)
+        nodes = self._cache["nodes"] = await self._get_nodes()
+        return nodes
+
+    async def get_public_link(self, file: Node) -> str:
+        if file.type not in (NodeType.FILE, NodeType.FOLDER):
+            raise ValueError
         assert file._crypto
         public_handle: str = await self._get_public_handle(file.id)
-        # file_key = next(iter(file.keys.values()))
-        # decrypted_key = a32_to_base64(decrypt_key(base64_to_a32(file_key), self._master_key))
         public_key = a32_to_base64(file._crypto.full_key)
         return f"{self._primary_url}/#!{public_handle}!{public_key}"
 
     async def get_folder_link(self, folder: Node) -> str:
-        assert folder.type in (NodeType.FILE, NodeType.FOLDER)
+        if folder.type not in (NodeType.FILE, NodeType.FOLDER):
+            raise ValueError
         assert folder._crypto and folder._crypto.share_key
-        public_handle: str = await self._get_public_handle(folder.id)
+        public_handle = await self._get_public_handle(folder.id)
         public_key = a32_to_base64(folder._crypto.share_key)
         return f"{self._primary_url}/#F!{public_handle}!{public_key}"
 
@@ -176,17 +171,12 @@ class Mega(MegaCore):
             )
         except RequestError as e:
             if e.code == -11:
-                raise MegaNzError("Can't get a public link from that file (is this a shared file?)") from e
+                msg = "Can't get a public link from that file (is this a shared file?) You may need to export it first"
+                raise MegaNzError(msg) from e
             raise
 
-    @requires_login
-    async def get_user(self) -> AnyDict:
-        user_data: AnyDict = await self._api.request(
-            {
-                "a": "ug",
-            }
-        )
-        return user_data
+    async def get_user(self) -> UserResponse:
+        return await self._api.request({"a": "ug"})
 
     async def get_id_from_public_handle(self, public_handle: str) -> str:
         node_data: GetNodesResponse = await self._api.request(
@@ -199,37 +189,18 @@ class Mega(MegaCore):
 
         return node_data["f"][0]["h"]
 
-    async def get_quota(self) -> int:
-        """Get current remaining disk quota."""
-        json_resp: AnyDict = await self._api.request(
+    async def get_account_data(self) -> AccountData:
+        json_resp: dict[str, Any] = await self._api.request(
             {
                 "a": "uq",
-                "xfer": 1,
-                "strg": 1,
-                "v": 1,
-            }
-        )
-        return json_resp["mstrg"]
-
-    async def get_storage_space(self) -> StorageUsage:
-        json_resp: AnyDict = await self._api.request(
-            {
-                "a": "uq",
-                "xfer": 1,
-                "strg": 1,
-            }
-        )
-        return StorageUsage(json_resp["cstrg"], json_resp["mstrg"])
-
-    async def get_balance(self) -> int | None:
-        """Get account monetary balance, Pro accounts only."""
-        user_data: AnyDict = await self._api.request(
-            {
-                "a": "uq",
+                "xfer": 1,  # transfer quota
+                "strg": 1,  # storage
+                "mstrg": 1,  # max storage
                 "pro": 1,
+                "v": 2,
             }
         )
-        return user_data.get("balance")
+        return AccountData.parse(json_resp)
 
     async def delete(self, public_handle: str) -> AnyDict:
         """Delete a file by its public handle."""
@@ -296,10 +267,10 @@ class Mega(MegaCore):
                 "i": self._api._client_id,  # Request #Id
             }
         )
-        return await self.get_link(node)
+        return await self.get_public_link(node)
 
     async def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
-        files = await self.get_files()
+        files = await self.get_nodes()
         if node_id:
             _node_id = node_id
             node: NodeSerialized = files[_node_id]
@@ -349,7 +320,7 @@ class Mega(MegaCore):
                 "cr": [[_node_id], [_node_id], [0, 0, encrypted_node_key]],
             }
         )
-        files = await self.get_files()
+        files = await self.get_nodes()
         folder = cast("FolderSerialized", files[_node_id])
         return await self.get_folder_link(folder)
 
