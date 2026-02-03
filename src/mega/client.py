@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import functools
 import logging
 import os
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Self
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -32,7 +31,6 @@ from mega.data_structures import (
     AccountStats,
     Attributes,
     File,
-    FolderSerialized,
     GetNodeResponse,
     Node,
     NodeType,
@@ -42,27 +40,10 @@ from mega.data_structures import (
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Coroutine
-    from typing import ParamSpec
-
-    from mega.data_structures import FolderSerialized, GetNodesResponse, TupleArray
-
-    _R = TypeVar("_R")
-    _P = ParamSpec("_P")
+    from mega.data_structures import GetNodesResponse
 
 
 logger = logging.getLogger(__name__)
-
-
-def requires_login(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, Coroutine[None, None, _R]]:
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs) -> _R:
-        self: Mega = args[0]
-        if not self.logged_in:
-            raise RuntimeError("You need to log in to use this method")
-        return await func(*args, **kwargs)
-
-    return wrapper
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -101,7 +82,6 @@ class Mega(MegaCore):
     def _is_on_trash_bin(self, node: Node) -> bool:
         return node.parent_id == self.system_nodes.trash_bin.id
 
-    @requires_login
     async def _search(self, query: Path | str, *, exclude_deleted: bool = True) -> list[Node]:
         """
         Return nodes that have "query" as a substring on their path
@@ -377,12 +357,10 @@ class Mega(MegaCore):
             crypto.key,
         )
 
-    async def upload(
-        self, file_path: str, dest_node: FolderSerialized | None = None, dest_filename: str | None = None
-    ) -> GetNodesResponse:
-        # determine storage node
-        dest_node_id = dest_node["h"] if dest_node else self.system_nodes.root.id
-        # request upload url, call 'u' method
+    async def upload(self, file_path: Path | str, dest_node: Node | None = None) -> GetNodesResponse:
+        dest_node_id = (dest_node or self.system_nodes.root).id
+
+        file_path = Path(file_path)
         with open(file_path, "rb") as input_file:
             file_size = os.path.getsize(file_path)
             upload_url: str = (
@@ -395,19 +373,19 @@ class Mega(MegaCore):
             )["p"]
 
             # generate random aes key (128) for file, 192 bits of random data
-            ul_key = [random_u32int() for _ in range(6)]
-            k_bytes = a32_to_bytes(ul_key[:4])
+            new_key = [random_u32int() for _ in range(6)]
+            k_bytes = a32_to_bytes(new_key[:4])
 
             # and 64 bits for the IV (which has size 128 bits anyway)
-            count = Counter.new(128, initial_value=((ul_key[4] << 32) + ul_key[5]) << 64)
+            count = Counter.new(128, initial_value=((new_key[4] << 32) + new_key[5]) << 64)
             aes = AES.new(k_bytes, AES.MODE_CTR, counter=count)
 
             upload_progress = 0
             completion_file_handle = None
 
-            mac_bytes = b"\0" * 16
+            mac_bytes = b"\0" * CHUNK_BLOCK_LEN
             mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
-            iv_bytes = a32_to_bytes([ul_key[4], ul_key[5], ul_key[4], ul_key[5]])
+            iv_bytes = a32_to_bytes([new_key[4], new_key[5], new_key[4], new_key[5]])
             if file_size > 0:
                 for chunk_start, chunk_size in get_chunks(file_size):
                     chunk = input_file.read(chunk_size)
@@ -420,45 +398,38 @@ class Mega(MegaCore):
                         block = mem_view[index : index + CHUNK_BLOCK_LEN]
                         encryptor.encrypt(block)
 
-                    modchunk = actual_size % CHUNK_BLOCK_LEN
-                    if modchunk == 0:
-                        # ensure we reserve the last 16 bytes anyway, we have to feed them into mac_encryptor
-                        modchunk = CHUNK_BLOCK_LEN
-
+                    modchunk = (actual_size % CHUNK_BLOCK_LEN) or CHUNK_BLOCK_LEN
                     # pad last block to 16 bytes
                     last_block = pad_bytes(mem_view[-modchunk:])
-
                     mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_block))
 
                     # encrypt file and upload
                     chunk = aes.encrypt(chunk)
-                    output_file = await self._api.__session.post(upload_url + "/" + str(chunk_start), data=chunk)
+                    output_file = await self._api._lazy_session().post(upload_url + "/" + str(chunk_start), data=chunk)
                     completion_file_handle = await output_file.text()
                     logger.info("%s of %s uploaded", upload_progress, file_size)
             else:
                 # empty file
-                output_file = await self._api.__session.post(upload_url + "/0", data="")
+                output_file = await self._api._lazy_session().post(upload_url + "/0", data="")
                 completion_file_handle = await output_file.text()
 
             logger.info("Chunks uploaded")
             logger.info("Setting attributes to complete upload")
             logger.info("Computing attributes")
-            file_mac: TupleArray = str_to_a32(mac_bytes)
+            file_mac: tuple[int, ...] = str_to_a32(mac_bytes)
 
             # determine meta mac
             meta_mac = (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3])
+            attribs = {"n": file_path.name}
 
-            dest_filename = dest_filename or os.path.basename(file_path)
-            attribs = {"n": dest_filename}
-
-            encrypt_attribs = b64_url_encode(encrypt_attr(attribs, ul_key[:4]))
+            encrypt_attribs = b64_url_encode(encrypt_attr(attribs, new_key[:4]))
             key: tuple[int, ...] = (
-                ul_key[0] ^ ul_key[4],
-                ul_key[1] ^ ul_key[5],
-                ul_key[2] ^ meta_mac[0],
-                ul_key[3] ^ meta_mac[1],
-                ul_key[4],
-                ul_key[5],
+                new_key[0] ^ new_key[4],
+                new_key[1] ^ new_key[5],
+                new_key[2] ^ meta_mac[0],
+                new_key[3] ^ meta_mac[1],
+                new_key[4],
+                new_key[5],
                 meta_mac[0],
                 meta_mac[1],
             )
