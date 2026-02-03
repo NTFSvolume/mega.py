@@ -4,19 +4,33 @@ import asyncio
 import dataclasses
 import errno
 import logging
+import random
 import re
 import shutil
 import tempfile
 from collections.abc import Generator
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
 from mega.auth import MegaAuth
-from mega.crypto import CHUNK_BLOCK_LEN, EMPTY_IV, a32_to_bytes, b64_to_a32, get_chunks, pad_bytes, str_to_a32
-from mega.data_structures import Attributes, Node, NodeType
+from mega.crypto import (
+    CHUNK_BLOCK_LEN,
+    EMPTY_IV,
+    a32_to_base64,
+    a32_to_bytes,
+    b64_to_a32,
+    b64_url_encode,
+    encrypt_attr,
+    encrypt_key,
+    get_chunks,
+    pad_bytes,
+    random_u32int,
+    str_to_a32,
+)
+from mega.data_structures import Node, NodeType
 from mega.progress import ProgressManager
 from mega.vault import MegaKeysVault
 
@@ -73,27 +87,7 @@ class MegaCore:
         logger.info("Login complete")
 
     def _deserialize_node(self, node: NodeSerialized) -> Node:
-        return self._vault.decrypt(self._transform_node(node))
-
-    @staticmethod
-    def _transform_node(node: NodeSerialized) -> Node:
-        if k := node.get("k"):
-            keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
-        else:
-            keys = {}
-
-        return Node(
-            id=node["h"],
-            parent_id=node["p"],
-            owner=node["u"],
-            creation_date=node["ts"],
-            type=NodeType(node["t"]),
-            keys=keys,
-            share_owner=node.get("su"),
-            share_key=node.get("sk"),
-            attributes=Attributes(""),
-            _a=node["a"],
-        )
+        return self._vault.decrypt(Node.parse(node))
 
     @staticmethod
     def _parse_url(url: str) -> str:
@@ -202,6 +196,81 @@ class MegaCore:
 
         await asyncio.to_thread(move)
         return output_path
+
+    async def _export_file(self, node: Node) -> dict[str, Any]:
+        return await self._api.request(
+            {
+                "a": "l",
+                "n": node.id,
+                "i": self._api._client_id,
+            }
+        )
+
+    async def _export_folder(self, node: Node) -> dict[str, Any]:
+        master_key_cipher = AES.new(a32_to_bytes(self._vault.master_key), AES.MODE_ECB)
+        ha = b64_url_encode(master_key_cipher.encrypt(node.id.encode("utf8") * 2))
+        share_key = random.randbytes(16)
+        ok = b64_url_encode(master_key_cipher.encrypt(share_key))
+        share_key_cipher = AES.new(share_key, AES.MODE_ECB)
+        encrypted_node_key = b64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node._crypto.key)))
+        return await self._api.request(
+            {
+                "a": "s2",
+                "n": node.id,
+                "s": [
+                    {
+                        "u": "EXP",  # User: export (AKA public)
+                        "r": 0,
+                    }
+                ],
+                "i": self._api._client_id,
+                "ok": ok,
+                "ha": ha,
+                "cr": [[node.id], [node.id], [0, 0, encrypted_node_key]],
+            }
+        )
+
+    async def _mkdir(self, name: str, parent_node_id: str) -> Node:
+        # generate random aes key (128) for folder
+        new_key = [random_u32int() for _ in range(4)]
+        encrypt_attribs = b64_url_encode(encrypt_attr({"n": name}, new_key))
+        encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
+
+        # This can return multiple folders if subfolders needed to be created
+        folders: GetNodesResponse = await self._api.request(
+            {
+                "a": "p",
+                "t": parent_node_id,
+                "n": [
+                    {
+                        "h": "xxxxxxxx",
+                        "t": 1,
+                        "a": encrypt_attribs,
+                        "k": encrypted_key,
+                    }
+                ],
+                "i": self._api._client_id,
+            }
+        )
+
+        return self._deserialize_node(folders["f"][0])
+
+    async def _edit_contact(self, email: str, *, add: bool) -> dict[str, Any]:
+        """
+        Editing contacts
+        """
+
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            raise ValidationError("add_contact requires a valid email address")
+
+        return await self._api.request(
+            {
+                "a": "ur",
+                "u": email,
+                "l": "1" if add else "0",
+                "i": self._api._client_id,
+            }
+        )
 
     async def build_file_system(self, nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
         return await asyncio.to_thread(_build_file_system, nodes_map, root_ids)

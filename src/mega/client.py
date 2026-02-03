@@ -5,10 +5,8 @@ import dataclasses
 import functools
 import logging
 import os
-import random
-import re
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Self, TypeVar
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -47,7 +45,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine
     from typing import ParamSpec
 
-    from mega.data_structures import FolderSerialized, GetNodesResponse, NodeSerialized, TupleArray
+    from mega.data_structures import FolderSerialized, GetNodesResponse, TupleArray
 
     _R = TypeVar("_R")
     _P = ParamSpec("_P")
@@ -141,7 +139,7 @@ class Mega(MegaCore):
     async def get_public_link(self, file: Node) -> str:
         if file.type not in (NodeType.FILE, NodeType.FOLDER):
             raise ValueError
-        assert file._crypto
+
         public_handle: str = await self._get_public_handle(file.id)
         public_key = a32_to_base64(file._crypto.full_key)
         return f"{self._primary_url}/#!{public_handle}!{public_key}"
@@ -224,98 +222,49 @@ class Mega(MegaCore):
     async def empty_trash(self) -> dict[str, Any] | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
         # get list of files in rubbish out
-        files = await self.get_files_in_node(NodeType.TRASH)
 
-        # make a list of json
-        if files != {}:
-            post_list = []
-            for file in files:
-                post_list.append(
-                    {
-                        "a": "d",  # Action: delete
-                        "n": file,  # Node: file #Id
-                        "i": self._api._client_id,  # Request Id
-                    }
-                )
-            return await self._api.request(post_list)
+        nodes = await self.get_nodes()
+        trashed_files = [node for node in nodes.values() if node.parent_id == self.system_nodes.trash_bin.id]
+        if not trashed_files:
+            return
 
-    async def download(
-        self, file: NodeSerialized | None, dest_path: Path | str | None = None, dest_filename: str | None = None
-    ) -> Path:
+        return await self._api.request(
+            [
+                {
+                    "a": "d",  # Action: delete
+                    "n": file.id,  # Node: file #Id
+                    "i": self._api._client_id,  # Request Id
+                }
+                for file in trashed_files
+            ]
+        )
+
+    async def download(self, file: Node, dest_path: Path | str | None = None) -> Path:
         """Download a file by it's file object."""
         return await self._download_file(
-            file_handle=None,
-            file_key=None,
-            file=file,
+            file_handle=file.id,
+            file_key=file._crypto.key,
             dest_path=dest_path,
-            dest_filename=dest_filename,
             is_public=False,
         )
 
-    async def _export_file(self, node: NodeSerialized) -> str:
-        _ = await self._api.request(
-            {
-                "a": "l",  # Action: Export file
-                "n": node["h"],  # Node: file Id
-                "i": self._api._client_id,  # Request #Id
-            }
-        )
-        return await self.get_public_link(node)
+    async def export(self, node: Node) -> str:
+        if node.type is NodeType.FILE:
+            await self._export_file(node)
+            return await self.get_public_link(node)
 
-    async def export(self, path: Path | str | None = None, node_id: str | None = None) -> str:
-        files = await self.get_nodes()
-        if node_id:
-            _node_id = node_id
-            node: NodeSerialized = files[_node_id]
-        elif path:
-            found = await self.find(path)
-            if not found:
-                raise ValueError
-            node = found
-        else:
-            raise ValueError
+        elif node.type is not NodeType.FOLDER:
+            msg = "Can only export files or folders, not {node.type}"
+            raise ValidationError(msg)
 
-        if node["t"] == NodeType.FILE:
-            folder = node
-            return await self._export_file(folder)
-
-        if node["t"] == NodeType.FOLDER:
-            try:
-                # If already exported
-                return await self.get_folder_link(node)
-            except (RequestError, KeyError):
-                pass
-
-        master_key_cipher = AES.new(a32_to_bytes(self._master_key), AES.MODE_ECB)
-        ha = b64_url_encode(master_key_cipher.encrypt(node["h"].encode("utf8") + node["h"].encode("utf8")))
-
-        share_key = random.randbytes(16)
-        ok = b64_url_encode(master_key_cipher.encrypt(share_key))
-
-        share_key_cipher = AES.new(share_key, AES.MODE_ECB)
-        node_key = node["k_decrypted"]
-        encrypted_node_key = b64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node_key)))
-
-        _node_id: str = node["h"]
-        await self._api.request(
-            {
-                "a": "s2",
-                "n": _node_id,
-                "s": [
-                    {
-                        "u": "EXP",  # User: export (AKA public)
-                        "r": 0,
-                    }
-                ],
-                "i": self._api._client_id,
-                "ok": ok,
-                "ha": ha,
-                "cr": [[_node_id], [_node_id], [0, 0, encrypted_node_key]],
-            }
-        )
-        files = await self.get_nodes()
-        folder = cast("FolderSerialized", files[_node_id])
-        return await self.get_folder_link(folder)
+        try:
+            # If already exported
+            return await self.get_folder_link(node)
+        except (RequestError, KeyError):
+            await self._export_folder(node)
+            self._cache.clear()
+            nodes = await self.get_nodes()
+            return await self.get_folder_link(nodes[node.id])
 
     async def download_url(self, url: str, dest_path: str | None = None) -> Path:
         """
@@ -527,31 +476,6 @@ class Mega(MegaCore):
             logger.info("Upload complete")
             return data
 
-    async def _mkdir(self, name: str, parent_node_id: str) -> Node:
-        # generate random aes key (128) for folder
-        new_key = [random_u32int() for _ in range(4)]
-        encrypt_attribs = b64_url_encode(encrypt_attr({"n": name}, new_key))
-        encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
-
-        # This can return multiple folders if subfolders needed to be created
-        folders: dict[str, list[FolderSerialized]] = await self._api.request(
-            {
-                "a": "p",
-                "t": parent_node_id,
-                "n": [
-                    {
-                        "h": "xxxxxxxx",
-                        "t": 1,
-                        "a": encrypt_attribs,
-                        "k": encrypted_key,
-                    }
-                ],
-                "i": self._api._client_id,
-            }
-        )
-        self._cache.clear()
-        return self._deserialize_node(folders["f"][0])
-
     async def create_folder(self, path: Path | str) -> Node:
         path = PurePosixPath(path).as_posix()
         return await self._mkdir(name=path, parent_node_id=self.system_nodes.inbox.id)
@@ -579,7 +503,6 @@ class Mega(MegaCore):
 
     async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
         target = NodeType(target)
-
         return await self._api.request(
             {
                 "a": "m",
@@ -600,23 +523,6 @@ class Mega(MegaCore):
         Remove a user to your mega contact list
         """
         return await self._edit_contact(email, add=False)
-
-    async def _edit_contact(self, email: str, *, add: bool) -> dict[str, Any]:
-        """
-        Editing contacts
-        """
-
-        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-            raise ValidationError("add_contact requires a valid email address")
-
-        return await self._api.request(
-            {
-                "a": "ur",
-                "u": email,
-                "l": "1" if add else "0",
-                "i": self._api._client_id,
-            }
-        )
 
     async def _get_file_info(self, handle: str, is_public: bool = False) -> GetNodeResponse:
         return await self._api.request(
