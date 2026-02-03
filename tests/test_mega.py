@@ -87,7 +87,7 @@ async def test_get_storage_space(mega: Mega) -> None:
 
 
 async def test_get_files(mega: Mega) -> None:
-    files = await mega.get_nodes()
+    files = await mega.get_filesystem()
     assert isinstance(files, dict)
 
 

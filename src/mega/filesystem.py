@@ -1,4 +1,4 @@
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator
 from pathlib import Path, PurePosixPath
 from typing import TypeAlias
 
@@ -10,12 +10,12 @@ NodeID: TypeAlias = str
 class FileSystem:
     """An abstract representaion of the MegaNZ's filesystem"""
 
-    root: Node
-    inbox: Node
-    trash_bin: Node
+    root: Node | None
+    inbox: Node | None
+    trash_bin: Node | None
 
-    def __init__(self, nodes: Sequence[Node]) -> None:
-        self.root, self.inbox, self.trash_bin, *nodes = nodes
+    def __init__(self, nodes: Iterable[Node]) -> None:
+        root = inbox = trash_bin = None
 
         nodes_map: dict[NodeID, Node] = {}
         children: dict[NodeID, list[NodeID]] = {}
@@ -23,10 +23,19 @@ class FileSystem:
         for node in nodes:
             nodes_map[node.id] = node
             children.setdefault(node.parent_id, []).append(node.id)
+            if node.type is NodeType.ROOT_FOLDER:
+                root = node
+            elif node.type is NodeType.INBOX:
+                inbox = node
+            elif node.type is NodeType.TRASH:
+                trash_bin = node
 
+        self.root, self.inbox, self.trash_bin = root, inbox, trash_bin
         self._nodes: dict[NodeID, Node] = nodes_map
         self._children: dict[NodeID, list[NodeID]] = children
-        self._paths: dict[NodeID, PurePosixPath] = self._build_fs_paths(self.root.id, self.inbox.id, self.trash_bin.id)
+
+        roots = list(filter(None, (root, inbox, trash_bin))) or [next(iter(nodes))]
+        self._paths: dict[NodeID, PurePosixPath] = self._build_fs_paths(*[r.id for r in roots])
 
     def __repr__(self) -> str:
         text = ",".join(
@@ -51,8 +60,11 @@ class FileSystem:
     def __getitem__(self, node_id: NodeID) -> Node:
         return self._nodes[node_id]
 
+    def get(self, node_id: NodeID) -> Node | None:
+        return self._nodes.get(node_id)
+
     def _was_deleted(self, node: Node) -> bool:
-        return node.parent_id == self.trash_bin.id
+        return node.parent_id == self.trash_bin.id if self.trash_bin else False
 
     @property
     def files(self) -> Iterable[Node]:
@@ -71,7 +83,7 @@ class FileSystem:
     @property
     def deleted(self) -> Iterable[Node]:
         """All files or folders currently on the trash bin"""
-        return self.ls_dir(self.trash_bin.id)
+        return self.ls_dir(self.trash_bin.id if self.trash_bin else "")
 
     @property
     def file_count(self) -> int:
@@ -128,3 +140,9 @@ class FileSystem:
             walk(root_id, path)
 
         return dict(sorted(paths.items(), key=lambda x: str(x[1]).casefold()))
+
+
+class UserFileSystem(FileSystem):
+    root: Node  # pyright: ignore[reportIncompatibleVariableOverride]
+    inbox: Node  # pyright: ignore[reportIncompatibleVariableOverride]
+    trash_bin: Node  # pyright: ignore[reportIncompatibleVariableOverride]

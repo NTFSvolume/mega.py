@@ -31,6 +31,7 @@ from mega.crypto import (
     str_to_a32,
 )
 from mega.data_structures import Node, NodeType
+from mega.filesystem import UserFileSystem
 from mega.progress import ProgressManager
 from mega.vault import MegaKeysVault
 
@@ -46,33 +47,26 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class SystemNodes:
-    root: Node
-    inbox: Node
-    trash_bin: Node
-
-
 class MegaCore:
     def __init__(self, api: MegaAPI) -> None:
         self._api = api
         self._primary_url = "https://mega.nz"
-        self._system_nodes: SystemNodes | None = None
         self._auth = MegaAuth(self._api)
         self._vault = MegaKeysVault(())
         self._progress = ProgressManager()
+        self._filesystem: UserFileSystem | None = None
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}>(system_nodes={self._system_nodes!r}, vault={self._vault!r})"
+        return f"<{type(self).__name__}>(fs={self.filesystem!r}, vault={self._vault!r})"
 
     @property
     def logged_in(self) -> bool:
         return bool(self._vault.master_key)
 
     @property
-    def system_nodes(self) -> SystemNodes:
-        assert self._system_nodes is not None
-        return self._system_nodes
+    def filesystem(self) -> UserFileSystem:
+        assert self._filesystem is not None
+        return self._filesystem
 
     async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> None:
         if email and password:
@@ -82,8 +76,8 @@ class MegaCore:
 
         self._vault = MegaKeysVault(master_key)
         logger.info("Getting all files and decryption keys of the account...")
-        _ = await self._get_nodes()
-        logger.info(f"Special folders: {self._system_nodes}")
+        self._filesystem = await self._prepare_filesystem()
+        logger.info(f"File system: {self.filesystem}")
         logger.info("Login complete")
 
     def _deserialize_node(self, node: NodeSerialized) -> Node:
@@ -122,7 +116,7 @@ class MegaCore:
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
 
-    async def _get_nodes(self) -> dict[str, Node]:
+    async def _prepare_filesystem(self) -> UserFileSystem:
         nodes_resp: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
@@ -132,36 +126,28 @@ class MegaCore:
         )
 
         self._vault.init_shared_keys(nodes_resp)
-        return await self._deserialize_nodes(nodes_resp["f"])
+        nodes = await self._deserialize_nodes(nodes_resp["f"])
+        return UserFileSystem(nodes)
 
-    async def _deserialize_nodes(
-        self, nodes: Iterable[NodeSerialized], public_key: str | None = None
-    ) -> dict[str, Node]:
+    async def _deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
         """
         Processes multiple nodes at once, decrypting their keys and attributes.
         """
 
         share_key = b64_to_a32(public_key) if public_key else None
-        results: dict[str, Node] = {}
-        system_nodes: list[Node] = [None] * 3  # pyright: ignore[reportAssignmentType]
+        resolved_nodes: list[Node] = []
 
         for idx, node in enumerate(nodes):
             node_id = node["h"]
             if share_key:
                 self._vault.shared_keys["EXP"][node_id] = share_key
 
-            results[node_id] = node = self._deserialize_node(node)
-
-            if node.type in (NodeType.ROOT_FOLDER, NodeType.INBOX, NodeType.TRASH):
-                system_nodes[node.type - NodeType.ROOT_FOLDER] = node
+            resolved_nodes.append(self._deserialize_node(node))
 
             if idx % 500 == 0:
                 await asyncio.sleep(0)
 
-        if self._system_nodes is None and all(system_nodes):
-            self._system_nodes = SystemNodes(*system_nodes)
-
-        return results
+        return resolved_nodes
 
     async def _really_download_file(
         self,

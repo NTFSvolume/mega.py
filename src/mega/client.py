@@ -36,6 +36,7 @@ from mega.data_structures import (
     NodeType,
     UserResponse,
 )
+from mega.filesystem import FileSystem, UserFileSystem
 
 from .errors import MegaNzError, RequestError, ValidationError
 
@@ -46,20 +47,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class LoginResponse:
-    session_id: str
-    temp_session_id: str
-    private_key: str
-    master_key: str
-
-
 class Mega(MegaCore):
     """Interface with all the public methods of the API"""
 
     def __init__(self) -> None:
         super().__init__(api=MegaAPI())
-        self._cache: dict[str, dict[Any, Any]] = {}
 
     async def __aenter__(self) -> Self:
         return self
@@ -70,51 +62,22 @@ class Mega(MegaCore):
     async def close(self) -> None:
         await self._api.close()
 
-    async def get_filesystem(self) -> dict[PurePosixPath, Node]:
-        """Builds a flattened dictionary representing the users' file system"""
-        if fs := self._cache.get("fs"):
-            return fs.copy()
-
-        nodes = await self.get_nodes()
-        fs = self._cache["fs"] = await self.build_file_system(nodes, [self.system_nodes.root.id])
-        return fs
-
-    def _is_on_trash_bin(self, node: Node) -> bool:
-        return node.parent_id == self.system_nodes.trash_bin.id
-
     async def _search(self, query: Path | str, *, exclude_deleted: bool = True) -> list[Node]:
         """
         Return nodes that have "query" as a substring on their path
         """
-
-        query = PurePosixPath(query).as_posix()
-
         fs = await self.get_filesystem()
+        return list(fs.search(query, exclude_deleted=exclude_deleted))
 
-        def walk():
-            for path, node in fs.items():
-                if exclude_deleted and self._is_on_trash_bin(node):
-                    continue
-                if query in path.as_posix():
-                    yield node
+    async def find_by_handle(self, handle: str) -> Node | None:
+        fs = await self.get_filesystem()
+        return fs.get(handle)
 
-        return list(walk())
+    async def get_filesystem(self, force: bool = False) -> UserFileSystem:
+        if self._filesystem is None or force:
+            self._filesystem = await self._prepare_filesystem()
 
-    async def find_by_handle(self, handle: str, exclude_deleted: bool = True) -> Node | None:
-        files = await self.get_nodes()
-        file = files.get(handle)
-        if not file:
-            return
-        if exclude_deleted and self._is_on_trash_bin(file):
-            return
-        return file
-
-    async def get_nodes(self) -> dict[str, Node]:
-        if nodes := self._cache.get("nodes"):
-            return nodes.copy()
-
-        nodes = self._cache["nodes"] = await self._get_nodes()
-        return nodes
+        return self._filesystem
 
     async def get_public_link(self, file: Node) -> str:
         if file.type not in (NodeType.FILE, NodeType.FOLDER):
@@ -201,10 +164,9 @@ class Mega(MegaCore):
 
     async def empty_trash(self) -> dict[str, Any] | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
-        # get list of files in rubbish out
 
-        nodes = await self.get_nodes()
-        trashed_files = [node for node in nodes.values() if node.parent_id == self.system_nodes.trash_bin.id]
+        fs = await self.get_filesystem()
+        trashed_files = list(fs.deleted)
         if not trashed_files:
             return
 
@@ -242,9 +204,8 @@ class Mega(MegaCore):
             return await self.get_folder_link(node)
         except (RequestError, KeyError):
             await self._export_folder(node)
-            self._cache.clear()
-            nodes = await self.get_nodes()
-            return await self.get_folder_link(nodes[node.id])
+            fs = await self.get_filesystem(force=True)
+            return await self.get_folder_link(fs[node.id])
 
     async def download_url(self, url: str, dest_path: str | None = None) -> Path:
         """
@@ -260,7 +221,7 @@ class Mega(MegaCore):
             is_public=True,
         )
 
-    async def get_nodes_public_folder(self, url: str) -> dict[str, Node]:
+    async def get_nodes_public_folder(self, url: str) -> FileSystem:
         public_handle, public_key = self._parse_folder_url(url)
 
         folder: GetNodesResponse = await self._api.request(
@@ -273,13 +234,12 @@ class Mega(MegaCore):
             {"n": public_handle},
         )
 
-        return await self._deserialize_nodes(folder["f"], public_key)
+        nodes = await self._deserialize_nodes(folder["f"], public_key)
+        return FileSystem(nodes)
 
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)
-        nodes = await self.get_nodes_public_folder(url)
-        root_id = next(iter(nodes))
-        fs = await self.build_file_system(nodes, [root_id])
+        fs = await self.get_nodes_public_folder(url)
 
         sem = asyncio.BoundedSemaphore(10)
 
@@ -318,11 +278,8 @@ class Mega(MegaCore):
         results = []
         async with asyncio.TaskGroup() as tg:
             self._progress.show = False
-            for path, node in fs.items():
-                if node.type != NodeType.FILE:
-                    continue
-
-                file = node
+            for file in fs.files:
+                path = fs.resolve(file.id)
                 await sem.acquire()
                 results.append(tg.create_task(download_file(file, path)))
 
@@ -358,7 +315,7 @@ class Mega(MegaCore):
         )
 
     async def upload(self, file_path: Path | str, dest_node: Node | None = None) -> GetNodesResponse:
-        dest_node_id = (dest_node or self.system_nodes.root).id
+        dest_node_id = dest_node or self.filesystem.root.id
 
         file_path = Path(file_path)
         with open(file_path, "rb") as input_file:
@@ -449,12 +406,15 @@ class Mega(MegaCore):
 
     async def create_folder(self, path: Path | str) -> Node:
         path = PurePosixPath(path).as_posix()
-        return await self._mkdir(name=path, parent_node_id=self.system_nodes.inbox.id)
+        fs = await self.get_filesystem()
+        return await self._mkdir(name=path, parent_node_id=fs.root.id)
 
     async def rename(self, node: Node, new_name: str) -> int:
         if not new_name:
             raise ValidationError
+
         new_attrs = dataclasses.replace(node.attributes, n=new_name)
+
         attribs = b64_url_encode(encrypt_attr(new_attrs.dump(), node._crypto.key))
         encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._vault.master_key))
 
@@ -468,8 +428,7 @@ class Mega(MegaCore):
             }
         )
         if resp:
-            # TODO: make node mutable
-            self._cache.clear()
+            node.attributes = new_attrs
         return resp
 
     async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
@@ -521,7 +480,7 @@ class Mega(MegaCore):
         Import the public file into user account
         """
 
-        dest_node_id = dest_node_id or self.system_nodes.root.id
+        dest_node_id = dest_node_id or self.filesystem.root.id
         pl_info = await self.get_public_file_info(public_handle, public_key)
         dest_name = pl_info.name
 
@@ -545,5 +504,5 @@ class Mega(MegaCore):
             }
         )
         if resp:
-            self._cache.clear()
+            self._filesystem = None
         return resp

@@ -34,8 +34,6 @@ class MegaKeysVault:
         folder is un-shared.
         Keys are stored in files['s'] and files['ok']
         """
-        if self.shared_keys:
-            return
 
         self.shared_keys["EXP"] = {}
         new_keys: SharedKeys = {}
