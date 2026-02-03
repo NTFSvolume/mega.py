@@ -96,11 +96,10 @@ class MegaKeysVault:
         return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
 
     def decrypt(self, node: Node) -> Node:
-        crypto = attributes = None
         if node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self.get_keys(node)
-            crypto = self.compose_crypto(node.type, full_key, share_key)
-            attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
+            node._crypto = self.compose_crypto(node.type, full_key, share_key)
+            node.attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), node._crypto.key))
 
         else:
             name = {
@@ -108,6 +107,7 @@ class MegaKeysVault:
                 NodeType.INBOX: "Inbox",
                 NodeType.TRASH: "Trash Bin",
             }[node.type]
-            attributes = Attributes(name)
+            node.attributes = Attributes(name)
+            node._crypto = None  # pyright: ignore[reportAttributeAccessIssue]
 
-        return dataclasses.replace(node, _crypto=crypto, attributes=attributes)
+        return node

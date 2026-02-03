@@ -3,7 +3,8 @@ Mega API information
 =====================
 
 - This file contains definitions for some of the properties within the API.
-- Some definitions are not used by mega.py
+- TypeDict objects are the raw data returned by the http requests to the API itself.
+- The dataclasses are the internal representation of thoses objects
 - The aim of the file is that more people will contribute through understanding.
 
 """
@@ -13,6 +14,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from enum import IntEnum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
@@ -43,15 +45,8 @@ class NodeSerialized(TypedDict):
     ts: int  # Timestamp (creation date)
 
     k: NotRequired[str]  # Node keys
-    su: NotRequired[str]  # Shared user Id, only present present in shared (public) files / folder
-    sk: NotRequired[str]  # Shared key, only present present in shared (public) files / folder
-
-
-class FileSerialized(NodeSerialized):
-    t: ReadOnly[Literal[NodeType.FILE]]
-    s: int  # Size
-    fa: str  # Serialized file attributes
-    g: NotRequired[str]  # Direct download URL
+    su: NotRequired[str]  # Share owner (user ID), only present present in shared (public) files / folder
+    sk: NotRequired[str]  # Share key, only present present in shared (public) files / folder
 
 
 class FolderSerialized(NodeSerialized):
@@ -84,6 +79,19 @@ class GetNodeResponse(TypedDict):
     g: NotRequired[str]  # direct download URL
 
 
+class _DictParser:
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
+
+    @classmethod
+    def _filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
+        fields = [f.name for f in dataclasses.fields(cls)]
+        return {k: v for k, v in data.items() if k in fields}
+
+    @classmethod
+    def parse(cls, data: dict[str, Any]) -> Self:
+        return cls(**cls._filter_dict(data))
+
+
 @dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
 class File:
     name: str
@@ -98,33 +106,49 @@ class Crypto:
     meta_mac: tuple[int, int]
 
     full_key: tuple[int, int, int, int]
-    share_key: TupleArray | None
+    share_key: tuple[int, ...] | None
 
 
-# Dummy crypto for root/trash_bin/inbox
-_NO_CRYPTO = Crypto((), (), (), (), ())  # pyright: ignore[reportArgumentType]
-
-
-@dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
+# Can't be frozen because we populate attrs and crypto after instance creation
+@dataclasses.dataclass(slots=True, order=True, weakref_slot=True)
 class Node:
     id: str
     parent_id: str
     owner: str
     type: NodeType
-    attributes: Attributes
-    creation_date: int
-    keys: dict[str, str]
+    attributes: Attributes = dataclasses.field(init=False)
+    created_at: int
+    keys: MappingProxyType[str, str]
     share_owner: str | None
     share_key: str | None
 
     _a: str
-    _crypto: Crypto = _NO_CRYPTO
+    _crypto: Crypto = dataclasses.field(init=False)
+
+    @classmethod
+    def parse(cls, node: NodeSerialized) -> Node:
+        if k := node.get("k"):
+            keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
+        else:
+            keys = {}
+
+        return Node(
+            id=node["h"],
+            parent_id=node["p"],
+            owner=node["u"],
+            created_at=node["ts"],
+            type=NodeType(node["t"]),
+            keys=MappingProxyType(keys),
+            share_owner=node.get("su"),
+            share_key=node.get("sk"),
+            _a=node["a"],
+        )
 
 
 _LABELS: Final = "", "red", "orange", "yellow", "green", "blue", "purple", "grey"
 
 
-@dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class Attributes:
     name: str
     label: str = ""
@@ -150,22 +174,15 @@ class Attributes:
         }
 
 
-class Parser:
-    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
-
-    @classmethod
-    def _filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
-        fields = [f.name for f in dataclasses.fields(cls)]
-        return {k: v for k, v in data.items() if k in fields}
-
-    @classmethod
-    def parse(cls, data: dict[str, Any]) -> Self:
-        return cls(**cls._filter_dict(data))
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+class AccountBalance:
+    amount: float
+    currency: str
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class AccountStats(Parser):
-    balance: tuple[float, str]
+class AccountStats(_DictParser):
+    balance: AccountBalance
     subs: list[str]
     plans: list[str]
     storage: StorageQuota
@@ -179,8 +196,8 @@ class AccountStats(Parser):
         clean_data.update(
             {
                 "storage": StorageQuota.parse(data),
-                "balance": (float(balance[0]), str(balance[1])),
-                "metrics": {k: StorageMetrics(*v[0:3]) for k, v in data["cstrgn"].items()},
+                "balance": AccountBalance(float(balance[0]), str(balance[1])),
+                "metrics": {node_id: StorageMetrics(*stats[0:3]) for node_id, stats in data["cstrgn"].items()},
             }
         )
         return cls(**clean_data)
