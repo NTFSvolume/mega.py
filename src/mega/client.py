@@ -317,16 +317,17 @@ class Mega(MegaCore):
         folder = cast("FolderSerialized", files[_node_id])
         return await self.get_folder_link(folder)
 
-    async def download_url(self, url: str, dest_path: str | None = None, dest_filename: str | None = None) -> Path:
+    async def download_url(self, url: str, dest_path: str | None = None) -> Path:
         """
         Download a file by it's public url
         """
-        file_id, file_key = self._parse_url(url).split("!", 1)
+        file_id, public_key = self._parse_url(url).split("!", 1)
+        full_key = b64_to_a32(public_key)
+        key = self._vault.compose_crypto(NodeType.FILE, full_key).key
         return await self._download_file(
             file_handle=file_id,
-            file_key=file_key,
+            file_key=key,
             dest_path=dest_path,
-            dest_filename=dest_filename,
             is_public=True,
         )
 
@@ -348,13 +349,12 @@ class Mega(MegaCore):
     async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
         folder_id, _ = self._parse_folder_url(url)
         nodes = await self.get_nodes_public_folder(url)
-        download_tasks = []
         root_id = next(iter(nodes))
         fs = await self.build_file_system(nodes, [root_id])
 
         sem = asyncio.BoundedSemaphore(10)
 
-        async def download_file(file: Node, file_path: Path) -> tuple[Path, bool]:
+        async def download_file(file: Node, file_path: PurePosixPath) -> tuple[Path, bool]:
             download_path = Path(dest_path or ".") / file_path
             try:
                 file_data = await self._api.request(
@@ -388,16 +388,16 @@ class Mega(MegaCore):
 
         results = []
         async with asyncio.TaskGroup() as tg:
-            self.show_progress = False
+            self._progress.show = False
             for path, node in fs.items():
                 if node.type != NodeType.FILE:
                     continue
 
                 file = node
                 await sem.acquire()
-                results.append(tg.create_task(download_file(file, Path(path))))
+                results.append(tg.create_task(download_file(file, path)))
 
-        return await asyncio.gather(*download_tasks)
+        return await asyncio.gather(*results)
 
     async def _download_file(
         self,
@@ -503,7 +503,7 @@ class Mega(MegaCore):
             attribs = {"n": dest_filename}
 
             encrypt_attribs = b64_url_encode(encrypt_attr(attribs, ul_key[:4]))
-            key: tuple[int, ...] = [
+            key: tuple[int, ...] = (
                 ul_key[0] ^ ul_key[4],
                 ul_key[1] ^ ul_key[5],
                 ul_key[2] ^ meta_mac[0],
@@ -512,8 +512,8 @@ class Mega(MegaCore):
                 ul_key[5],
                 meta_mac[0],
                 meta_mac[1],
-            ]
-            encrypted_key = a32_to_base64(encrypt_key(key, self._master_key))
+            )
+            encrypted_key = a32_to_base64(encrypt_key(key, self._vault.master_key))
             logger.info("Sending request to update attributes")
             # update attributes
             data: GetNodesResponse = await self._api.request(
@@ -527,14 +527,11 @@ class Mega(MegaCore):
             logger.info("Upload complete")
             return data
 
-    async def _mkdir(self, name: str, parent_node_id: str) -> FolderSerialized:
+    async def _mkdir(self, name: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
-        ul_key = [random_u32int() for _ in range(6)]
-
-        # encrypt attribs
-        attribs = {"n": name}
-        encrypt_attribs = b64_url_encode(encrypt_attr(attribs, ul_key[:4]))
-        encrypted_key = a32_to_base64(encrypt_key(ul_key[:4], self._master_key))
+        new_key = [random_u32int() for _ in range(4)]
+        encrypt_attribs = b64_url_encode(encrypt_attr({"n": name}, new_key))
+        encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 
         # This can return multiple folders if subfolders needed to be created
         folders: dict[str, list[FolderSerialized]] = await self._api.request(
@@ -552,37 +549,33 @@ class Mega(MegaCore):
                 "i": self._api._client_id,
             }
         )
-        return folders["f"][0]
+        self._cache.clear()
+        return self._deserialize_node(folders["f"][0])
 
-    async def create_folder(self, path: Path | str) -> FolderSerialized:
-        path = Path(path)
-        last_parent = await self.find_by_handle(self.system_nodes.inbox.id)
-        assert last_parent
-        for parent in reversed(path.parents):
-            node = await self.find(parent, exclude_deleted=True)
-            if node:
-                last_parent = node
-            else:
-                last_parent = await self._mkdir(name=parent.name, parent_node_id=last_parent["h"])
+    async def create_folder(self, path: Path | str) -> Node:
+        path = PurePosixPath(path).as_posix()
+        return await self._mkdir(name=path, parent_node_id=self.system_nodes.inbox.id)
 
-        return await self._mkdir(name=path.name, parent_node_id=last_parent["h"])
+    async def rename(self, node: Node, new_name: str) -> int:
+        if not new_name:
+            raise ValidationError
+        new_attrs = dataclasses.replace(node.attributes, n=new_name)
+        attribs = b64_url_encode(encrypt_attr(new_attrs.dump(), node._crypto.key))
+        encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._vault.master_key))
 
-    async def rename(self, node: NodeSerialized | FolderSerialized, new_name: str) -> int:
-        # create new attribs
-        attribs = {"n": new_name}
-        # encrypt attribs
-        encrypt_attribs = b64_url_encode(encrypt_attr(attribs, node["k_decrypted"]))
-        encrypted_key = a32_to_base64(encrypt_key(node["full_key"], self._master_key))
-        # update attributes
-        return await self._api.request(
+        resp = await self._api.request(
             {
                 "a": "a",
-                "attr": encrypt_attribs,
+                "attr": attribs,
                 "key": encrypted_key,
-                "n": node["h"],
+                "n": node.id,
                 "i": self._api._client_id,
             }
         )
+        if resp:
+            # TODO: make node mutable
+            self._cache.clear()
+        return resp
 
     async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
         target = NodeType(target)
@@ -600,13 +593,13 @@ class Mega(MegaCore):
         """
         Add another user to your mega contact list
         """
-        return await self._edit_contact(email, True)
+        return await self._edit_contact(email, add=True)
 
     async def remove_contact(self, email: str) -> dict[str, Any]:
         """
         Remove a user to your mega contact list
         """
-        return await self._edit_contact(email, False)
+        return await self._edit_contact(email, add=False)
 
     async def _edit_contact(self, email: str, *, add: bool) -> dict[str, Any]:
         """
@@ -624,22 +617,6 @@ class Mega(MegaCore):
                 "i": self._api._client_id,
             }
         )
-
-    async def get_public_url_info(self, url: str) -> tuple[str, int]:
-        """
-        Get size and name from a public url, dict returned
-        """
-        public_handle, public_key = self._parse_url(url).split("!")
-        return await self.get_public_file_info(public_handle, public_key)
-
-    async def import_public_url(
-        self, url: str, dest_node: FolderSerialized | str | None = None, dest_name: str | None = None
-    ) -> GetNodesResponse:
-        """
-        Import the public url into user account
-        """
-        public_handle, public_key = self._parse_url(url).split("!")
-        return await self.import_public_file(public_handle, public_key, dest_node=dest_node, dest_name=dest_name)
 
     async def _get_file_info(self, handle: str, is_public: bool = False) -> GetNodeResponse:
         return await self._api.request(
@@ -660,36 +637,23 @@ class Mega(MegaCore):
         attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
         return File(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
 
-    @requires_login
     async def import_public_file(
-        self,
-        public_handle: str,
-        public_key: str,
-        dest_node_id: str | None = None,
-        dest_name: str | None = None,
+        self, public_handle: str, public_key: str, dest_node_id: str | None = None
     ) -> GetNodesResponse:
         """
         Import the public file into user account
         """
 
-        dest_node_id = dest_node_id or self._system_nodes.root
-
-        # Providing dest_name spares an API call to retrieve it.
-        if dest_name is None:
-            pl_info = await self.get_public_file_info(public_handle, public_key)
-            dest_name = pl_info.name
+        dest_node_id = dest_node_id or self.system_nodes.root.id
+        pl_info = await self.get_public_file_info(public_handle, public_key)
+        dest_name = pl_info.name
 
         full_key = b64_to_a32(public_key)
-        key: TupleArray = (
-            full_key[0] ^ full_key[4],
-            full_key[1] ^ full_key[5],
-            full_key[2] ^ full_key[6],
-            full_key[3] ^ full_key[7],
-        )
-
-        encrypted_key = a32_to_base64(encrypt_key(full_key, self._master_key))
+        key = self._vault.compose_crypto(NodeType.FILE, full_key).key
+        encrypted_key = a32_to_base64(encrypt_key(full_key, self._vault.master_key))
         attributes = b64_url_encode(encrypt_attr({"n": dest_name}, key))
-        return await self._api.request(
+
+        resp = await self._api.request(
             {
                 "a": "p",
                 "t": dest_node_id,
@@ -703,3 +667,6 @@ class Mega(MegaCore):
                 ],
             }
         )
+        if resp:
+            self._cache.clear()
+        return resp

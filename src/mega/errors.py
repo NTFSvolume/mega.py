@@ -4,7 +4,7 @@ from typing import Final
 class MegaNzError(Exception): ...
 
 
-class ValidationError(MegaNzError):
+class ValidationError(MegaNzError, ValueError):
     """Error in validation stage"""
 
 

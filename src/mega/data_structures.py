@@ -13,7 +13,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Sequence
 from enum import IntEnum
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, Self, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from typing import NotRequired
@@ -91,6 +91,20 @@ class File:
     url: str | None
 
 
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+class Crypto:
+    key: tuple[int, ...]
+    iv: tuple[int, int, int, int]
+    meta_mac: tuple[int, int]
+
+    full_key: tuple[int, int, int, int]
+    share_key: TupleArray | None
+
+
+# Dummy crypto for root/trash_bin/inbox
+_NO_CRYPTO = Crypto((), (), (), (), ())  # pyright: ignore[reportArgumentType]
+
+
 @dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
 class Node:
     id: str
@@ -104,7 +118,10 @@ class Node:
     share_key: str | None
 
     _a: str
-    _crypto: Crypto | None = None
+    _crypto: Crypto = _NO_CRYPTO
+
+
+_LABELS: Final = "", "red", "orange", "yellow", "green", "blue", "purple", "grey"
 
 
 @dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
@@ -115,22 +132,22 @@ class Attributes:
 
     @classmethod
     def parse(cls, attrs: dict[str, Any]) -> Self:
-        labels = ["", "red", "orange", "yellow", "green", "blue", "purple", "grey"]
         return cls(
             name=attrs["n"],
-            label=labels[attrs.get("lbl", 0)],
+            label=_LABELS[attrs.get("lbl", 0)],
             favorited=bool(attrs.get("fav")),
         )
 
-
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class Crypto:
-    key: tuple[int, int, int, int, int, int, int, int]
-    iv: tuple[int, int, int, int]
-    meta_mac: tuple[int, int]
-
-    full_key: tuple[int, int, int, int]
-    share_key: TupleArray | None
+    def dump(self) -> dict[str, Any]:
+        return {
+            key: value
+            for key, value in [
+                ("n", self.name),
+                ("lbl", _LABELS.index(self.label)),
+                ("fav", self.favorited),
+            ]
+            if value
+        }
 
 
 class Parser:
