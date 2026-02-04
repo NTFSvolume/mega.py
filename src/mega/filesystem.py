@@ -1,24 +1,31 @@
-from collections.abc import Iterable, Iterator
+import asyncio
+import dataclasses
+from collections.abc import Iterable, Iterator, Sequence
 from pathlib import Path, PurePosixPath
-from typing import TypeAlias
+from types import MappingProxyType
+from typing import Self
 
-from mega.data_structures import Node, NodeType
-
-NodeID: TypeAlias = str
+from mega.data_structures import Node, NodeID, NodeType
 
 
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class FileSystem:
     """An abstract representaion of the MegaNZ's filesystem"""
 
     root: Node | None
     inbox: Node | None
     trash_bin: Node | None
+    _nodes: MappingProxyType[NodeID, Node]
+    _children: MappingProxyType[NodeID, list[NodeID]]
+    _paths: MappingProxyType[NodeID, PurePosixPath]
 
-    def __init__(self, nodes: Iterable[Node]) -> None:
+    @classmethod
+    def _built(cls, nodes: Sequence[Node]) -> Self:
         root = inbox = trash_bin = None
 
         nodes_map: dict[NodeID, Node] = {}
         children: dict[NodeID, list[NodeID]] = {}
+        paths: dict[NodeID, PurePosixPath] = {}
 
         for node in nodes:
             nodes_map[node.id] = node
@@ -30,12 +37,22 @@ class FileSystem:
             elif node.type is NodeType.TRASH:
                 trash_bin = node
 
-        self.root, self.inbox, self.trash_bin = root, inbox, trash_bin
-        self._nodes: dict[NodeID, Node] = nodes_map
-        self._children: dict[NodeID, list[NodeID]] = children
+        self = cls(
+            root,
+            inbox,
+            trash_bin,
+            MappingProxyType(nodes_map),
+            MappingProxyType(children),
+            MappingProxyType(paths),
+        )
 
         roots = list(filter(None, (root, inbox, trash_bin))) or [next(iter(nodes))]
-        self._paths: dict[NodeID, PurePosixPath] = self._build_fs_paths(*[r.id for r in roots])
+        paths.update(self._build_fs_paths(*[root.id for root in roots]))
+        return self
+
+    @classmethod
+    async def built(cls, nodes: Sequence[Node]) -> Self:
+        return await asyncio.to_thread(cls._built, nodes)
 
     def __repr__(self) -> str:
         text = ",".join(
@@ -83,7 +100,8 @@ class FileSystem:
     @property
     def deleted(self) -> Iterable[Node]:
         """All files or folders currently on the trash bin"""
-        return self.ls_dir(self.trash_bin.id if self.trash_bin else "")
+        if self.trash_bin:
+            yield from self.ls_dir(self.trash_bin.id)
 
     @property
     def file_count(self) -> int:
@@ -143,6 +161,6 @@ class FileSystem:
 
 
 class UserFileSystem(FileSystem):
-    root: Node  # pyright: ignore[reportIncompatibleVariableOverride]
-    inbox: Node  # pyright: ignore[reportIncompatibleVariableOverride]
-    trash_bin: Node  # pyright: ignore[reportIncompatibleVariableOverride]
+    root: Node
+    inbox: Node
+    trash_bin: Node

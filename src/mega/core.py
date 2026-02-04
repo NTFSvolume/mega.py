@@ -136,7 +136,7 @@ class MegaCore:
 
         self._vault.init_shared_keys(nodes_resp)
         nodes = await self._deserialize_nodes(nodes_resp["f"])
-        return await asyncio.to_thread(UserFileSystem, nodes)
+        return await UserFileSystem.built(nodes)
 
     async def _deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
         """

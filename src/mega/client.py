@@ -16,10 +16,9 @@ from mega.crypto import (
     CHUNK_BLOCK_LEN,
     a32_to_base64,
     a32_to_bytes,
+    b64_decrypt_attr,
     b64_to_a32,
-    b64_url_decode,
     b64_url_encode,
-    decrypt_attr,
     encrypt_attr,
     encrypt_key,
     get_chunks,
@@ -27,7 +26,16 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeType, UserResponse
+from mega.data_structures import (
+    AccountStats,
+    Attributes,
+    Crypto,
+    FileInfo,
+    FileInfoSerialized,
+    Node,
+    NodeType,
+    UserResponse,
+)
 from mega.filesystem import FileSystem, UserFileSystem
 
 from .errors import MegaNzError, RequestError, ValidationError
@@ -145,7 +153,7 @@ class Mega(MegaCore):
         resp = await self._destroy(node_id)
         return resp == 0
 
-    async def empty_trash(self) -> dict[str, Any] | None:
+    async def empty_trash(self) -> int | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
 
         fs = await self.get_filesystem()
@@ -184,16 +192,15 @@ class Mega(MegaCore):
         )
 
         nodes = await self._deserialize_nodes(folder["f"], public_key)
-        return FileSystem(nodes)
+        return await FileSystem.built(nodes)
 
-    async def _request_file_download(
+    async def _request_file_info(
         self,
         handle: str,
-        key: tuple[int, ...],
         parent_id: str | None = None,
         is_public: bool = False,
     ) -> FileInfo:
-        resp = await self._api.request(
+        resp: FileInfoSerialized = await self._api.request(
             {
                 "a": "g",
                 "g": 1,
@@ -201,14 +208,14 @@ class Mega(MegaCore):
             },
             params={"n": parent_id} if parent_id else None,
         )
-        attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
-        return FileInfo(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
+
+        return FileInfo.parse(resp)
 
     async def download(self, node: Node, output_dir: Path | str | None = None) -> Path:
         """Download a file by it's file object."""
-        resp = await self._request_file_download(node.id, node._crypto.key)
+        file_info = await self._request_file_info(node.id)
         return await self._download_file(
-            resp,
+            file_info,
             node._crypto,
             output_folder=output_dir,
         )
@@ -221,9 +228,9 @@ class Mega(MegaCore):
         """
         full_key = b64_to_a32(public_key)
         crypto = self._vault.compose_crypto(NodeType.FILE, full_key)
-        resp = await self._request_file_download(public_handle, crypto.key, is_public=True)
+        file_info = await self._request_file_info(public_handle, is_public=True)
         return await self._download_file(
-            resp,
+            file_info,
             crypto,
             output_dir,
         )
@@ -237,8 +244,13 @@ class Mega(MegaCore):
 
         async def download_file(file: Node, file_path: PurePosixPath) -> Path | BaseException:
             try:
-                resp = await self._request_file_download(file.id, file._crypto.key, public_handle)
-                return await self._download_file(resp, file._crypto, base_path / file_path)
+                file_info = await self._request_file_info(file.id, public_handle)
+                return await self._download_file(
+                    file_info,
+                    file._crypto,
+                    base_path / file_path.parent,
+                    file_path.name,
+                )
             except BaseException as e:
                 logger.exception(f"Unable to download {file}")
                 return e
@@ -259,6 +271,7 @@ class Mega(MegaCore):
         dl: FileInfo,
         crypto: Crypto,
         output_folder: Path | str | None = None,
+        output_name: str | None = None,
     ) -> Path:
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
@@ -266,7 +279,8 @@ class Mega(MegaCore):
         if not dl.url:
             raise RequestError("File not accessible anymore")
 
-        output_path = Path(output_folder or Path()) / dl.name
+        name = output_name or Attributes.parse(b64_decrypt_attr(dl._at, crypto.key)).name
+        output_path = Path(output_folder or Path()) / name
 
         return await self._really_download_file(
             dl.url,
@@ -392,7 +406,7 @@ class Mega(MegaCore):
         )
         success = resp == 0
         if success:
-            node.attributes = new_attrs
+            self._filesystem = None
         return success
 
     async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
@@ -424,7 +438,9 @@ class Mega(MegaCore):
         """
         full_key = b64_to_a32(public_key)
         key = self._vault.compose_crypto(NodeType.FILE, full_key).key
-        return await self._request_file_download(public_handle, key, is_public=True)
+        file_info = await self._request_file_info(public_handle, is_public=True)
+        name = Attributes.parse(b64_decrypt_attr(file_info._at, key)).name
+        return dataclasses.replace(file_info, name=name)
 
     async def import_public_file(self, public_handle: str, public_key: str, dest_node_id: str | None = None) -> Node:
         """

@@ -13,7 +13,9 @@ from Crypto.Math.Numbers import Integer
 from Crypto.PublicKey import RSA
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
+    from collections.abc import Generator, Mapping
+
+    from mega.data_structures import AttributesSerialized
 
     from .data_structures import AnyArray, TupleArray
 
@@ -86,26 +88,29 @@ def decrypt_key(array: AnyArray, key: AnyArray) -> TupleArray:
     return sum((_aes_cbc_decrypt_a32(array[index : index + 4], key) for index in range(0, len(array), 4)), ())
 
 
-def encrypt_attr(attrs: dict[str, Any], key: AnyArray) -> bytes:
+def encrypt_attr(attrs: Mapping[str, Any], key: AnyArray) -> bytes:
     attr_bytes: bytes = f"MEGA{json.dumps(attrs)}".encode()
     return _aes_cbc_encrypt(pad_bytes(attr_bytes), a32_to_bytes(key))
 
 
-def decrypt_attr(attr: bytes, key: AnyArray) -> dict[str, Any]:
+def decrypt_attr(attr: bytes, key: AnyArray) -> AttributesSerialized:
     attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
+    if not attr_bytes.startswith(b'MEGA{"'):
+        return {}
     try:
         attr_str = attr_bytes.decode("utf-8").rstrip("\0")
     except UnicodeDecodeError:
         attr_str = attr_bytes.decode("latin-1").rstrip("\0")
 
-    if attr_str.startswith('MEGA{"'):
-        content = attr_str[4 : attr_str.rfind("}") + 1]
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError as e:
-            raise RuntimeError(f"Unable to decode file attributes, raw content is: {attr_str}") from e
+    content = attr_str[4 : attr_str.rfind("}") + 1]
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Unable to decode file attributes, raw content is: {attr_str}") from e
 
-    return {}
+
+def b64_decrypt_attr(attr: str, key: tuple[int, ...]) -> AttributesSerialized:
+    return decrypt_attr(b64_url_decode(attr), key)
 
 
 def a32_to_bytes(array: AnyArray) -> bytes:
