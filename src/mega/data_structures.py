@@ -5,7 +5,6 @@ Mega API information
 - This file contains definitions for some of the properties within the API.
 - TypeDict objects are the raw data returned by the http requests to the API itself.
 - The dataclasses are the internal representation of thoses objects
-- The aim of the file is that more people will contribute through understanding.
 
 """
 
@@ -22,11 +21,33 @@ if TYPE_CHECKING:
 
     from typing_extensions import ReadOnly
 
-TupleArray: TypeAlias = tuple[int, ...]
-AnyArray: TypeAlias = Sequence[int]
 NodeID: TypeAlias = str
 UserID: TypeAlias = str
-SharedKeys = dict[str, TupleArray]  # owner (User Id) -> share keys
+TimeStamp: TypeAlias = int
+
+TupleArray: TypeAlias = tuple[int, ...]
+AnyArray: TypeAlias = Sequence[int]
+
+
+SharedKeys: TypeAlias = dict[UserID, tuple[int, ...]]
+
+
+class ByteSize(int):
+    def human_readable(self) -> str:
+        """(ex: '1150.5MB')"""
+        scale = 1000
+        me = float(self)
+        for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+            if abs(me) < scale:
+                if unit == "B":
+                    return f"{me:0.0f}{unit}"
+                return f"{me:0.1f}{unit}"
+            me /= scale
+
+        return f"{me:0.1f}EB"
+
+    def __repr__(self) -> str:
+        return self.human_readable()
 
 
 class NodeType(IntEnum):
@@ -44,7 +65,7 @@ class NodeSerialized(TypedDict):
     u: UserID  # Owner (user ID)
     t: ReadOnly[NodeType]
     a: str  # Serialized attributes
-    ts: int  # Timestamp (creation date)
+    ts: TimeStamp  # creation date
 
     k: NotRequired[str]  # Node keys
     su: NotRequired[str]  # Share owner (user ID), only present present in shared (public) files / folder
@@ -52,22 +73,28 @@ class NodeSerialized(TypedDict):
 
 
 class ShareKeySerialized(TypedDict):
-    h: str  # ID of node for this key
+    h: NodeID  # ID of node for this key
     k: str  # key
     ha: str  # ???
 
 
 class ShareKeySerialized2(TypedDict):
-    h: str  # ID of node for this key
+    h: NodeID  # ID of node for this key
     u: str  # Owner (user ID)
     r: int
-    ts: int  # timestamp
+    ts: TimeStamp
 
 
 class GetNodesResponse(TypedDict):
     f: list[NodeSerialized]
     ok: list[ShareKeySerialized]
     s: list[ShareKeySerialized2]
+
+
+class AttributesSerialized(TypedDict, total=False):
+    n: ReadOnly[str]  # Name
+    lbl: int  # label
+    fav: bool  # favorited
 
 
 class FileInfoSerialized(TypedDict):
@@ -100,8 +127,19 @@ class _DictParser:
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class FileInfo(_DictDumper):
     name: str
-    size: int
+    size: ByteSize
     url: str | None
+
+    _at: str
+
+    @classmethod
+    def parse(cls, resp: FileInfoSerialized) -> FileInfo:
+        return FileInfo(
+            name="",
+            size=ByteSize(resp["s"]),
+            url=resp.get("g"),
+            _at=resp["at"],
+        )
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
@@ -117,21 +155,21 @@ class Crypto(_DictDumper):
         yield from dataclasses.astuple(self)
 
 
-# Can't be frozen because we populate attrs and crypto after instance creation
-@dataclasses.dataclass(slots=True, order=True, weakref_slot=True)
+# We populate attrs and crypto after instance creation
+@dataclasses.dataclass(slots=True, frozen=True, order=True, weakref_slot=True)
 class Node(_DictDumper):
     id: NodeID
     parent_id: NodeID
     owner: UserID
     type: NodeType
-    attributes: Attributes = dataclasses.field(init=False)
-    created_at: int
+    attributes: Attributes
+    created_at: TimeStamp
     keys: MappingProxyType[UserID, str]
     share_owner: UserID | None
     share_key: str | None
 
     _a: str
-    _crypto: Crypto = dataclasses.field(init=False)
+    _crypto: Crypto
 
     @classmethod
     def parse(cls, node: NodeSerialized) -> Node:
@@ -150,6 +188,8 @@ class Node(_DictDumper):
             share_owner=node.get("su"),
             share_key=node.get("sk"),
             _a=node["a"],
+            attributes=None,  # pyright: ignore[reportArgumentType]
+            _crypto=None,  # pyright: ignore[reportArgumentType]
         )
 
 
@@ -163,15 +203,15 @@ class Attributes(_DictDumper):
     favorited: bool = False
 
     @classmethod
-    def parse(cls, attrs: dict[str, Any]) -> Self:
+    def parse(cls, attrs: AttributesSerialized) -> Self:
         return cls(
-            name=attrs["n"],
+            name=attrs.get("n", ""),
             label=_LABELS[attrs.get("lbl", 0)],
             favorited=bool(attrs.get("fav")),
         )
 
-    def serialize(self) -> dict[str, Any]:
-        return {
+    def serialize(self) -> AttributesSerialized:
+        return {  # pyright: ignore[reportReturnType]
             key: value
             for key, value in [
                 ("n", self.name),
@@ -217,19 +257,20 @@ class AccountStats(_DictParser, _DictDumper):
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class StorageMetrics(_DictDumper):
-    bytes_used: int
+    bytes_used: ByteSize
     files: int
     folders: int
 
     @classmethod
     def parse(cls, metrics: list[int]) -> Self:
-        return cls(*metrics[0:3])
+        bytes_used, files, folders = metrics[0:3]
+        return cls(ByteSize(bytes_used), files, folders)
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class StorageQuota(_DictDumper):
-    used: int
-    total: int
+    used: ByteSize
+    total: ByteSize
 
     percent: int
     is_full: bool
@@ -237,7 +278,7 @@ class StorageQuota(_DictDumper):
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
-        total, used, threshold = map(int, (data["mstrg"], data["cstrg"], data["uslw"]))
+        total, used, threshold = map(ByteSize, (data["mstrg"], data["cstrg"], data["uslw"]))
         ratio = used / total
         return cls(
             used=used,
