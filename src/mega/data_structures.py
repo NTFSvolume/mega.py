@@ -15,7 +15,7 @@ import dataclasses
 from collections.abc import Generator, Sequence
 from enum import IntEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from typing import NotRequired
@@ -24,6 +24,8 @@ if TYPE_CHECKING:
 
 TupleArray: TypeAlias = tuple[int, ...]
 AnyArray: TypeAlias = Sequence[int]
+NodeID: TypeAlias = str
+UserID: TypeAlias = str
 SharedKeys = dict[str, TupleArray]  # owner (User Id) -> share keys
 
 
@@ -37,9 +39,9 @@ class NodeType(IntEnum):
 
 
 class NodeSerialized(TypedDict):
-    h: str  # ID
-    p: str  # Parent ID
-    u: str  # Owner (user ID)
+    h: NodeID  # ID
+    p: NodeID  # Parent ID
+    u: UserID  # Owner (user ID)
     t: ReadOnly[NodeType]
     a: str  # Serialized attributes
     ts: int  # Timestamp (creation date)
@@ -47,10 +49,6 @@ class NodeSerialized(TypedDict):
     k: NotRequired[str]  # Node keys
     su: NotRequired[str]  # Share owner (user ID), only present present in shared (public) files / folder
     sk: NotRequired[str]  # Share key, only present present in shared (public) files / folder
-
-
-class FolderSerialized(NodeSerialized):
-    t: ReadOnly[Literal[NodeType.FOLDER]]
 
 
 class ShareKeySerialized(TypedDict):
@@ -72,10 +70,10 @@ class GetNodesResponse(TypedDict):
     s: list[ShareKeySerialized2]
 
 
-class RequestDownloadResponse(TypedDict):
+class FileInfoSerialized(TypedDict):
     s: int  # size
-    at: str
-    fa: str  # file attributes (thumb, audio or video)
+    at: str  # Serialized attributes
+    fa: str  # Media file attributes (thumb, audio or video)
     g: NotRequired[str]  # direct download URL
 
 
@@ -99,8 +97,8 @@ class _DictParser:
         return cls(**cls._filter_dict(data))
 
 
-@dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
-class DownloadResponse(_DictDumper):
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+class FileInfo(_DictDumper):
     name: str
     size: int
     url: str | None
@@ -122,14 +120,14 @@ class Crypto(_DictDumper):
 # Can't be frozen because we populate attrs and crypto after instance creation
 @dataclasses.dataclass(slots=True, order=True, weakref_slot=True)
 class Node(_DictDumper):
-    id: str
-    parent_id: str
-    owner: str
+    id: NodeID
+    parent_id: NodeID
+    owner: UserID
     type: NodeType
     attributes: Attributes = dataclasses.field(init=False)
     created_at: int
-    keys: MappingProxyType[str, str]
-    share_owner: str | None
+    keys: MappingProxyType[UserID, str]
+    share_owner: UserID | None
     share_key: str | None
 
     _a: str
@@ -197,11 +195,12 @@ class AccountBalance(_DictDumper):
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class AccountStats(_DictParser, _DictDumper):
+    storage: StorageQuota
     balance: AccountBalance
+    metrics: dict[NodeID, StorageMetrics]
     subs: list[str]
     plans: list[str]
-    storage: StorageQuota
-    metrics: dict[str, StorageMetrics]  # Mapping of node_id > Storage metrics
+    features: list[str]
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
@@ -250,7 +249,7 @@ class StorageQuota(_DictDumper):
 
 
 class UserResponse(TypedDict, total=False):
-    u: str  # user id
+    u: UserID
     since: int  # timestamp of account creation
     email: str
     emails: list[str]
