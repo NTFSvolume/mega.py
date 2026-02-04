@@ -33,6 +33,7 @@ from mega.data_structures import (
     FileInfo,
     FileInfoSerialized,
     Node,
+    NodeID,
     NodeType,
     UserResponse,
 )
@@ -64,19 +65,15 @@ class Mega(MegaCore):
     async def close(self) -> None:
         await self._api.close()
 
-    async def search(self, query: Path | str, *, exclude_deleted: bool = True) -> dict[Node, PurePosixPath]:
-        """
-        Return nodes that have "query" as a substring on their path
-        """
+    async def search(self, query: Path | str, *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
+        """Return nodes that have "query" as a substring on their path"""
         fs = await self.get_filesystem()
         return dict(fs.search(query, exclude_deleted=exclude_deleted))
 
     async def find(self, query: Path | str) -> Node | None:
-        res = await self.search(query)
-        query = PurePosixPath(query).as_posix()
-        for node, path in res.items():
-            if path.as_posix().startswith(query):
-                return node
+        """Return the first node that which path starts with `query`"""
+        fs = await self.get_filesystem()
+        return fs.find(query)
 
     async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
         if self._filesystem is None or force:

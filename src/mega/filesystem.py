@@ -79,13 +79,20 @@ class FileSystem(_DictDumper):
         return iter(self._nodes.values())
 
     def __getitem__(self, node_id: NodeID) -> Node:
+        """Get the node with this ID"""
         return self._nodes[node_id]
 
     def get(self, node_id: NodeID) -> Node | None:
+        """Get the node with this ID (If it exists)"""
         return self._nodes.get(node_id)
 
     def _was_deleted(self, node: Node) -> bool:
         return node.parent_id == self.trash_bin.id if self.trash_bin else False
+
+    @property
+    def paths(self) -> MappingProxyType[NodeID, PurePosixPath]:
+        """A mapping of every node to its absolute path within the filesystem"""
+        return self._paths
 
     @property
     def files(self) -> Iterable[Node]:
@@ -105,7 +112,7 @@ class FileSystem(_DictDumper):
     def deleted(self) -> Iterable[Node]:
         """All files or folders currently on the trash bin"""
         if self.trash_bin:
-            yield from self.ls_dir(self.trash_bin.id)
+            yield from self.iterdir(self.trash_bin.id)
 
     @property
     def file_count(self) -> int:
@@ -119,25 +126,13 @@ class FileSystem(_DictDumper):
     def deleted_count(self) -> int:
         return sum(1 for _ in self.deleted)
 
-    def ls_dir(self, node_id: NodeID, *, recursive: bool = False) -> Iterable[Node]:
-        """Get childs of this node"""
-        for child_id in self._ls_dir(node_id, recursive=recursive):
-            yield self[child_id]
-
-    def _ls_dir(self, node_id: NodeID, *, recursive: bool) -> Iterable[NodeID]:
-        """Get ID of every child of this node"""
-        for child_id in self._children.get(node_id, ()):
-            yield child_id
-            if recursive:
-                yield from self._ls_dir(child_id, recursive=recursive)
-
     def resolve(self, node_id: NodeID) -> PurePosixPath:
         """Get the path of this node"""
         return self._paths[node_id]
 
     def search(
         self, query: str | PathLike[str], *, exclude_deleted: bool = True
-    ) -> Iterable[tuple[Node, PurePosixPath]]:
+    ) -> Iterable[tuple[NodeID, PurePosixPath]]:
         """Returns nodes that have "query" as a substring on their path"""
 
         query = PurePosixPath(query).as_posix()
@@ -145,28 +140,51 @@ class FileSystem(_DictDumper):
         for node_id, path in self._paths.items():
             if query not in path.as_posix():
                 continue
-            node = self[node_id]
-            if exclude_deleted and self._was_deleted(node):
-                continue
-            yield node, path
 
-    def create_children_map(self, node_id: str) -> dict[NodeID, PurePosixPath]:
-        """Creates a mapping from `node id` -> `Path` only including children of this node (resursively)"""
+            if exclude_deleted and self._was_deleted(self[node_id]):
+                continue
+            yield node_id, path
+
+    def find(self, query: str | PathLike[str]) -> Node | None:
+        """Return the first node which path starts with `query`"""
+        query = PurePosixPath(query).as_posix()
+        for node_id, path in self.search(query):
+            if path.as_posix().startswith(query):
+                return self[node_id]
+
+    def iterdir(self, node_id: NodeID, *, recursive: bool = False) -> Iterable[Node]:
+        """Iterate over the children in this node"""
+        for child_id in self._ls(node_id, recursive=recursive):
+            yield self[child_id]
+
+    def listdir(self, node_id: NodeID) -> list[Node]:
+        """Get a list of children of this node (non recursive)"""
+        return list(self.iterdir(node_id))
+
+    def dirmap(self, node_id: str, *, recursive: bool = False) -> dict[NodeID, PurePosixPath]:
+        """Creates a mapping from `node id` -> `Path` only including children of this node"""
 
         pairs = (
             (child_id, self.resolve(child_id))
-            for child_id in self._ls_dir(
+            for child_id in self._ls(
                 node_id,
-                recursive=True,
+                recursive=recursive,
             )
         )
         return dict(sorted(pairs, key=lambda x: str(x[1]).casefold()))
+
+    def _ls(self, node_id: NodeID, *, recursive: bool) -> Iterable[NodeID]:
+        """Get ID of every child of this node"""
+        for child_id in self._children.get(node_id, ()):
+            yield child_id
+            if recursive:
+                yield from self._ls(child_id, recursive=recursive)
 
     def _resolve_paths(self, *root_ids: str) -> dict[NodeID, PurePosixPath]:
         paths: dict[NodeID, PurePosixPath] = {}
 
         def walk(parent_id: str, current_path: PurePosixPath) -> None:
-            for node in self.ls_dir(parent_id):
+            for node in self.iterdir(parent_id):
                 node_path = current_path / node.attributes.name
                 paths[node.id] = node_path
 
