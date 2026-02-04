@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
+from rich.logging import RichHandler
 
 from mega.auth import MegaAuth
 from mega.crypto import (
@@ -45,6 +46,13 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+def _setup_logger(name: str = "mega") -> None:
+    handler = RichHandler(show_time=False, rich_tracebacks=True)
+    logger = logging.getLogger(name)
+    logger.setLevel(10)
+    logger.addHandler(handler)
 
 
 class MegaCore:
@@ -259,7 +267,7 @@ class MegaCore:
             }
         )
 
-    async def _destroy(self, *node_ids: str) -> dict[str, Any]:
+    async def _destroy(self, *node_ids: str) -> int:
         """Destroy a file or folder by its private id (bypass trash bin)"""
         self._filesystem = None
         return await self._api.request(

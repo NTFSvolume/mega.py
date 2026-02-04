@@ -27,12 +27,14 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import AccountStats, Attributes, Crypto, DownloadResponse, Node, NodeType, UserResponse
+from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeType, UserResponse
 from mega.filesystem import FileSystem, UserFileSystem
 
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
+    import aiohttp
+
     from mega.data_structures import GetNodesResponse
 
 
@@ -42,8 +44,8 @@ logger = logging.getLogger(__name__)
 class Mega(MegaCore):
     """Interface with all the public methods of the API"""
 
-    def __init__(self) -> None:
-        super().__init__(api=MegaAPI())
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        super().__init__(api=MegaAPI(session))
 
     async def __aenter__(self) -> Self:
         return self
@@ -138,9 +140,10 @@ class Mega(MegaCore):
         """Delete a file or folder by its private id (move it to the trash bin)"""
         return await self.move(node_id, NodeType.TRASH)
 
-    async def destroy(self, node_id: str) -> dict[str, Any]:
+    async def destroy(self, node_id: str) -> bool:
         """Destroy a file or folder by its private id (bypass trash bin)"""
-        return await self._destroy(node_id)
+        resp = await self._destroy(node_id)
+        return resp == 0
 
     async def empty_trash(self) -> dict[str, Any] | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
@@ -189,7 +192,7 @@ class Mega(MegaCore):
         key: tuple[int, ...],
         parent_id: str | None = None,
         is_public: bool = False,
-    ) -> DownloadResponse:
+    ) -> FileInfo:
         resp = await self._api.request(
             {
                 "a": "g",
@@ -199,7 +202,7 @@ class Mega(MegaCore):
             params={"n": parent_id} if parent_id else None,
         )
         attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
-        return DownloadResponse(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
+        return FileInfo(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
 
     async def download(self, node: Node, output_dir: Path | str | None = None) -> Path:
         """Download a file by it's file object."""
@@ -253,7 +256,7 @@ class Mega(MegaCore):
 
     async def _download_file(
         self,
-        dl: DownloadResponse,
+        dl: FileInfo,
         crypto: Crypto,
         output_folder: Path | str | None = None,
     ) -> Path:
@@ -369,7 +372,7 @@ class Mega(MegaCore):
         fs = await self.get_filesystem()
         return await self._mkdir(name=path, parent_node_id=fs.root.id)
 
-    async def rename(self, node: Node, new_name: str) -> int:
+    async def rename(self, node: Node, new_name: str) -> bool:
         if not new_name:
             raise ValidationError
 
@@ -387,9 +390,10 @@ class Mega(MegaCore):
                 "i": self._api._client_id,
             }
         )
-        if resp:
+        success = resp == 0
+        if success:
             node.attributes = new_attrs
-        return resp
+        return success
 
     async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
         target = NodeType(target)
@@ -414,7 +418,7 @@ class Mega(MegaCore):
         """
         return await self._edit_contact(email, add=False)
 
-    async def get_public_file_info(self, public_handle: str, public_key: str) -> DownloadResponse:
+    async def get_public_file_info(self, public_handle: str, public_key: str) -> FileInfo:
         """
         Get size and name of a public file
         """
@@ -422,9 +426,7 @@ class Mega(MegaCore):
         key = self._vault.compose_crypto(NodeType.FILE, full_key).key
         return await self._request_file_download(public_handle, key, is_public=True)
 
-    async def import_public_file(
-        self, public_handle: str, public_key: str, dest_node_id: str | None = None
-    ) -> GetNodesResponse:
+    async def import_public_file(self, public_handle: str, public_key: str, dest_node_id: str | None = None) -> Node:
         """
         Import the public file into user account
         """
@@ -454,4 +456,4 @@ class Mega(MegaCore):
         )
         if resp:
             self._filesystem = None
-        return resp
+        return self._deserialize_node(resp["f"][0])

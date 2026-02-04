@@ -79,6 +79,7 @@ class MegaAPI:
         headers = self._default_headers
 
         for solve_xhashcash in (True, False):
+            logger.debug(f"Making POST request with {params=!r} {data=!r} {headers=!r}")
             async with self._lazy_session().post(
                 self._entrypoint, params=params, json=data, headers=headers
             ) as response:
@@ -112,6 +113,7 @@ class MegaAPI:
     async def _process_resp(self, response: aiohttp.ClientResponse) -> Any:
         json_resp: list[Any] | int = await response.json()
 
+        logger.debug(f"Got response [{response.status}] json={json_resp!r}")
         if isinstance(json_resp, int):
             if json_resp == 0:
                 return json_resp

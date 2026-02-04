@@ -1,20 +1,15 @@
 import argparse
 import asyncio
-import logging
-import os
 from pathlib import Path
 from pprint import pprint
 
-from rich.logging import RichHandler
-
+from mega import env
 from mega.client import Mega
+from mega.core import _setup_logger
 
 
 async def run() -> None:
-    handler = RichHandler(show_time=False, rich_tracebacks=True)
-    logger = logging.getLogger(__name__)
-    logger.setLevel(10)
-    logger.addHandler(handler)
+    _setup_logger(__name__)
 
     parser = argparse.ArgumentParser(description="Download files from a Mega.nz URL.")
     parser.add_argument(
@@ -30,11 +25,9 @@ async def run() -> None:
         metavar="DIR",
     )
     args = parser.parse_args()
-    email = os.getenv("EMAIL")
-    password = os.getenv("PASS")
 
     async with Mega() as mega:
-        await mega.login(email, password)
+        await mega.login(env.EMAIL, env.PASSWORD)
         stats = await mega.get_account_stats()
         pprint(stats)  # noqa: T203
         public_handle, public_key = mega.parse_file_url(args.url)
