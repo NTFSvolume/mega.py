@@ -152,15 +152,6 @@ class Mega(MegaCore):
 
         return await self._destroy(*trashed_files)
 
-    async def download(self, node: Node, dest_path: Path | str | None = None) -> Path:
-        """Download a file by it's file object."""
-        resp = await self._request_file_download(node.id, node._crypto.key)
-        return await self._download_file(
-            resp,
-            node._crypto,
-            output_folder=dest_path,
-        )
-
     async def export(self, node: Node) -> str:
         if node.type is NodeType.FILE:
             await self._export_file(node)
@@ -210,7 +201,18 @@ class Mega(MegaCore):
         attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
         return DownloadResponse(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
 
-    async def download_public_file(self, public_handle: str, public_key: str, dest_path: str | None = None) -> Path:
+    async def download(self, node: Node, output_dir: Path | str | None = None) -> Path:
+        """Download a file by it's file object."""
+        resp = await self._request_file_download(node.id, node._crypto.key)
+        return await self._download_file(
+            resp,
+            node._crypto,
+            output_folder=output_dir,
+        )
+
+    async def download_public_file(
+        self, public_handle: str, public_key: str, output_dir: Path | str | None = None
+    ) -> Path:
         """
         Download a public file
         """
@@ -220,15 +222,15 @@ class Mega(MegaCore):
         return await self._download_file(
             resp,
             crypto,
-            dest_path,
+            output_dir,
         )
 
     async def download_public_folder(
-        self, public_handle: str, public_key: str, dest_path: str | None = None
+        self, public_handle: str, public_key: str, output_dir: Path | str | None = None
     ) -> list[Path | BaseException]:
         fs = await self.get_nodes_in_public_folder(public_handle, public_key)
         sem = asyncio.BoundedSemaphore(10)
-        base_path = Path(dest_path or ".")
+        base_path = Path(output_dir or ".")
 
         async def download_file(file: Node, file_path: PurePosixPath) -> Path | BaseException:
             try:
@@ -251,22 +253,22 @@ class Mega(MegaCore):
 
     async def _download_file(
         self,
-        file: DownloadResponse,
+        dl: DownloadResponse,
         crypto: Crypto,
         output_folder: Path | str | None = None,
     ) -> Path:
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
         # Strangely, files can come back later.
-        if not file.url:
+        if not dl.url:
             raise RequestError("File not accessible anymore")
 
-        output_path = Path(output_folder or Path()) / file.name
+        output_path = Path(output_folder or Path()) / dl.name
 
         return await self._really_download_file(
-            file.url,
+            dl.url,
             output_path,
-            file.size,
+            dl.size,
             crypto.iv,
             crypto.meta_mac,
             crypto.key,
@@ -373,7 +375,7 @@ class Mega(MegaCore):
 
         new_attrs = dataclasses.replace(node.attributes, n=new_name)
 
-        attribs = b64_url_encode(encrypt_attr(new_attrs.dump(), node._crypto.key))
+        attribs = b64_url_encode(encrypt_attr(new_attrs.serialize(), node._crypto.key))
         encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._vault.master_key))
 
         resp = await self._api.request(

@@ -2,6 +2,8 @@ import argparse
 import asyncio
 import logging
 import os
+from pathlib import Path
+from pprint import pprint
 
 from rich.logging import RichHandler
 
@@ -23,7 +25,7 @@ async def run() -> None:
     parser.add_argument(
         "--output-dir",
         "-o",
-        default=os.path.realpath("."),
+        default=Path(),
         help="The directory to save the downloaded file. Defaults to the current directory.",
         metavar="DIR",
     )
@@ -33,9 +35,10 @@ async def run() -> None:
 
     async with Mega() as mega:
         await mega.login(email, password)
-        print(await mega.get_account_stats())  # noqa: T201
+        stats = await mega.get_account_stats()
+        pprint(stats)  # noqa: T203
         public_handle, public_key = mega.parse_file_url(args.url)
-        await mega.download_public_file(public_handle, public_key, args.output_dir)
+        await mega.download_public_folder(public_handle, public_key, args.output_dir)
 
 
 def main() -> None:

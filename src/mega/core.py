@@ -107,7 +107,7 @@ class MegaCore:
             raise ValueError(f"URL key missing from {url}")
 
     @staticmethod
-    def _parse_folder_url(url: str) -> tuple[str, str]:
+    def parse_folder_url(url: str) -> tuple[str, str]:
         if "/folder/" in url:
             _, parts = url.split("/folder/", 1)
         elif "#F!" in url:
@@ -128,7 +128,7 @@ class MegaCore:
 
         self._vault.init_shared_keys(nodes_resp)
         nodes = await self._deserialize_nodes(nodes_resp["f"])
-        return UserFileSystem(nodes)
+        return await asyncio.to_thread(UserFileSystem, nodes)
 
     async def _deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
         """

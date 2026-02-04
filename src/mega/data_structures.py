@@ -12,7 +12,7 @@ Mega API information
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from enum import IntEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict
@@ -72,11 +72,18 @@ class GetNodesResponse(TypedDict):
     s: list[ShareKeySerialized2]
 
 
-class GetNodeResponse(TypedDict):
-    s: int
+class RequestDownloadResponse(TypedDict):
+    s: int  # size
     at: str
     fa: str  # file attributes (thumb, audio or video)
     g: NotRequired[str]  # direct download URL
+
+
+class _DictDumper:
+    __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
+
+    def dump(self) -> dict[str, Any]:
+        return dataclasses.asdict(self)
 
 
 class _DictParser:
@@ -93,14 +100,14 @@ class _DictParser:
 
 
 @dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
-class DownloadResponse:
+class DownloadResponse(_DictDumper):
     name: str
     size: int
     url: str | None
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class Crypto:
+class Crypto(_DictDumper):
     key: tuple[int, ...]
     iv: tuple[int, int, int, int]
     meta_mac: tuple[int, int]
@@ -108,10 +115,13 @@ class Crypto:
     full_key: tuple[int, int, int, int]
     share_key: tuple[int, ...] | None
 
+    def __iter__(self) -> Generator[tuple[int, ...]]:
+        yield from dataclasses.astuple(self)
+
 
 # Can't be frozen because we populate attrs and crypto after instance creation
 @dataclasses.dataclass(slots=True, order=True, weakref_slot=True)
-class Node:
+class Node(_DictDumper):
     id: str
     parent_id: str
     owner: str
@@ -149,7 +159,7 @@ _LABELS: Final = "", "red", "orange", "yellow", "green", "blue", "purple", "grey
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class Attributes:
+class Attributes(_DictDumper):
     name: str
     label: str = ""
     favorited: bool = False
@@ -162,7 +172,7 @@ class Attributes:
             favorited=bool(attrs.get("fav")),
         )
 
-    def dump(self) -> dict[str, Any]:
+    def serialize(self) -> dict[str, Any]:
         return {
             key: value
             for key, value in [
@@ -175,13 +185,18 @@ class Attributes:
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class AccountBalance:
+class AccountBalance(_DictDumper):
     amount: float
     currency: str
 
+    @classmethod
+    def parse(cls, balance: list[tuple[float, str]] | None) -> Self:
+        amount, currency = balance[0] if balance else (0.0, "EUR")
+        return cls(float(amount), str(currency))
+
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class AccountStats(_DictParser):
+class AccountStats(_DictParser, _DictDumper):
     balance: AccountBalance
     subs: list[str]
     plans: list[str]
@@ -190,28 +205,30 @@ class AccountStats(_DictParser):
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
-        balance = (data.get("balance") or [[0.0, "EUR"]])[0]
-
         clean_data = cls._filter_dict(data)
         clean_data.update(
             {
                 "storage": StorageQuota.parse(data),
-                "balance": AccountBalance(float(balance[0]), str(balance[1])),
-                "metrics": {node_id: StorageMetrics(*stats[0:3]) for node_id, stats in data["cstrgn"].items()},
+                "balance": AccountBalance.parse(data.get("balance")),
+                "metrics": {node_id: StorageMetrics.parse(stats) for node_id, stats in data["cstrgn"].items()},
             }
         )
         return cls(**clean_data)
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class StorageMetrics:
+class StorageMetrics(_DictDumper):
     bytes_used: int
     files: int
     folders: int
 
+    @classmethod
+    def parse(cls, metrics: list[int]) -> Self:
+        return cls(*metrics[0:3])
+
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class StorageQuota:
+class StorageQuota(_DictDumper):
     used: int
     total: int
 
