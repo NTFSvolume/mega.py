@@ -1,23 +1,45 @@
 import asyncio
 import dataclasses
 from collections.abc import Iterable, Iterator, Sequence
-from pathlib import Path, PurePosixPath
+from os import PathLike
+from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Self
 
-from mega.data_structures import Node, NodeID, NodeType
+from mega.data_structures import Node, NodeID, NodeType, _DictDumper
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
-class FileSystem:
-    """An abstract representaion of the MegaNZ's filesystem"""
+class FileSystem(_DictDumper):
+    """An read-only representation of the Mega.nz's filesystem
+
+    NOTE: Folders can have multiple nodes with the same name"""
 
     root: Node | None
     inbox: Node | None
     trash_bin: Node | None
+
     _nodes: MappingProxyType[NodeID, Node]
-    _children: MappingProxyType[NodeID, list[NodeID]]
+    _children: MappingProxyType[NodeID, tuple[NodeID, ...]]
     _paths: MappingProxyType[NodeID, PurePosixPath]
+
+    def __repr__(self) -> str:
+        fields = ",".join(
+            f"{name}={value!r}"
+            for (name, value) in (
+                ("root", self.root),
+                ("inbox", self.inbox),
+                ("trash_bin", self.trash_bin),
+                ("files", self.file_count),
+                ("folders", self.folder_count),
+                ("deleted", self.deleted_count),
+            )
+        )
+        return f"<{type(self).__name__}>({fields})"
+
+    @classmethod
+    async def built(cls, nodes: Sequence[Node]) -> Self:
+        return await asyncio.to_thread(cls._built, nodes)
 
     @classmethod
     def _built(cls, nodes: Sequence[Node]) -> Self:
@@ -42,31 +64,13 @@ class FileSystem:
             inbox,
             trash_bin,
             MappingProxyType(nodes_map),
-            MappingProxyType(children),
+            MappingProxyType({k: tuple(v) for k, v in children.items()}),
             MappingProxyType(paths),
         )
 
-        roots = list(filter(None, (root, inbox, trash_bin))) or [next(iter(nodes))]
-        paths.update(self._build_fs_paths(*[root.id for root in roots]))
+        roots = list(filter(None, (root, inbox, trash_bin))) or [nodes[0]]
+        paths.update(self._resolve_paths(*[root.id for root in roots]))
         return self
-
-    @classmethod
-    async def built(cls, nodes: Sequence[Node]) -> Self:
-        return await asyncio.to_thread(cls._built, nodes)
-
-    def __repr__(self) -> str:
-        text = ",".join(
-            f"{name}={value!r}"
-            for (name, value) in (
-                ("root", self.root),
-                ("inbox", self.inbox),
-                ("trash_bin", self.trash_bin),
-                ("files", self.file_count),
-                ("folders", self.folder_count),
-                ("deleted", self.deleted_count),
-            )
-        )
-        return f"<{type(self).__name__}>({text})"
 
     def __len__(self) -> int:
         return len(self._nodes)
@@ -105,29 +109,36 @@ class FileSystem:
 
     @property
     def file_count(self) -> int:
-        return len(tuple(self.files))
+        return sum(1 for _ in self.files)
 
     @property
     def folder_count(self) -> int:
-        return len(tuple(self.folders))
+        return sum(1 for _ in self.folders)
 
     @property
     def deleted_count(self) -> int:
-        return len(tuple(self.deleted))
+        return sum(1 for _ in self.deleted)
 
-    def ls_dir(self, node_id: NodeID) -> Iterable[Node]:
-        """Get childs of this node (non resursive)"""
-        for child_id in self._children.get(node_id, []):
+    def ls_dir(self, node_id: NodeID, *, recursive: bool = False) -> Iterable[Node]:
+        """Get childs of this node"""
+        for child_id in self._ls_dir(node_id, recursive=recursive):
             yield self[child_id]
+
+    def _ls_dir(self, node_id: NodeID, *, recursive: bool) -> Iterable[NodeID]:
+        """Get ID of every child of this node"""
+        for child_id in self._children.get(node_id, ()):
+            yield child_id
+            if recursive:
+                yield from self._ls_dir(child_id, recursive=recursive)
 
     def resolve(self, node_id: NodeID) -> PurePosixPath:
         """Get the path of this node"""
         return self._paths[node_id]
 
-    def search(self, query: Path | str, *, exclude_deleted: bool = True) -> Iterable[tuple[Node, PurePosixPath]]:
-        """
-        Returns nodes that have "query" as a substring on their path
-        """
+    def search(
+        self, query: str | PathLike[str], *, exclude_deleted: bool = True
+    ) -> Iterable[tuple[Node, PurePosixPath]]:
+        """Returns nodes that have "query" as a substring on their path"""
 
         query = PurePosixPath(query).as_posix()
 
@@ -139,7 +150,19 @@ class FileSystem:
                 continue
             yield node, path
 
-    def _build_fs_paths(self, *root_ids: str) -> dict[NodeID, PurePosixPath]:
+    def create_children_map(self, node_id: str) -> dict[NodeID, PurePosixPath]:
+        """Creates a mapping from `node id` -> `Path` only including children of this node (resursively)"""
+
+        pairs = (
+            (child_id, self.resolve(child_id))
+            for child_id in self._ls_dir(
+                node_id,
+                recursive=True,
+            )
+        )
+        return dict(sorted(pairs, key=lambda x: str(x[1]).casefold()))
+
+    def _resolve_paths(self, *root_ids: str) -> dict[NodeID, PurePosixPath]:
         paths: dict[NodeID, PurePosixPath] = {}
 
         def walk(parent_id: str, current_path: PurePosixPath) -> None:
