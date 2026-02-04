@@ -33,8 +33,9 @@ async def run() -> None:
 
     async with Mega() as mega:
         await mega.login(email, password)
-        await mega.get_account_data()
-        await mega.download_url(url=args.url, dest_path=args.output_dir)
+        print(await mega.get_account_stats())  # noqa: T201
+        public_handle, public_key = mega.parse_file_url(args.url)
+        await mega.download_public_file(public_handle, public_key, args.output_dir)
 
 
 def main() -> None:

@@ -9,7 +9,6 @@ import re
 import shutil
 import tempfile
 from collections.abc import Generator
-from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from Crypto.Cipher import AES
@@ -30,7 +29,7 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import Node, NodeType
+from mega.data_structures import Node
 from mega.filesystem import UserFileSystem
 from mega.progress import ProgressManager
 from mega.vault import MegaKeysVault
@@ -38,7 +37,8 @@ from mega.vault import MegaKeysVault
 from .errors import ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Mapping
+    from collections.abc import Generator, Iterable
+    from pathlib import Path
 
     from mega.api import MegaAPI
     from mega.data_structures import GetNodesResponse, NodeSerialized, TupleArray
@@ -55,6 +55,7 @@ class MegaCore:
         self._vault = MegaKeysVault(())
         self._progress = ProgressManager()
         self._filesystem: UserFileSystem | None = None
+        self._lock = asyncio.Lock()
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(fs={self.filesystem!r}, vault={self._vault!r})"
@@ -75,7 +76,7 @@ class MegaCore:
             master_key, self._api.session_id = await self._auth.login_anonymous()
 
         self._vault = MegaKeysVault(master_key)
-        logger.info("Getting all files and decryption keys of the account...")
+        logger.info("Getting all nodes and decryption keys of the account...")
         self._filesystem = await self._prepare_filesystem()
         logger.info(f"File system: {self.filesystem}")
         logger.info("Login complete")
@@ -84,7 +85,7 @@ class MegaCore:
         return self._vault.decrypt(Node.parse(node))
 
     @staticmethod
-    def _parse_url(url: str) -> str:
+    def parse_file_url(url: str) -> tuple[str, str]:
         """Parse file id and key from url."""
         if "/file/" in url:
             # V2 URL structure
@@ -95,13 +96,13 @@ class MegaCore:
             assert match
             id_index = match.end()
             key = url[id_index + 1 :]
-            return f"{file_id}!{key}"
+            return file_id, key
         elif "!" in url:
             # V1 URL structure
             # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
             match = re.findall(r"/#!(.*)", url)
             path = match[0]
-            return path
+            return path.split("!")
         else:
             raise ValueError(f"URL key missing from {url}")
 
@@ -258,35 +259,19 @@ class MegaCore:
             }
         )
 
-    async def build_file_system(self, nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
-        return await asyncio.to_thread(_build_file_system, nodes_map, root_ids)
-
-
-def _build_file_system(nodes_map: Mapping[str, Node], root_ids: list[str]) -> dict[PurePosixPath, Node]:
-    """Builds a flattened dictionary representing the users' file system"""
-
-    filesystem: dict[PurePosixPath, Node] = {}
-    parents_map: dict[str, list[Node]] = {}
-
-    for node in nodes_map.values():
-        parents_map.setdefault(node.parent_id, []).append(node)
-
-    def build_tree(parent_id: str, current_path: PurePosixPath) -> None:
-        for node in parents_map.get(parent_id, []):
-            node_path = current_path / node.attributes.name
-            filesystem[node_path] = node
-
-            if node.type is NodeType.FOLDER:
-                build_tree(node.id, node_path)
-
-    for root_id in root_ids:
-        root_node = nodes_map[root_id]
-        name = root_node.attributes.name
-        path = PurePosixPath("." if root_node.type is NodeType.ROOT_FOLDER else name)
-        filesystem[path] = root_node
-        build_tree(root_id, path)
-
-    return dict(sorted(filesystem.items()))
+    async def _destroy(self, *node_ids: str) -> dict[str, Any]:
+        """Destroy a file or folder by its private id (bypass trash bin)"""
+        self._filesystem = None
+        return await self._api.request(
+            [
+                {
+                    "a": "d",
+                    "n": node_id,
+                    "i": self._api._client_id,
+                }
+                for node_id in node_ids
+            ]
+        )
 
 
 @dataclasses.dataclass(slots=True, weakref_slot=True)

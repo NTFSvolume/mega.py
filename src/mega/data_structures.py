@@ -93,7 +93,7 @@ class _DictParser:
 
 
 @dataclasses.dataclass(slots=True, order=True, frozen=True, weakref_slot=True)
-class File:
+class DownloadResponse:
     name: str
     size: int
     url: str | None

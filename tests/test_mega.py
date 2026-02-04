@@ -245,7 +245,7 @@ async def test_remove_contact(mega: Mega) -> None:
     ],
 )
 def test_parse_url(url: str, expected_file_id_and_key: str) -> None:
-    assert Mega._parse_url(url) == expected_file_id_and_key
+    assert Mega.parse_file_url(url) == expected_file_id_and_key
 
 
 class TestAPIRequest:

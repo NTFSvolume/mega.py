@@ -106,7 +106,7 @@ class FileSystem:
         """Get the path of this node"""
         return self._paths[node_id]
 
-    def search(self, query: Path | str, *, exclude_deleted: bool = True) -> Iterable[Node]:
+    def search(self, query: Path | str, *, exclude_deleted: bool = True) -> Iterable[tuple[Node, PurePosixPath]]:
         """
         Returns nodes that have "query" as a substring on their path
         """
@@ -119,7 +119,7 @@ class FileSystem:
             node = self[node_id]
             if exclude_deleted and self._was_deleted(node):
                 continue
-            yield node
+            yield node, path
 
     def _build_fs_paths(self, *root_ids: str) -> dict[NodeID, PurePosixPath]:
         paths: dict[NodeID, PurePosixPath] = {}

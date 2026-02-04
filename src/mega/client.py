@@ -27,15 +27,7 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import (
-    AccountStats,
-    Attributes,
-    File,
-    GetNodeResponse,
-    Node,
-    NodeType,
-    UserResponse,
-)
+from mega.data_structures import AccountStats, Attributes, Crypto, DownloadResponse, Node, NodeType, UserResponse
 from mega.filesystem import FileSystem, UserFileSystem
 
 from .errors import MegaNzError, RequestError, ValidationError
@@ -62,20 +54,25 @@ class Mega(MegaCore):
     async def close(self) -> None:
         await self._api.close()
 
-    async def _search(self, query: Path | str, *, exclude_deleted: bool = True) -> list[Node]:
+    async def search(self, query: Path | str, *, exclude_deleted: bool = True) -> dict[Node, PurePosixPath]:
         """
         Return nodes that have "query" as a substring on their path
         """
         fs = await self.get_filesystem()
-        return list(fs.search(query, exclude_deleted=exclude_deleted))
+        return dict(fs.search(query, exclude_deleted=exclude_deleted))
 
-    async def find_by_handle(self, handle: str) -> Node | None:
-        fs = await self.get_filesystem()
-        return fs.get(handle)
+    async def find(self, query: Path | str) -> Node | None:
+        res = await self.search(query)
+        query = PurePosixPath(query).as_posix()
+        for node, path in res.items():
+            if path.as_posix().startswith(query):
+                return node
 
-    async def get_filesystem(self, force: bool = False) -> UserFileSystem:
+    async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
         if self._filesystem is None or force:
-            self._filesystem = await self._prepare_filesystem()
+            async with self._lock:
+                if self._filesystem is None or force:
+                    self._filesystem = await self._prepare_filesystem()
 
         return self._filesystem
 
@@ -90,6 +87,7 @@ class Mega(MegaCore):
     async def get_folder_link(self, folder: Node) -> str:
         if folder.type not in (NodeType.FILE, NodeType.FOLDER):
             raise ValueError
+
         assert folder._crypto and folder._crypto.share_key
         public_handle = await self._get_public_handle(folder.id)
         public_key = a32_to_base64(folder._crypto.share_key)
@@ -113,7 +111,7 @@ class Mega(MegaCore):
         return await self._api.request({"a": "ug"})
 
     async def get_id_from_public_handle(self, public_handle: str) -> str:
-        node_data: GetNodesResponse = await self._api.request(
+        resp: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
                 "f": 1,
@@ -121,10 +119,10 @@ class Mega(MegaCore):
             }
         )
 
-        return node_data["f"][0]["h"]
+        return resp["f"][0]["h"]
 
-    async def get_account_data(self) -> AccountStats:
-        json_resp: dict[str, Any] = await self._api.request(
+    async def get_account_stats(self) -> AccountStats:
+        resp: dict[str, Any] = await self._api.request(
             {
                 "a": "uq",
                 "xfer": 1,  # transfer quota
@@ -134,60 +132,33 @@ class Mega(MegaCore):
                 "v": 2,
             }
         )
-        return AccountStats.parse(json_resp)
+        return AccountStats.parse(resp)
 
-    async def delete(self, public_handle: str) -> dict[str, Any]:
-        """Delete a file by its public handle."""
-        return await self.move(public_handle, NodeType.TRASH)
+    async def delete(self, node_id: str) -> dict[str, Any]:
+        """Delete a file or folder by its private id (move it to the trash bin)"""
+        return await self.move(node_id, NodeType.TRASH)
 
-    async def delete_url(self, url: str) -> dict[str, Any]:
-        """Delete a file by its url"""
-        public_handle, _ = self._parse_url(url).split("!")
-        file_id = await self.get_id_from_public_handle(public_handle)
-        return await self.move(file_id, NodeType.TRASH)
-
-    async def destroy(self, file_id: str) -> dict[str, Any]:
+    async def destroy(self, node_id: str) -> dict[str, Any]:
         """Destroy a file or folder by its private id (bypass trash bin)"""
-        return await self._api.request(
-            {
-                "a": "d",  # Action: delete
-                "n": file_id,  # Node: file Id
-                "i": self._api._client_id,  # Request Id
-            }
-        )
-
-    async def destroy_url(self, url: str) -> dict[str, Any]:
-        """Destroy a file by its url (bypass trash bin)"""
-        public_handle, *_ = self._parse_url(url).split("!")
-        file_id = await self.get_id_from_public_handle(public_handle)
-        return await self.destroy(file_id)
+        return await self._destroy(node_id)
 
     async def empty_trash(self) -> dict[str, Any] | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
 
         fs = await self.get_filesystem()
-        trashed_files = list(fs.deleted)
+        trashed_files = [f.id for f in fs.deleted]
         if not trashed_files:
             return
 
-        return await self._api.request(
-            [
-                {
-                    "a": "d",  # Action: delete
-                    "n": file.id,  # Node: file #Id
-                    "i": self._api._client_id,  # Request Id
-                }
-                for file in trashed_files
-            ]
-        )
+        return await self._destroy(*trashed_files)
 
-    async def download(self, file: Node, dest_path: Path | str | None = None) -> Path:
+    async def download(self, node: Node, dest_path: Path | str | None = None) -> Path:
         """Download a file by it's file object."""
+        resp = await self._request_file_download(node.id, node._crypto.key)
         return await self._download_file(
-            file_handle=file.id,
-            file_key=file._crypto.key,
-            dest_path=dest_path,
-            is_public=False,
+            resp,
+            node._crypto,
+            output_folder=dest_path,
         )
 
     async def export(self, node: Node) -> str:
@@ -196,7 +167,7 @@ class Mega(MegaCore):
             return await self.get_public_link(node)
 
         elif node.type is not NodeType.FOLDER:
-            msg = "Can only export files or folders, not {node.type}"
+            msg = f"Can only export files or folders, not {node.type}"
             raise ValidationError(msg)
 
         try:
@@ -207,23 +178,7 @@ class Mega(MegaCore):
             fs = await self.get_filesystem(force=True)
             return await self.get_folder_link(fs[node.id])
 
-    async def download_url(self, url: str, dest_path: str | None = None) -> Path:
-        """
-        Download a file by it's public url
-        """
-        file_id, public_key = self._parse_url(url).split("!", 1)
-        full_key = b64_to_a32(public_key)
-        key = self._vault.compose_crypto(NodeType.FILE, full_key).key
-        return await self._download_file(
-            file_handle=file_id,
-            file_key=key,
-            dest_path=dest_path,
-            is_public=True,
-        )
-
-    async def get_nodes_public_folder(self, url: str) -> FileSystem:
-        public_handle, public_key = self._parse_folder_url(url)
-
+    async def get_nodes_in_public_folder(self, public_handle: str, public_key: str) -> FileSystem:
         folder: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
@@ -237,47 +192,56 @@ class Mega(MegaCore):
         nodes = await self._deserialize_nodes(folder["f"], public_key)
         return FileSystem(nodes)
 
-    async def download_folder_url(self, url: str, dest_path: str | None = None) -> list[Path]:
-        folder_id, _ = self._parse_folder_url(url)
-        fs = await self.get_nodes_public_folder(url)
+    async def _request_file_download(
+        self,
+        handle: str,
+        key: tuple[int, ...],
+        parent_id: str | None = None,
+        is_public: bool = False,
+    ) -> DownloadResponse:
+        resp = await self._api.request(
+            {
+                "a": "g",
+                "g": 1,
+                "p" if is_public else "n": handle,
+            },
+            params={"n": parent_id} if parent_id else None,
+        )
+        attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
+        return DownloadResponse(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
 
+    async def download_public_file(self, public_handle: str, public_key: str, dest_path: str | None = None) -> Path:
+        """
+        Download a public file
+        """
+        full_key = b64_to_a32(public_key)
+        crypto = self._vault.compose_crypto(NodeType.FILE, full_key)
+        resp = await self._request_file_download(public_handle, crypto.key, is_public=True)
+        return await self._download_file(
+            resp,
+            crypto,
+            dest_path,
+        )
+
+    async def download_public_folder(
+        self, public_handle: str, public_key: str, dest_path: str | None = None
+    ) -> list[Path | BaseException]:
+        fs = await self.get_nodes_in_public_folder(public_handle, public_key)
         sem = asyncio.BoundedSemaphore(10)
+        base_path = Path(dest_path or ".")
 
-        async def download_file(file: Node, file_path: PurePosixPath) -> tuple[Path, bool]:
-            download_path = Path(dest_path or ".") / file_path
+        async def download_file(file: Node, file_path: PurePosixPath) -> Path | BaseException:
             try:
-                file_data = await self._api.request(
-                    {
-                        "a": "g",
-                        "g": 1,
-                        "n": file.id,
-                    },
-                    {"n": folder_id},
-                )
-
-                file_url = file_data["g"]
-                file_size = file_data["s"]
-
-                assert file._crypto
-                await self._really_download_file(
-                    file_url,
-                    download_path,
-                    file_size,
-                    file._crypto.iv,
-                    file._crypto.meta_mac,
-                    file._crypto.key,
-                )
-                return download_path, True
-            except Exception:
+                resp = await self._request_file_download(file.id, file._crypto.key, public_handle)
+                return await self._download_file(resp, file._crypto, base_path / file_path)
+            except BaseException as e:
                 logger.exception(f"Unable to download {file}")
-                return download_path, False
-
+                return e
             finally:
                 sem.release()
 
-        results = []
+        results: list[asyncio.Task[Path | BaseException]] = []
         async with asyncio.TaskGroup() as tg:
-            self._progress.show = False
             for file in fs.files:
                 path = fs.resolve(file.id)
                 await sem.acquire()
@@ -287,23 +251,17 @@ class Mega(MegaCore):
 
     async def _download_file(
         self,
-        file_handle: str,
-        file_key: tuple[int, ...],
-        dest_path: Path | str | None = None,
-        is_public: bool = False,
+        file: DownloadResponse,
+        crypto: Crypto,
+        output_folder: Path | str | None = None,
     ) -> Path:
-        resp = await self._get_file_info(file_handle, is_public=is_public)
-        crypto = self._vault.compose_crypto(NodeType.FILE, file_key)
-        attrs = decrypt_attr(b64_url_decode(resp["at"]), crypto.key)
-        file = File(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
-
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
         # Strangely, files can come back later.
         if not file.url:
             raise RequestError("File not accessible anymore")
 
-        output_path = Path(dest_path or Path()) / file.name
+        output_path = Path(output_folder or Path()) / file.name
 
         return await self._really_download_file(
             file.url,
@@ -454,24 +412,13 @@ class Mega(MegaCore):
         """
         return await self._edit_contact(email, add=False)
 
-    async def _get_file_info(self, handle: str, is_public: bool = False) -> GetNodeResponse:
-        return await self._api.request(
-            {
-                "a": "g",
-                "g": 1,
-                "p" if is_public else "n": handle,
-            }
-        )
-
-    async def get_public_file_info(self, public_handle: str, public_key: str) -> File:
+    async def get_public_file_info(self, public_handle: str, public_key: str) -> DownloadResponse:
         """
         Get size and name of a public file
         """
-        resp = await self._get_file_info(public_handle, is_public=True)
         full_key = b64_to_a32(public_key)
         key = self._vault.compose_crypto(NodeType.FILE, full_key).key
-        attrs = decrypt_attr(b64_url_decode(resp["at"]), key)
-        return File(name=Attributes.parse(attrs).name, size=resp["s"], url=resp.get("g"))
+        return await self._request_file_download(public_handle, key, is_public=True)
 
     async def import_public_file(
         self, public_handle: str, public_key: str, dest_node_id: str | None = None
