@@ -110,7 +110,7 @@ class MegaCore:
             # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
             match = re.findall(r"/#!(.*)", url)
             path = match[0]
-            return path.split("!")
+            return tuple(path.split("!"))
         else:
             raise ValueError(f"URL key missing from {url}")
 
@@ -225,6 +225,12 @@ class MegaCore:
             }
         )
 
+    def _success(self, resp: int, clear_cache: bool = True) -> bool:
+        success = resp == 0
+        if success and clear_cache:
+            self._filesystem = None
+        return success
+
     async def _mkdir(self, name: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
         new_key = [random_u32int() for _ in range(4)]
@@ -250,11 +256,7 @@ class MegaCore:
         self._filesystem = None
         return self._deserialize_node(folders["f"][0])
 
-    async def _edit_contact(self, email: str, *, add: bool) -> dict[str, Any]:
-        """
-        Editing contacts
-        """
-
+    async def _edit_contact(self, email: str, *, add: bool) -> int:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             raise ValidationError("add_contact requires a valid email address")
 
@@ -267,7 +269,7 @@ class MegaCore:
             }
         )
 
-    async def _destroy(self, *node_ids: str) -> int:
+    async def _destroy(self, *node_ids: NodeID) -> int:
         """Destroy a file or folder by its private id (bypass trash bin)"""
         self._filesystem = None
         return await self._api.request(

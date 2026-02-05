@@ -88,7 +88,7 @@ class Mega(MegaCore):
         if file.type not in (NodeType.FILE, NodeType.FOLDER):
             raise ValueError
 
-        public_handle: str = await self._get_public_handle(file.id)
+        public_handle: NodeID = await self._get_public_handle(file.id)
         public_key = a32_to_base64(file._crypto.full_key)
         return f"{self._primary_url}/#!{public_handle}!{public_key}"
 
@@ -118,7 +118,7 @@ class Mega(MegaCore):
     async def get_user(self) -> UserResponse:
         return await self._api.request({"a": "ug"})
 
-    async def get_id_from_public_handle(self, public_handle: str) -> str:
+    async def get_id_from_public_handle(self, public_handle: NodeID) -> str:
         resp: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
@@ -150,9 +150,9 @@ class Mega(MegaCore):
     async def destroy(self, node_id: NodeID) -> bool:
         """Destroy a file or folder by its private id (bypass trash bin)"""
         resp = await self._destroy(node_id)
-        return resp == 0
+        return self._success(resp)
 
-    async def empty_trash(self) -> int | None:
+    async def empty_trash(self) -> bool | None:
         """Deletes all file in the trash bin. Returns None if the trash was already empty"""
 
         fs = await self.get_filesystem()
@@ -160,7 +160,8 @@ class Mega(MegaCore):
         if not trashed_files:
             return
 
-        return await self._destroy(*trashed_files)
+        resp = await self._destroy(*trashed_files)
+        return self._success(resp)
 
     async def export(self, node: Node) -> str:
         if node.type is NodeType.FILE:
@@ -179,7 +180,7 @@ class Mega(MegaCore):
             fs = await self.get_filesystem(force=True)
             return await self.get_folder_link(fs[node.id])
 
-    async def get_nodes_in_public_folder(self, public_handle: str, public_key: str) -> FileSystem:
+    async def get_nodes_in_public_folder(self, public_handle: NodeID, public_key: str) -> FileSystem:
         folder: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
@@ -220,7 +221,7 @@ class Mega(MegaCore):
         )
 
     async def download_public_file(
-        self, public_handle: str, public_key: str, output_dir: str | PathLike[str] | None = None
+        self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
     ) -> Path:
         """
         Download a public file
@@ -235,7 +236,7 @@ class Mega(MegaCore):
         )
 
     async def download_public_folder(
-        self, public_handle: str, public_key: str, output_dir: str | PathLike[str] | None = None
+        self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
     ) -> list[Path | BaseException]:
         fs = await self.get_nodes_in_public_folder(public_handle, public_key)
         sem = asyncio.BoundedSemaphore(10)
@@ -399,52 +400,41 @@ class Mega(MegaCore):
                 "i": self._api._client_id,
             }
         )
-        success = resp == 0
-        if success:
-            self._filesystem = None
-        return success
+        return self._success(resp)
 
     async def move(self, node_id: NodeID, target_id: NodeID) -> bool:
         resp = await self._move(node_id, target_id)
-        return resp == 0
+        return self._success(resp)
 
-    async def add_contact(self, email: str) -> dict[str, Any]:
-        """
-        Add another user to your mega contact list
-        """
-        return await self._edit_contact(email, add=True)
+    async def add_contact(self, email: str) -> bool:
+        resp = await self._edit_contact(email, add=True)
+        return self._success(resp, clear_cache=False)
 
     async def remove_contact(self, email: str) -> dict[str, Any]:
-        """
-        Remove a user to your mega contact list
-        """
         return await self._edit_contact(email, add=False)
 
-    async def get_public_file_info(self, public_handle: str, public_key: str) -> FileInfo:
-        """
-        Get size and name of a public file
-        """
+    async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
+        """Get size and name of a public file"""
         full_key = b64_to_a32(public_key)
         key = self._vault.compose_crypto(NodeType.FILE, full_key).key
         file_info = await self._request_file_info(public_handle, is_public=True)
         name = Attributes.parse(b64_decrypt_attr(file_info._at, key)).name
         return dataclasses.replace(file_info, name=name)
 
-    async def import_public_file(self, public_handle: str, public_key: str, dest_node_id: NodeID | None = None) -> Node:
-        """
-        Import the public file into user account
-        """
+    async def import_public_file(
+        self, public_handle: NodeID, public_key: str, dest_node_id: NodeID | None = None
+    ) -> Node:
+        """Import the public file into user account"""
+        if not dest_node_id:
+            dest_node_id = (await self.get_filesystem()).root.id
 
-        dest_node_id = dest_node_id or self.filesystem.root.id
-        pl_info = await self.get_public_file_info(public_handle, public_key)
-        dest_name = pl_info.name
-
+        file_info = await self.get_public_file_info(public_handle, public_key)
         full_key = b64_to_a32(public_key)
         key = self._vault.compose_crypto(NodeType.FILE, full_key).key
         encrypted_key = a32_to_base64(encrypt_key(full_key, self._vault.master_key))
-        attributes = b64_url_encode(encrypt_attr({"n": dest_name}, key))
+        attributes = b64_url_encode(encrypt_attr({"n": file_info.name}, key))
 
-        resp = await self._api.request(
+        resp: GetNodesResponse = await self._api.request(
             {
                 "a": "p",
                 "t": dest_node_id,
@@ -458,6 +448,6 @@ class Mega(MegaCore):
                 ],
             }
         )
-        if resp:
-            self._filesystem = None
+
+        self._filesystem = None
         return self._deserialize_node(resp["f"][0])

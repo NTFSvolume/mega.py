@@ -3,13 +3,14 @@ from __future__ import annotations
 import asyncio
 import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, get_origin, get_type_hints
+from typing import TYPE_CHECKING, Any, get_origin, get_type_hints
 from unittest.mock import AsyncMock
 
 import aiohttp
 import pytest
 
 from mega import env
+from mega.api import MegaAPI
 from mega.client import Mega
 from mega.core import _setup_logger
 from mega.data_structures import AccountBalance, AccountStats, Node, NodeType, StorageQuota, UserResponse
@@ -248,11 +249,11 @@ async def test_remove_contact(mega: Mega) -> None:
     [
         (
             "https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
-            "Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
+            ("Ue5VRSIQ", "kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k"),
         ),
         (
             "https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30",
-            "cH51DYDR!qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30",
+            ("cH51DYDR", "qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30"),
         ),
     ],
 )
@@ -261,13 +262,11 @@ def test_parse_url(url: str, expected_file_id_and_key: str) -> None:
 
 
 class TestAPIRequest:
-    @pytest.mark.parametrize("response", [-4, -9])
-    async def test_when_api_returns_int_raises_exception(
-        self,
-        mega: Mega,
-        response: Literal[-4, -9],
-    ):
-        with pytest.MonkeyPatch.context() as m:
-            m.setattr(aiohttp.ClientResponse, "json", AsyncMock(return_value=response))
-            with pytest.raises(RequestError):
-                await mega._api.request(data={})
+    @pytest.mark.parametrize("response", [-4, -9, [-2], [-400]])
+    async def test_when_api_returns_int_raises_exception(self, response: Any) -> None:
+        fake_resp = AsyncMock()
+        fake_resp.status = 200
+        fake_resp.headers = {"content-type": "application/json"}
+        fake_resp.json = AsyncMock(return_value=response)
+        with pytest.raises(RequestError):
+            await MegaAPI._process_resp(fake_resp)

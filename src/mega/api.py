@@ -110,7 +110,8 @@ class MegaAPI:
         async with self._lazy_session().get(url, headers=self._default_headers) as resp:
             yield resp
 
-    async def _process_resp(self, response: aiohttp.ClientResponse) -> Any:
+    @staticmethod
+    async def _process_resp(response: aiohttp.ClientResponse) -> Any:
         json_resp: list[Any] | int = await response.json()
         resp = json_resp
         logger.debug(f"Got response [{response.status}] json={json_resp!r}")
