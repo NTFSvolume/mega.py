@@ -96,10 +96,6 @@ class FileSystem(_DictDumper):
         """Get the node with this ID"""
         return self._nodes[node_id]
 
-    def get(self, node_id: NodeID) -> Node | None:
-        """Get the node with this ID (If it exists)"""
-        return self._nodes.get(node_id)
-
     def _was_deleted(self, node: Node) -> bool:
         return node.parent_id == self.trash_bin.id if self.trash_bin else False
 
@@ -119,6 +115,12 @@ class FileSystem(_DictDumper):
 
         Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path"""
         return self._inv_paths
+
+    @property
+    def children(self) -> MappingProxyType[NodeID, tuple[NodeID, ...]]:
+        """A mapping of nodes to their inmediate children"""
+
+        return self._children
 
     @property
     def files(self) -> Iterable[Node]:
@@ -210,6 +212,8 @@ class FileSystem(_DictDumper):
             root=self.root.dump() if self.root else None,
             inbox=self.inbox.dump() if self.inbox else None,
             trash_bin=self.trash_bin.dump() if self.trash_bin else None,
+            file_count=self.file_count,
+            folder_count=self.folder_count,
             nodes={node_id: node.dump() for node_id, node in self._nodes.items()},
             paths={node_id: str(path) for node_id, path in self._paths.items()},
             inv_paths={str(path): node_id for path, node_id in self._inv_paths.items()},
