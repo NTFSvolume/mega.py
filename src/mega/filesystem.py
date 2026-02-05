@@ -1,19 +1,22 @@
-import asyncio
 import dataclasses
-from collections.abc import Iterable, Iterator, Sequence
+import errno
+from collections.abc import Generator, Iterable, Iterator, Sequence
 from os import PathLike
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Any, Self
 
 from mega.data_structures import Node, NodeID, NodeType, _DictDumper
+from mega.errors import MultipleNodesFoundError
+
+_POSIX_ROOT = PurePosixPath("/")
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class FileSystem(_DictDumper):
     """An read-only representation of the Mega.nz's filesystem
 
-    NOTE: Folders can have multiple nodes with the same name"""
+    NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path"""
 
     root: Node | None
     inbox: Node | None
@@ -22,6 +25,7 @@ class FileSystem(_DictDumper):
     _nodes: MappingProxyType[NodeID, Node]
     _children: MappingProxyType[NodeID, tuple[NodeID, ...]]
     _paths: MappingProxyType[NodeID, PurePosixPath]
+    _inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]]
 
     def __repr__(self) -> str:
         fields = ", ".join(
@@ -38,16 +42,14 @@ class FileSystem(_DictDumper):
         return f"<{type(self).__name__}>({fields})"
 
     @classmethod
-    async def build(cls, nodes: Sequence[Node]) -> Self:
-        return await asyncio.to_thread(cls._built, nodes)
-
-    @classmethod
-    def _built(cls, nodes: Sequence[Node]) -> Self:
+    def build(cls, nodes: Sequence[Node]) -> Self:
         root = inbox = trash_bin = None
 
         nodes_map: dict[NodeID, Node] = {}
         children: dict[NodeID, list[NodeID]] = {}
         paths: dict[NodeID, PurePosixPath] = {}
+        inv_paths: dict[PurePosixPath, tuple[NodeID, ...]] = {}
+        inv_paths_temp: dict[PurePosixPath, list[NodeID]] = {}
 
         for node in nodes:
             nodes_map[node.id] = node
@@ -64,12 +66,21 @@ class FileSystem(_DictDumper):
             inbox,
             trash_bin,
             MappingProxyType(nodes_map),
-            MappingProxyType({k: tuple(v) for k, v in children.items()}),
+            MappingProxyType({node_id: tuple(node) for node_id, node in children.items()}),
             MappingProxyType(paths),
+            MappingProxyType(inv_paths),
         )
 
         roots = list(filter(None, (root, inbox, trash_bin))) or [nodes[0]]
-        paths.update(self._resolve_paths(*[root.id for root in roots]))
+
+        for node_id, path in sorted(
+            self._resolve_paths(*[root.id for root in roots]), key=lambda x: str(x[1]).casefold()
+        ):
+            paths[node_id] = path
+            inv_paths_temp.setdefault(path, []).append(node_id)
+
+        inv_paths.update((path, tuple(nodes)) for path, nodes in inv_paths_temp.items())
+
         return self
 
     def __len__(self) -> int:
@@ -101,6 +112,13 @@ class FileSystem(_DictDumper):
     def paths(self) -> MappingProxyType[NodeID, PurePosixPath]:
         """A mapping of every node to its absolute path within the filesystem"""
         return self._paths
+
+    @property
+    def inv_paths(self) -> MappingProxyType[PurePosixPath, tuple[NodeID, ...]]:
+        """A mapping of paths to every node located at that path
+
+        Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path"""
+        return self._inv_paths
 
     @property
     def files(self) -> Iterable[Node]:
@@ -153,12 +171,29 @@ class FileSystem(_DictDumper):
                 continue
             yield node_id, path
 
-    def find(self, query: str | PathLike[str]) -> Node | None:
-        """Return the first node which path starts with `query`"""
-        query = PurePosixPath(query).as_posix()
-        for node_id, path in self.search(query):
-            if path.as_posix().startswith(query):
-                return self[node_id]
+    def find(self, path: str | PathLike[str]) -> Node:
+        """Return the single node located at *path*.
+
+        NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path
+
+        Raises `MultipleNodesFoundError` if more that one node has this path
+
+        Raises `FileNotFoundError` if this path does not exists on the filesystem
+
+        """
+        path = _POSIX_ROOT / PurePosixPath(path)
+        try:
+            nodes = self._inv_paths[path]
+        except LookupError:
+            msg = f"A node with '{path =}' does not exists"
+            raise FileNotFoundError(errno.ENOENT, msg) from None
+        else:
+            if len(nodes) > 1:
+                msg = f"There is more that one node with '{path =}'"
+                raise MultipleNodesFoundError(msg, nodes)
+
+            assert nodes
+            return self[nodes[0]]
 
     def iterdir(self, node_id: NodeID, *, recursive: bool = False) -> Iterable[Node]:
         """Iterate over the children in this node"""
@@ -187,14 +222,15 @@ class FileSystem(_DictDumper):
             root=self.root.dump() if self.root else None,
             inbox=self.inbox.dump() if self.inbox else None,
             trash_bin=self.trash_bin.dump() if self.trash_bin else None,
-            nodes={k: v.dump() for k, v in self._nodes.items()},
-            paths={k: str(v) for k, v in self._paths.items()},
-            children={k: list(v) for k, v in self._children.items()},
+            nodes={node_id: node.dump() for node_id, node in self._nodes.items()},
+            paths={node_id: str(path) for node_id, path in self._paths.items()},
+            inv_paths={str(path): node_id for path, node_id in self._inv_paths.items()},
+            children=dict(self._children),
         )
 
     @classmethod
     def from_dump(cls, dump: dict[str, Any], /) -> Self:
-        return cls._built([Node.from_dump(node) for node in dump["nodes"].values()])
+        return cls.build([Node.from_dump(node) for node in dump["nodes"].values()])
 
     def _ls(self, node_id: NodeID, *, recursive: bool) -> Iterable[NodeID]:
         """Get ID of every child of this node"""
@@ -203,25 +239,21 @@ class FileSystem(_DictDumper):
             if recursive:
                 yield from self._ls(child_id, recursive=recursive)
 
-    def _resolve_paths(self, *root_ids: str) -> dict[NodeID, PurePosixPath]:
-        paths: dict[NodeID, PurePosixPath] = {}
-
-        def walk(parent_id: str, current_path: PurePosixPath) -> None:
+    def _resolve_paths(self, *root_ids: str) -> Generator[tuple[NodeID, PurePosixPath]]:
+        def walk(parent_id: str, current_path: PurePosixPath):
             for node in self.iterdir(parent_id):
                 node_path = current_path / node.attributes.name
-                paths[node.id] = node_path
+                yield node.id, node_path
 
-                if node.type is NodeType.FOLDER:
-                    walk(node.id, node_path)
+                if node.type is not NodeType.FILE:
+                    yield from walk(node.id, node_path)
 
         for root_id in root_ids:
             root_node = self[root_id]
             name = root_node.attributes.name
-            path = PurePosixPath("." if root_node.type is NodeType.ROOT_FOLDER else name)
-            paths[root_node.id] = path
-            walk(root_id, path)
-
-        return dict(sorted(paths.items(), key=lambda x: str(x[1]).casefold()))
+            path = _POSIX_ROOT if root_node.type is NodeType.ROOT_FOLDER else _POSIX_ROOT / name
+            yield root_node.id, path
+            yield from walk(root_id, path)
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)

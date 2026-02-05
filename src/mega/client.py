@@ -161,7 +161,7 @@ class Mega(MegaCore):
         )
 
         nodes = await self._deserialize_nodes(folder["f"], public_key)
-        return await FileSystem.build(nodes)
+        return await asyncio.to_thread(FileSystem.build, nodes)
 
     async def download(self, node: Node, output_dir: str | PathLike[str] | None = None) -> Path:
         """Download a file by it's file object."""

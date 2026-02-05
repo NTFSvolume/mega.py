@@ -1,4 +1,9 @@
-from typing import Final
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Final
+
+if TYPE_CHECKING:
+    from mega.data_structures import NodeID
 
 
 class MegaNzError(Exception): ...
@@ -8,8 +13,19 @@ class ValidationError(MegaNzError, ValueError):
     """Error in validation stage"""
 
 
+class MultipleNodesFoundError(ValidationError):
+    """Error in validation stage"""
+
+    def __init__(self, msg: str, nodes: tuple[NodeID, ...]) -> None:
+        self.nodes: tuple[NodeID, ...] = nodes
+        super().__init__(msg)
+
+
 _CODE_TO_DESCRIPTIONS: Final = {
-    -1: ("EINTERNAL", "An internal error has occurred"),
+    -1: (
+        "EINTERNAL",
+        "An internal error has occurred",
+    ),
     -2: ("EARGS", "You have passed invalid arguments to this command"),
     -3: ("EAGAIN", "Request failed. No data was altered. Please retry"),
     -4: ("ERATELIMIT", "Rate limited. Please wait a few seconds, then try again"),
