@@ -113,6 +113,10 @@ def b64_decrypt_attr(attr: str, key: tuple[int, ...]) -> AttributesSerialized:
     return decrypt_attr(b64_url_decode(attr), key)
 
 
+def b64_encrypt_attr(attrs: Mapping[str, Any], key: AnyArray) -> str:
+    return b64_url_encode(encrypt_attr(attrs, key))
+
+
 def a32_to_bytes(array: AnyArray) -> bytes:
     return struct.pack(f">{len(array):.0f}I", *array)
 

@@ -4,6 +4,7 @@ import asyncio
 import dataclasses
 import logging
 import os
+from os import PathLike
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, Self
 
@@ -65,12 +66,12 @@ class Mega(MegaCore):
     async def close(self) -> None:
         await self._api.close()
 
-    async def search(self, query: Path | str, *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
+    async def search(self, query: str | PathLike[str], *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
         """Return nodes that have "query" as a substring on their path"""
         fs = await self.get_filesystem()
         return dict(fs.search(query, exclude_deleted=exclude_deleted))
 
-    async def find(self, query: Path | str) -> Node | None:
+    async def find(self, query: str | PathLike[str]) -> Node | None:
         """Return the first node that which path starts with `query`"""
         fs = await self.get_filesystem()
         return fs.find(query)
@@ -208,7 +209,7 @@ class Mega(MegaCore):
 
         return FileInfo.parse(resp)
 
-    async def download(self, node: Node, output_dir: Path | str | None = None) -> Path:
+    async def download(self, node: Node, output_dir: str | PathLike[str] | None = None) -> Path:
         """Download a file by it's file object."""
         file_info = await self._request_file_info(node.id)
         return await self._download_file(
@@ -218,7 +219,7 @@ class Mega(MegaCore):
         )
 
     async def download_public_file(
-        self, public_handle: str, public_key: str, output_dir: Path | str | None = None
+        self, public_handle: str, public_key: str, output_dir: str | PathLike[str] | None = None
     ) -> Path:
         """
         Download a public file
@@ -233,7 +234,7 @@ class Mega(MegaCore):
         )
 
     async def download_public_folder(
-        self, public_handle: str, public_key: str, output_dir: Path | str | None = None
+        self, public_handle: str, public_key: str, output_dir: str | PathLike[str] | None = None
     ) -> list[Path | BaseException]:
         fs = await self.get_nodes_in_public_folder(public_handle, public_key)
         sem = asyncio.BoundedSemaphore(10)
@@ -267,7 +268,7 @@ class Mega(MegaCore):
         self,
         dl: FileInfo,
         crypto: Crypto,
-        output_folder: Path | str | None = None,
+        output_folder: str | PathLike[str] | None = None,
         output_name: str | None = None,
     ) -> Path:
         # Seems to happens sometime... When this occurs, files are
@@ -288,7 +289,7 @@ class Mega(MegaCore):
             crypto.key,
         )
 
-    async def upload(self, file_path: Path | str, dest_node: Node | None = None) -> GetNodesResponse:
+    async def upload(self, file_path: str | PathLike[str], dest_node: Node | None = None) -> GetNodesResponse:
         dest_node_id = dest_node or self.filesystem.root.id
 
         file_path = Path(file_path)
@@ -378,17 +379,13 @@ class Mega(MegaCore):
             logger.info("Upload complete")
             return data
 
-    async def create_folder(self, path: Path | str) -> Node:
+    async def create_folder(self, path: str | PathLike[str]) -> Node:
         path = PurePosixPath(path).as_posix()
         fs = await self.get_filesystem()
         return await self._mkdir(name=path, parent_node_id=fs.root.id)
 
     async def rename(self, node: Node, new_name: str) -> bool:
-        if not new_name:
-            raise ValidationError
-
-        new_attrs = dataclasses.replace(node.attributes, n=new_name)
-
+        new_attrs = dataclasses.replace(node.attributes, name=new_name)
         attribs = b64_url_encode(encrypt_attr(new_attrs.serialize(), node._crypto.key))
         encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._vault.master_key))
 

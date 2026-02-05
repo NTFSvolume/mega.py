@@ -21,9 +21,9 @@ from mega.crypto import (
     EMPTY_IV,
     a32_to_base64,
     a32_to_bytes,
+    b64_encrypt_attr,
     b64_to_a32,
     b64_url_encode,
-    encrypt_attr,
     encrypt_key,
     get_chunks,
     pad_bytes,
@@ -228,7 +228,7 @@ class MegaCore:
     async def _mkdir(self, name: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
         new_key = [random_u32int() for _ in range(4)]
-        encrypt_attribs = b64_url_encode(encrypt_attr({"n": name}, new_key))
+        encrypt_attribs = b64_encrypt_attr({"n": name}, new_key)
         encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 
         # This can return multiple folders if subfolders needed to be created
@@ -247,7 +247,7 @@ class MegaCore:
                 "i": self._api._client_id,
             }
         )
-
+        self._filesystem = None
         return self._deserialize_node(folders["f"][0])
 
     async def _edit_contact(self, email: str, *, add: bool) -> dict[str, Any]:

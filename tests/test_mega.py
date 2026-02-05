@@ -33,10 +33,10 @@ async def http_client() -> aiohttp.ClientSession:
     return aiohttp.ClientSession(loop=asyncio.get_running_loop())
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture()
 def folder_name() -> str:
-    now = datetime.datetime.now().astimezone(datetime.UTC).replace(tzinfo=None).isoformat()
-    return f"mega.py_testfolder_{now.replace(':', ' ')}"
+    now = datetime.datetime.now().astimezone(datetime.UTC).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S_%f")
+    return f"mega.py_testfolder_{now}"
 
 
 @pytest.fixture
@@ -45,7 +45,8 @@ async def mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGen
         await mega_.login(email=env.EMAIL, password=env.PASSWORD)
         folder = await mega_.create_folder(folder_name)
         yield mega_
-        await mega_.destroy(folder.id)
+        destroyed = await mega_.destroy(folder.id)
+        assert destroyed
 
 
 @pytest.fixture
@@ -193,7 +194,7 @@ class TestFind:
 
 
 async def test_rename(mega: Mega, folder_name: str, folder: Node) -> None:
-    assert await mega.rename(folder, folder_name)
+    assert await mega.rename(folder, folder_name + "RENAMED")
 
 
 async def test_delete_folder(mega: Mega, folder: Node) -> None:

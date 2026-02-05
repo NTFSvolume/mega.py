@@ -24,9 +24,9 @@ class FileSystem(_DictDumper):
     _paths: MappingProxyType[NodeID, PurePosixPath]
 
     def __repr__(self) -> str:
-        fields = ",".join(
+        fields = ", ".join(
             f"{name}={value!r}"
-            for (name, value) in (
+            for name, value in (
                 ("root", self.root),
                 ("inbox", self.inbox),
                 ("trash_bin", self.trash_bin),
@@ -78,6 +78,9 @@ class FileSystem(_DictDumper):
     def __iter__(self) -> Iterator[Node]:
         return iter(self._nodes.values())
 
+    def __contains__(self, item: object) -> bool:
+        return item in self._nodes
+
     def __getitem__(self, node_id: NodeID) -> Node:
         """Get the node with this ID"""
         return self._nodes[node_id]
@@ -88,6 +91,11 @@ class FileSystem(_DictDumper):
 
     def _was_deleted(self, node: Node) -> bool:
         return node.parent_id == self.trash_bin.id if self.trash_bin else False
+
+    @property
+    def nodes(self) -> MappingProxyType[NodeID, Node]:
+        """A mapping of every node"""
+        return self._nodes
 
     @property
     def paths(self) -> MappingProxyType[NodeID, PurePosixPath]:
@@ -145,6 +153,9 @@ class FileSystem(_DictDumper):
                 continue
             yield node_id, path
 
+    def _json_dump(self) -> dict[NodeID, str]:
+        return {k: str(v) for k, v in self._paths.items()}
+
     def find(self, query: str | PathLike[str]) -> Node | None:
         """Return the first node which path starts with `query`"""
         query = PurePosixPath(query).as_posix()
@@ -201,6 +212,7 @@ class FileSystem(_DictDumper):
         return dict(sorted(paths.items(), key=lambda x: str(x[1]).casefold()))
 
 
+@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class UserFileSystem(FileSystem):
     root: Node
     inbox: Node
