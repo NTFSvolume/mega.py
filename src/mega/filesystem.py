@@ -14,7 +14,7 @@ _POSIX_ROOT = PurePosixPath("/")
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class FileSystem(_DictDumper):
-    """An read-only representation of the Mega.nz's filesystem
+    """A read-only representation of the Mega.nz's filesystem
 
     NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path"""
 
@@ -22,49 +22,49 @@ class FileSystem(_DictDumper):
     inbox: Node | None
     trash_bin: Node | None
 
-    _nodes: MappingProxyType[NodeID, Node]
-    _children: MappingProxyType[NodeID, tuple[NodeID, ...]]
-    _paths: MappingProxyType[NodeID, PurePosixPath]
-    _inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]]
+    file_count: int
+    folder_count: int
 
-    def __repr__(self) -> str:
-        fields = ", ".join(
-            f"{name}={value!r}"
-            for name, value in (
-                ("root", self.root),
-                ("inbox", self.inbox),
-                ("trash_bin", self.trash_bin),
-                ("files", self.file_count),
-                ("folders", self.folder_count),
-                ("deleted", self.deleted_count),
-            )
-        )
-        return f"<{type(self).__name__}>({fields})"
+    _nodes: MappingProxyType[NodeID, Node] = dataclasses.field(repr=False)
+    _children: MappingProxyType[NodeID, tuple[NodeID, ...]] = dataclasses.field(repr=False)
+    _paths: MappingProxyType[NodeID, PurePosixPath] = dataclasses.field(repr=False)
+    _inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]] = dataclasses.field(repr=False)
 
     @classmethod
     def build(cls, nodes: Sequence[Node]) -> Self:
         root = inbox = trash_bin = None
+        file_count = folder_count = 0
 
         nodes_map: dict[NodeID, Node] = {}
         children: dict[NodeID, list[NodeID]] = {}
-        paths: dict[NodeID, PurePosixPath] = {}
-        inv_paths: dict[PurePosixPath, tuple[NodeID, ...]] = {}
-        inv_paths_temp: dict[PurePosixPath, list[NodeID]] = {}
 
         for node in nodes:
             nodes_map[node.id] = node
             children.setdefault(node.parent_id, []).append(node.id)
-            if node.type is NodeType.ROOT_FOLDER:
-                root = node
-            elif node.type is NodeType.INBOX:
-                inbox = node
-            elif node.type is NodeType.TRASH:
-                trash_bin = node
+            match node.type:
+                case NodeType.FILE:
+                    file_count += 1
+                case NodeType.FOLDER:
+                    folder_count += 1
+                case NodeType.ROOT_FOLDER:
+                    root = node
+                case NodeType.INBOX:
+                    inbox = node
+                case NodeType.TRASH:
+                    trash_bin = node
+                case _:
+                    raise RuntimeError
+
+        paths: dict[NodeID, PurePosixPath] = {}
+        inv_paths: dict[PurePosixPath, tuple[NodeID, ...]] = {}
+        inv_paths_temp: dict[PurePosixPath, list[NodeID]] = {}
 
         self = cls(
             root,
             inbox,
             trash_bin,
+            file_count,
+            folder_count,
             MappingProxyType(nodes_map),
             MappingProxyType({node_id: tuple(node) for node_id, node in children.items()}),
             MappingProxyType(paths),
@@ -139,18 +139,6 @@ class FileSystem(_DictDumper):
         """All files or folders currently on the trash bin"""
         if self.trash_bin:
             yield from self.iterdir(self.trash_bin.id)
-
-    @property
-    def file_count(self) -> int:
-        return sum(1 for _ in self.files)
-
-    @property
-    def folder_count(self) -> int:
-        return sum(1 for _ in self.folders)
-
-    @property
-    def deleted_count(self) -> int:
-        return sum(1 for _ in self.deleted)
 
     def resolve(self, node_id: NodeID) -> PurePosixPath:
         """Get the path of this node"""
