@@ -16,7 +16,7 @@ _POSIX_ROOT = PurePosixPath("/")
 class FileSystem(_DictDumper):
     """A read-only representation of the Mega.nz's filesystem
 
-    NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path"""
+    NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path"""
 
     root: Node | None
     inbox: Node | None
@@ -32,6 +32,14 @@ class FileSystem(_DictDumper):
 
     @classmethod
     def build(cls, nodes: Sequence[Node]) -> Self:
+        # This is really expensive
+        # We do 5 loops over all nodes:
+        # - 1. Create a map to all of them
+        # - 2. Resolve their paths
+        # - 3. Sort their paths
+        # - 4. Freeze children (list -> tuple)
+        # - 5. Freeze inv paths (list -> tuple)
+
         root = inbox = trash_bin = None
         file_count = folder_count = 0
 
@@ -66,16 +74,14 @@ class FileSystem(_DictDumper):
             file_count,
             folder_count,
             MappingProxyType(nodes_map),
-            MappingProxyType({node_id: tuple(node) for node_id, node in children.items()}),
+            MappingProxyType({node_id: tuple(nodes) for node_id, nodes in children.items()}),
             MappingProxyType(paths),
             MappingProxyType(inv_paths),
         )
 
         roots = list(filter(None, (root, inbox, trash_bin))) or [nodes[0]]
 
-        for node_id, path in sorted(
-            self._resolve_paths(*[root.id for root in roots]), key=lambda x: str(x[1]).casefold()
-        ):
+        for node_id, path in sorted(self._resolve_paths(*roots), key=lambda x: str(x[1]).casefold()):
             paths[node_id] = path
             inv_paths_temp.setdefault(path, []).append(node_id)
 
@@ -113,7 +119,7 @@ class FileSystem(_DictDumper):
     def inv_paths(self) -> MappingProxyType[PurePosixPath, tuple[NodeID, ...]]:
         """A mapping of paths to every node located at that path
 
-        Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path"""
+        Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path"""
         return self._inv_paths
 
     @property
@@ -133,7 +139,7 @@ class FileSystem(_DictDumper):
     def folders(self) -> Iterable[Node]:
         """All folders that are NOT deleted"""
         for node in self:
-            if node.type is NodeType.FOLDER and self._was_deleted(node):
+            if node.type is NodeType.FOLDER and not self._was_deleted(node):
                 yield node
 
     @property
@@ -164,7 +170,7 @@ class FileSystem(_DictDumper):
     def find(self, path: str | PathLike[str]) -> Node:
         """Return the single node located at *path*.
 
-        NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may share the same path
+        NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
 
         Raises `MultipleNodesFoundError` if more that one node has this path
 
@@ -231,7 +237,7 @@ class FileSystem(_DictDumper):
             if recursive:
                 yield from self._ls(child_id, recursive=recursive)
 
-    def _resolve_paths(self, *root_ids: str) -> Generator[tuple[NodeID, PurePosixPath]]:
+    def _resolve_paths(self, *roots: Node) -> Generator[tuple[NodeID, PurePosixPath]]:
         def walk(parent_id: str, current_path: PurePosixPath):
             for node in self.iterdir(parent_id):
                 node_path = current_path / node.attributes.name
@@ -240,12 +246,11 @@ class FileSystem(_DictDumper):
                 if node.type is not NodeType.FILE:
                     yield from walk(node.id, node_path)
 
-        for root_id in root_ids:
-            root_node = self[root_id]
-            name = root_node.attributes.name
-            path = _POSIX_ROOT if root_node.type is NodeType.ROOT_FOLDER else _POSIX_ROOT / name
-            yield root_node.id, path
-            yield from walk(root_id, path)
+        for node in roots:
+            name = node.attributes.name
+            path = _POSIX_ROOT if node.type is NodeType.ROOT_FOLDER else _POSIX_ROOT / name
+            yield node.id, path
+            yield from walk(node.id, path)
 
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)

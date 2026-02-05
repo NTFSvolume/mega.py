@@ -13,9 +13,7 @@ class ValidationError(MegaNzError, ValueError):
     """Error in validation stage"""
 
 
-class MultipleNodesFoundError(ValidationError):
-    """Error in validation stage"""
-
+class MultipleNodesFoundError(MegaNzError, LookupError):
     def __init__(self, msg: str, nodes: tuple[NodeID, ...]) -> None:
         self.nodes: tuple[NodeID, ...] = nodes
         super().__init__(msg)
