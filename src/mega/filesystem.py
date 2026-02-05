@@ -38,7 +38,7 @@ class FileSystem(_DictDumper):
         return f"<{type(self).__name__}>({fields})"
 
     @classmethod
-    async def built(cls, nodes: Sequence[Node]) -> Self:
+    async def build(cls, nodes: Sequence[Node]) -> Self:
         return await asyncio.to_thread(cls._built, nodes)
 
     @classmethod

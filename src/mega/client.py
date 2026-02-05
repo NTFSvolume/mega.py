@@ -6,12 +6,11 @@ import logging
 import os
 from os import PathLike
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
-from mega.api import MegaAPI
 from mega.core import MegaCore
 from mega.crypto import (
     CHUNK_BLOCK_LEN,
@@ -30,9 +29,7 @@ from mega.crypto import (
 from mega.data_structures import (
     AccountStats,
     Attributes,
-    Crypto,
     FileInfo,
-    FileInfoSerialized,
     Node,
     NodeID,
     NodeType,
@@ -40,11 +37,9 @@ from mega.data_structures import (
 )
 from mega.filesystem import FileSystem, UserFileSystem
 
-from .errors import MegaNzError, RequestError, ValidationError
+from .errors import RequestError, ValidationError
 
 if TYPE_CHECKING:
-    import aiohttp
-
     from mega.data_structures import GetNodesResponse
 
 
@@ -53,18 +48,6 @@ logger = logging.getLogger(__name__)
 
 class Mega(MegaCore):
     """Interface with all the public methods of the API"""
-
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        super().__init__(api=MegaAPI(session))
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_) -> None:
-        await self.close()
-
-    async def close(self) -> None:
-        await self._api.close()
 
     async def search(self, query: str | PathLike[str], *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
         """Return nodes that have "query" as a substring on their path"""
@@ -101,20 +84,6 @@ class Mega(MegaCore):
         public_key = a32_to_base64(folder._crypto.share_key)
         return f"{self._primary_url}/#F!{public_handle}!{public_key}"
 
-    async def _get_public_handle(self, file_id: str) -> str:
-        try:
-            return await self._api.request(
-                {
-                    "a": "l",
-                    "n": file_id,
-                }
-            )
-        except RequestError as e:
-            if e.code == -11:
-                msg = "Can't get a public link from that file (is this a shared file?) You may need to export it first"
-                raise MegaNzError(msg) from e
-            raise
-
     async def get_user(self) -> UserResponse:
         return await self._api.request({"a": "ug"})
 
@@ -143,17 +112,17 @@ class Mega(MegaCore):
         return AccountStats.parse(resp)
 
     async def delete(self, node_id: NodeID) -> bool:
-        """Delete a file or folder by its private id (move it to the trash bin)"""
+        """Delete a file or folder by its private id (moves it to the trash bin)"""
         fs = await self.get_filesystem()
         return await self.move(node_id, fs.trash_bin.id)
 
     async def destroy(self, node_id: NodeID) -> bool:
-        """Destroy a file or folder by its private id (bypass trash bin)"""
+        """Destroy a file or folder by its private id (bypasses trash bin)"""
         resp = await self._destroy(node_id)
         return self._success(resp)
 
     async def empty_trash(self) -> bool | None:
-        """Deletes all file in the trash bin. Returns None if the trash was already empty"""
+        """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
 
         fs = await self.get_filesystem()
         trashed_files = [f.id for f in fs.deleted]
@@ -192,24 +161,7 @@ class Mega(MegaCore):
         )
 
         nodes = await self._deserialize_nodes(folder["f"], public_key)
-        return await FileSystem.built(nodes)
-
-    async def _request_file_info(
-        self,
-        handle: str,
-        parent_id: str | None = None,
-        is_public: bool = False,
-    ) -> FileInfo:
-        resp: FileInfoSerialized = await self._api.request(
-            {
-                "a": "g",
-                "g": 1,
-                "p" if is_public else "n": handle,
-            },
-            params={"n": parent_id} if parent_id else None,
-        )
-
-        return FileInfo.parse(resp)
+        return await FileSystem.build(nodes)
 
     async def download(self, node: Node, output_dir: str | PathLike[str] | None = None) -> Path:
         """Download a file by it's file object."""
@@ -223,9 +175,6 @@ class Mega(MegaCore):
     async def download_public_file(
         self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
     ) -> Path:
-        """
-        Download a public file
-        """
         full_key = b64_to_a32(public_key)
         crypto = self._vault.compose_crypto(NodeType.FILE, full_key)
         file_info = await self._request_file_info(public_handle, is_public=True)
@@ -265,31 +214,6 @@ class Mega(MegaCore):
                 results.append(tg.create_task(download_file(file, path)))
 
         return await asyncio.gather(*results)
-
-    async def _download_file(
-        self,
-        dl: FileInfo,
-        crypto: Crypto,
-        output_folder: str | PathLike[str] | None = None,
-        output_name: str | None = None,
-    ) -> Path:
-        # Seems to happens sometime... When this occurs, files are
-        # inaccessible also in the official web app.
-        # Strangely, files can come back later.
-        if not dl.url:
-            raise RequestError("File not accessible anymore")
-
-        name = output_name or Attributes.parse(b64_decrypt_attr(dl._at, crypto.key)).name
-        output_path = Path(output_folder or Path()) / name
-
-        return await self._really_download_file(
-            dl.url,
-            output_path,
-            dl.size,
-            crypto.iv,
-            crypto.meta_mac,
-            crypto.key,
-        )
 
     async def upload(self, file_path: str | PathLike[str], dest_node: Node | None = None) -> GetNodesResponse:
         dest_node_id = dest_node or self.filesystem.root.id
@@ -410,8 +334,9 @@ class Mega(MegaCore):
         resp = await self._edit_contact(email, add=True)
         return self._success(resp, clear_cache=False)
 
-    async def remove_contact(self, email: str) -> dict[str, Any]:
-        return await self._edit_contact(email, add=False)
+    async def remove_contact(self, email: str) -> bool:
+        resp = await self._edit_contact(email, add=False)
+        return self._success(resp, clear_cache=False)
 
     async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
         """Get size and name of a public file"""

@@ -34,7 +34,7 @@ SharedKeys: TypeAlias = dict[UserID, tuple[int, ...]]
 
 class ByteSize(int):
     def human_readable(self) -> str:
-        """(ex: '1150.5MB')"""
+        """(ex: '150.5MB')"""
         scale = 1000
         me = float(self)
         for unit in ("B", "KB", "MB", "GB", "TB", "PB"):

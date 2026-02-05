@@ -1,48 +1,41 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
-import errno
 import logging
 import random
 import re
-import shutil
-import tempfile
-from collections.abc import Generator
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, Self
 
 from Crypto.Cipher import AES
-from Crypto.Util import Counter
 from rich.logging import RichHandler
 
+from mega.api import MegaAPI
 from mega.auth import MegaAuth
 from mega.crypto import (
-    CHUNK_BLOCK_LEN,
-    EMPTY_IV,
     a32_to_base64,
     a32_to_bytes,
+    b64_decrypt_attr,
     b64_encrypt_attr,
     b64_to_a32,
     b64_url_encode,
     encrypt_key,
-    get_chunks,
-    pad_bytes,
     random_u32int,
-    str_to_a32,
 )
-from mega.data_structures import Node, NodeID
+from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
+from mega.download import MegaDownloader
 from mega.filesystem import UserFileSystem
-from mega.progress import ProgressManager
 from mega.vault import MegaKeysVault
 
-from .errors import ValidationError
+from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable
-    from pathlib import Path
+    from collections.abc import Iterable
+    from os import PathLike
 
-    from mega.api import MegaAPI
-    from mega.data_structures import GetNodesResponse, NodeSerialized, TupleArray
+    import aiohttp
+
+    from mega.data_structures import GetNodesResponse, NodeSerialized
 
 
 logger = logging.getLogger(__name__)
@@ -56,17 +49,26 @@ def _setup_logger(name: str = "mega") -> None:
 
 
 class MegaCore:
-    def __init__(self, api: MegaAPI) -> None:
-        self._api = api
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        self._api = MegaAPI(session)
         self._primary_url = "https://mega.nz"
         self._auth = MegaAuth(self._api)
         self._vault = MegaKeysVault(())
-        self._progress = ProgressManager()
+        self._downloader = MegaDownloader(self._api)
         self._filesystem: UserFileSystem | None = None
         self._lock = asyncio.Lock()
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(fs={self.filesystem!r}, vault={self._vault!r})"
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        await self._api.close()
 
     @property
     def logged_in(self) -> bool:
@@ -125,6 +127,37 @@ class MegaCore:
         root_folder_id, shared_key = parts.split("#")
         return root_folder_id, shared_key
 
+    async def _get_public_handle(self, file_id: str) -> str:
+        try:
+            return await self._api.request(
+                {
+                    "a": "l",
+                    "n": file_id,
+                }
+            )
+        except RequestError as e:
+            if e.code == -11:
+                msg = "Can't get a public link from that file (is this a shared file?) You may need to export it first"
+                raise MegaNzError(msg) from e
+            raise
+
+    async def _request_file_info(
+        self,
+        handle: str,
+        parent_id: str | None = None,
+        is_public: bool = False,
+    ) -> FileInfo:
+        resp: FileInfoSerialized = await self._api.request(
+            {
+                "a": "g",
+                "g": 1,
+                "p" if is_public else "n": handle,
+            },
+            params={"n": parent_id} if parent_id else None,
+        )
+
+        return FileInfo.parse(resp)
+
     async def _prepare_filesystem(self) -> UserFileSystem:
         nodes_resp: GetNodesResponse = await self._api.request(
             {
@@ -136,7 +169,7 @@ class MegaCore:
 
         self._vault.init_shared_keys(nodes_resp)
         nodes = await self._deserialize_nodes(nodes_resp["f"])
-        return await UserFileSystem.built(nodes)
+        return await UserFileSystem.build(nodes)
 
     async def _deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
         """
@@ -158,39 +191,30 @@ class MegaCore:
 
         return resolved_nodes
 
-    async def _really_download_file(
+    async def _download_file(
         self,
-        direct_file_url: str,
-        output_path: Path,
-        file_size: int,
-        iv: TupleArray,
-        meta_mac: tuple[int, int],
-        key: TupleArray,
-    ):
-        if await asyncio.to_thread(output_path.exists):
-            raise FileExistsError(errno.EEXIST, output_path)
+        file_info: FileInfo,
+        crypto: Crypto,
+        output_folder: str | PathLike[str] | None = None,
+        output_name: str | None = None,
+    ) -> Path:
+        # Seems to happens sometime... When this occurs, files are
+        # inaccessible also in the official web app.
+        # Strangely, files can come back later.
+        if not file_info.url:
+            raise RequestError("File not accessible anymore")
 
-        with (
-            tempfile.NamedTemporaryFile(prefix="megapy_", delete=False) as temp_file,
-            self._progress.new_task(output_path.name, total=file_size) as advance,
-        ):
-            chunk_decryptor = MegaDecryptor(iv, key, meta_mac)
+        name = output_name or Attributes.parse(b64_decrypt_attr(file_info._at, crypto.key)).name
+        output_path = Path(output_folder or Path()) / name
 
-            async with self._api.download(direct_file_url) as response:
-                for _, chunk_size in get_chunks(file_size):
-                    raw_chunk = await response.content.readexactly(chunk_size)
-                    chunk = chunk_decryptor.decrypt(raw_chunk)
-                    temp_file.write(chunk)
-                    advance(len(chunk))
-
-        chunk_decryptor.check_integrity()
-
-        def move():
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.move(temp_file.name, output_path)
-
-        await asyncio.to_thread(move)
-        return output_path
+        return await self._downloader.run(
+            file_info.url,
+            output_path,
+            file_info.size,
+            crypto.iv,
+            crypto.meta_mac,
+            crypto.key,
+        )
 
     async def _export_file(self, node: Node) -> dict[str, Any]:
         return await self._api.request(
@@ -293,74 +317,3 @@ class MegaCore:
                 "i": self._api._client_id,
             }
         )
-
-
-@dataclasses.dataclass(slots=True, weakref_slot=True)
-class MegaDecryptor:
-    iv: tuple[int, ...]
-    key: tuple[int, ...]
-    meta_mac: tuple[int, int]
-    _gen: Generator[bytes, bytes | None, None] = dataclasses.field(init=False)
-
-    def __post_init__(self) -> None:
-        self._gen = _decrypt_chunks(self.iv, self.key, self.meta_mac)
-        _ = next(self._gen)
-
-    def decrypt(self, raw_chunk: bytes) -> bytes:
-        return self._gen.send(raw_chunk)
-
-    def check_integrity(self) -> None:
-        try:
-            _ = self._gen.send(None)
-        except StopIteration:
-            pass
-
-
-def _decrypt_chunks(
-    iv: TupleArray,
-    key: TupleArray,
-    meta_mac: tuple[int, int],
-) -> Generator[bytes, bytes | None, None]:
-    """
-    Decrypts chunks of data received via `send()` and yields the decrypted chunks.
-    It decrypts chunks indefinitely until a sentinel value (`None`) is sent.
-
-    NOTE: You MUST send `None` once after all chunks are processed to execute the MAC check.
-
-    Args:
-        iv (AnyArray):  Initialization vector (iv) as a list or tuple of two 32-bit unsigned integers.
-        k_decrypted (TupleArray):  Decryption key as a tuple of four 32-bit unsigned integers.
-        meta_mac (AnyArray):  The expected MAC value of the final file.
-
-    Yields:
-        bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
-
-    """
-    key_bytes = a32_to_bytes(key)
-    counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-    aes = AES.new(key_bytes, AES.MODE_CTR, counter=counter)
-
-    # mega.nz improperly uses CBC as a MAC mode, so after each chunk
-    # the last 16 bytes are used as IV for the next chunk MAC accumulation
-
-    mac_bytes = EMPTY_IV
-    mac_encryptor = AES.new(key_bytes, AES.MODE_CBC, mac_bytes)
-    iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
-    chunk: bytes | None = yield b""
-
-    while chunk is not None:
-        decrypted_chunk = aes.decrypt(chunk)
-        chunk = yield decrypted_chunk
-        encryptor = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
-
-        mem_view = memoryview(decrypted_chunk)
-        modchunk = len(decrypted_chunk) % CHUNK_BLOCK_LEN or CHUNK_BLOCK_LEN
-
-        last_16b = pad_bytes(mem_view[-modchunk:])
-        encryptor.encrypt(mem_view[:-modchunk])
-        mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_16b))
-
-    file_mac = str_to_a32(mac_bytes)
-    computed_mac = file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3]
-    if computed_mac != meta_mac:
-        raise RuntimeError("Mismatched mac")
