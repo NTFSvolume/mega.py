@@ -16,7 +16,6 @@ from mega.crypto import (
     a32_to_bytes,
     b64_decrypt_attr,
     b64_encrypt_attr,
-    b64_to_a32,
     b64_url_encode,
     encrypt_key,
     random_u32int,
@@ -29,12 +28,11 @@ from mega.vault import MegaVault
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
     from os import PathLike
 
     import aiohttp
 
-    from mega.data_structures import GetNodesResponse, NodeSerialized
+    from mega.data_structures import GetNodesResponse
 
 
 logger = logging.getLogger(__name__)
@@ -76,9 +74,6 @@ class MegaCore:
         self._filesystem = await self._prepare_filesystem()
         logger.info(f"File system: {self._filesystem}")
         logger.info("Login complete")
-
-    def _deserialize_node(self, node: NodeSerialized) -> Node:
-        return self._vault.decrypt(Node.parse(node))
 
     parse_file_url = staticmethod(utils.parse_file_url)
     parse_folder_url = staticmethod(utils.parse_folder_url)
@@ -124,28 +119,8 @@ class MegaCore:
         )
 
         self._vault.init_shared_keys(nodes_resp)
-        nodes = await self._deserialize_nodes(nodes_resp["f"])
+        nodes = await self._vault.deserialize_nodes(nodes_resp["f"])
         return await asyncio.to_thread(UserFileSystem.build, nodes)
-
-    async def _deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
-        """Processes multiple nodes at once, decrypting their keys and attributes"""
-
-        # We can't run this loop in another thread because we modify the vault in place
-
-        share_key = b64_to_a32(public_key) if public_key else None
-        resolved_nodes: list[Node] = []
-
-        for idx, node in enumerate(nodes):
-            node_id = node["h"]
-            if share_key:
-                self._vault.shared_keys["EXP"][node_id] = share_key
-
-            resolved_nodes.append(self._deserialize_node(node))
-
-            if idx % 500 == 0:
-                await asyncio.sleep(0)
-
-        return resolved_nodes
 
     async def _download_file(
         self,
@@ -237,7 +212,7 @@ class MegaCore:
             }
         )
         self._filesystem = None
-        return self._deserialize_node(folders["f"][0])
+        return self._vault.deserialize_node(folders["f"][0])
 
     async def _edit_contact(self, email: str, *, add: bool) -> int:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):

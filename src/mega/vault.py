@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import logging
 from typing import TYPE_CHECKING
@@ -11,9 +12,11 @@ from mega.crypto import (
     decrypt_key,
     str_to_a32,
 )
-from mega.data_structures import Attributes, Crypto, Node, NodeType
+from mega.data_structures import Attributes, Crypto, Node, NodeSerialized, NodeType
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
+
     from mega.data_structures import GetNodesResponse, SharedKeys
 
 
@@ -92,6 +95,29 @@ class MegaVault:
         iv = *full_key[4:6], 0, 0
         meta_mac = full_key[6:8]
         return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
+
+    def deserialize_node(self, node: NodeSerialized) -> Node:
+        return self.decrypt(Node.parse(node))
+
+    async def deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
+        """Processes multiple nodes at once, decrypting their keys and attributes"""
+
+        # We can't run this loop in another thread because we modify the vault in place
+
+        share_key = b64_to_a32(public_key) if public_key else None
+        resolved_nodes: list[Node] = []
+
+        for idx, node in enumerate(nodes):
+            node_id = node["h"]
+            if share_key:
+                self.shared_keys["EXP"][node_id] = share_key
+
+            resolved_nodes.append(self.deserialize_node(node))
+
+            if idx % 500 == 0:
+                await asyncio.sleep(0)
+
+        return resolved_nodes
 
     def decrypt(self, node: Node) -> Node:
         crypto = attributes = None
