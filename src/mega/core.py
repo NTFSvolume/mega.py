@@ -10,8 +10,8 @@ from typing import TYPE_CHECKING, Any, Self
 from Crypto.Cipher import AES
 from rich.logging import RichHandler
 
+from mega import auth, download
 from mega.api import MegaAPI
-from mega.auth import MegaAuth
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
@@ -23,7 +23,6 @@ from mega.crypto import (
     random_u32int,
 )
 from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
-from mega.download import download_stream
 from mega.filesystem import UserFileSystem
 from mega.progress import ProgressManager
 from mega.vault import MegaVault
@@ -53,7 +52,6 @@ class MegaCore:
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._api = MegaAPI(session)
         self._primary_url = "https://mega.nz"
-        self._auth = MegaAuth(self._api)
         self._vault = MegaVault(())
         self._filesystem: UserFileSystem | None = None
         self._lock = asyncio.Lock()
@@ -82,9 +80,9 @@ class MegaCore:
 
     async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> None:
         if email and password:
-            master_key, self._api.session_id = await self._auth.login(email, password)
+            master_key, self._api.session_id = await auth.login(self._api, email, password)
         else:
-            master_key, self._api.session_id = await self._auth.login_anonymous()
+            master_key, self._api.session_id = await auth.login_anonymous(self._api)
 
         self._vault = MegaVault(master_key)
         logger.info("Getting all nodes and decryption keys of the account...")
@@ -210,7 +208,7 @@ class MegaCore:
 
         with self._progress.new_task(output_path.name, file_info.size) as progress_hook:
             async with self._api.download(file_info.url) as response:
-                return await download_stream(
+                return await download.stream_download(
                     response.content,
                     output_path,
                     file_info.size,

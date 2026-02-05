@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def download_stream(
+async def stream_download(
     stream: aiohttp.StreamReader,
     output_path: Path,
     file_size: int,
