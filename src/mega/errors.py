@@ -59,3 +59,8 @@ class RequestError(MegaNzError):
 
     def __str__(self) -> str:
         return self.message
+
+
+class RetryRequestError(RequestError):
+    def __init__(self) -> None:
+        super().__init__(-3)

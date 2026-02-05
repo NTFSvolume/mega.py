@@ -14,7 +14,7 @@ from mega.api import MegaAPI
 from mega.client import Mega
 from mega.core import _setup_logger
 from mega.data_structures import AccountBalance, AccountStats, Node, NodeType, StorageQuota, UserResponse
-from mega.errors import RequestError
+from mega.errors import RequestError, RetryRequestError
 from mega.filesystem import UserFileSystem
 
 if TYPE_CHECKING:
@@ -262,11 +262,32 @@ def test_parse_url(url: str, expected_file_id_and_key: str) -> None:
 
 
 class TestAPIRequest:
-    @pytest.mark.parametrize("response", [-4, -9, [-2], [-400]])
-    async def test_when_api_returns_int_raises_exception(self, response: Any) -> None:
+    @staticmethod
+    def _fake_resp(value: Any) -> aiohttp.ClientResponse:
         fake_resp = AsyncMock()
         fake_resp.status = 200
         fake_resp.headers = {"content-type": "application/json"}
-        fake_resp.json = AsyncMock(return_value=response)
+        fake_resp.json = AsyncMock(return_value=value)
+        return fake_resp
+
+    @pytest.mark.parametrize("value", [-4, -9, [-2], [-400]])
+    async def test_when_api_returns_int_raises_exception(self, value: Any) -> None:
         with pytest.raises(RequestError):
-            await MegaAPI._process_resp(fake_resp)
+            await MegaAPI._process_resp(self._fake_resp(value))
+
+    @pytest.mark.parametrize("value", [-3, [-3]])
+    async def test_when_api_returns_negative_3_raise_retry_error(self, value: Any) -> None:
+        with pytest.raises(RetryRequestError):
+            await MegaAPI._process_resp(self._fake_resp(value))
+
+    @pytest.mark.parametrize(
+        "value, expected",
+        [
+            ({"a": "b"}, {"a": "b"}),
+            (["a", "b"], ["a", "b"]),
+            (["a"], "a"),
+        ],
+    )
+    async def test_when_api_returns_dict_or_list_the_response_is_valid(self, value: Any, expected: Any) -> None:
+        resp = await MegaAPI._process_resp(self._fake_resp(value))
+        assert resp == expected

@@ -13,7 +13,7 @@ import yarl
 
 from mega.crypto import generate_hashcash_token, random_u32int
 
-from .errors import RequestError
+from .errors import RequestError, RetryRequestError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -64,7 +64,7 @@ class MegaAPI:
         return self.__session
 
     @tenacity.retry(
-        retry=tenacity.retry_if_exception_type(RuntimeError),
+        retry=tenacity.retry_if_exception_type(RetryRequestError),
         wait=tenacity.wait_exponential(multiplier=2, min=2, max=60),
     )
     async def request(self, data: dict[str, Any] | list[dict[str, Any]], params: dict[str, Any] | None = None) -> Any:
@@ -126,7 +126,7 @@ class MegaAPI:
             if resp == -3:
                 msg = "Request failed, retrying"
                 logger.warning(msg)
-                raise RuntimeError(msg)
+                raise RetryRequestError()
             raise RequestError(resp)
 
         return resp
