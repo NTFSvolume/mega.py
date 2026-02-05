@@ -30,7 +30,7 @@ from mega.crypto import (
     random_u32int,
     str_to_a32,
 )
-from mega.data_structures import Node
+from mega.data_structures import Node, NodeID
 from mega.filesystem import UserFileSystem
 from mega.progress import ProgressManager
 from mega.vault import MegaKeysVault
@@ -279,6 +279,17 @@ class MegaCore:
                 }
                 for node_id in node_ids
             ]
+        )
+
+    async def _move(self, node_id: NodeID, target_id: NodeID) -> int:
+        self._filesystem = None
+        return await self._api.request(
+            {
+                "a": "m",
+                "n": node_id,
+                "t": target_id,
+                "i": self._api._client_id,
+            }
         )
 
 

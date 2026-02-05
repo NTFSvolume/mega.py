@@ -39,14 +39,14 @@ def folder_name() -> str:
     return f"mega.py_testfolder_{now}"
 
 
-@pytest.fixture
-async def mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGenerator[Mega]:
-    async with Mega(http_client) as mega_:
-        await mega_.login(email=env.EMAIL, password=env.PASSWORD)
-        folder = await mega_.create_folder(folder_name)
-        yield mega_
-        destroyed = await mega_.destroy(folder.id)
-        assert destroyed
+@pytest.fixture(name="mega")
+async def connect_to_mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGenerator[Mega]:
+    async with Mega(http_client) as mega:
+        await mega.login(email=env.EMAIL, password=env.PASSWORD)
+        folder = await mega.create_folder(folder_name)
+        yield mega
+        deleted = await mega.delete(folder.id)
+        assert deleted
 
 
 @pytest.fixture
@@ -194,7 +194,7 @@ class TestFind:
 
 
 async def test_rename(mega: Mega, folder_name: str, folder: Node) -> None:
-    assert await mega.rename(folder, folder_name + "RENAMED")
+    assert await mega.rename(folder, folder_name + "_RENAMED")
 
 
 async def test_delete_folder(mega: Mega, folder: Node) -> None:

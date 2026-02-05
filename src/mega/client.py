@@ -142,11 +142,12 @@ class Mega(MegaCore):
         )
         return AccountStats.parse(resp)
 
-    async def delete(self, node_id: str) -> dict[str, Any]:
+    async def delete(self, node_id: NodeID) -> bool:
         """Delete a file or folder by its private id (move it to the trash bin)"""
-        return await self.move(node_id, NodeType.TRASH)
+        fs = await self.get_filesystem()
+        return await self.move(node_id, fs.trash_bin.id)
 
-    async def destroy(self, node_id: str) -> bool:
+    async def destroy(self, node_id: NodeID) -> bool:
         """Destroy a file or folder by its private id (bypass trash bin)"""
         resp = await self._destroy(node_id)
         return resp == 0
@@ -403,16 +404,9 @@ class Mega(MegaCore):
             self._filesystem = None
         return success
 
-    async def move(self, file_id: str, target: NodeType | int) -> dict[str, Any]:
-        target = NodeType(target)
-        return await self._api.request(
-            {
-                "a": "m",
-                "n": file_id,
-                "t": target,
-                "i": self._api._client_id,
-            }
-        )
+    async def move(self, node_id: NodeID, target_id: NodeID) -> bool:
+        resp = await self._move(node_id, target_id)
+        return resp == 0
 
     async def add_contact(self, email: str) -> dict[str, Any]:
         """
@@ -436,7 +430,7 @@ class Mega(MegaCore):
         name = Attributes.parse(b64_decrypt_attr(file_info._at, key)).name
         return dataclasses.replace(file_info, name=name)
 
-    async def import_public_file(self, public_handle: str, public_key: str, dest_node_id: str | None = None) -> Node:
+    async def import_public_file(self, public_handle: str, public_key: str, dest_node_id: NodeID | None = None) -> Node:
         """
         Import the public file into user account
         """
