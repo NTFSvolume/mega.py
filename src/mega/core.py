@@ -23,9 +23,10 @@ from mega.crypto import (
     random_u32int,
 )
 from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
-from mega.download import MegaDownloader
+from mega.download import download_stream
 from mega.filesystem import UserFileSystem
-from mega.vault import MegaKeysVault
+from mega.progress import ProgressManager
+from mega.vault import MegaVault
 
 from .errors import MegaNzError, RequestError, ValidationError
 
@@ -53,10 +54,10 @@ class MegaCore:
         self._api = MegaAPI(session)
         self._primary_url = "https://mega.nz"
         self._auth = MegaAuth(self._api)
-        self._vault = MegaKeysVault(())
-        self._downloader = MegaDownloader(self._api)
+        self._vault = MegaVault(())
         self._filesystem: UserFileSystem | None = None
         self._lock = asyncio.Lock()
+        self._progress = ProgressManager()
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(fs={self.filesystem!r}, vault={self._vault!r})"
@@ -85,7 +86,7 @@ class MegaCore:
         else:
             master_key, self._api.session_id = await self._auth.login_anonymous()
 
-        self._vault = MegaKeysVault(master_key)
+        self._vault = MegaVault(master_key)
         logger.info("Getting all nodes and decryption keys of the account...")
         self._filesystem = await self._prepare_filesystem()
         logger.info(f"File system: {self.filesystem}")
@@ -172,9 +173,9 @@ class MegaCore:
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 
     async def _deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
-        """
-        Processes multiple nodes at once, decrypting their keys and attributes.
-        """
+        """Processes multiple nodes at once, decrypting their keys and attributes"""
+
+        # We can't run this loop in another thread because we modify the vault in place
 
         share_key = b64_to_a32(public_key) if public_key else None
         resolved_nodes: list[Node] = []
@@ -207,14 +208,17 @@ class MegaCore:
         name = output_name or Attributes.parse(b64_decrypt_attr(file_info._at, crypto.key)).name
         output_path = Path(output_folder or Path()) / name
 
-        return await self._downloader.run(
-            file_info.url,
-            output_path,
-            file_info.size,
-            crypto.iv,
-            crypto.meta_mac,
-            crypto.key,
-        )
+        with self._progress.new_task(output_path.name, file_info.size) as progress_hook:
+            async with self._api.download(file_info.url) as response:
+                return await download_stream(
+                    response.content,
+                    output_path,
+                    file_info.size,
+                    crypto.iv,
+                    crypto.meta_mac,
+                    crypto.key,
+                    progress_hook,
+                )
 
     async def _export_file(self, node: Node) -> dict[str, Any]:
         return await self._api.request(

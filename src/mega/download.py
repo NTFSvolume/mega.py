@@ -1,81 +1,95 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import dataclasses
 import errno
 import logging
 import shutil
 import tempfile
 from collections.abc import Generator
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import IO, TYPE_CHECKING, Self
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
 from mega.crypto import CHUNK_BLOCK_LEN, EMPTY_IV, a32_to_bytes, get_chunks, pad_bytes, str_to_a32
-from mega.progress import ProgressManager
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
-    from pathlib import Path
+    from collections.abc import AsyncGenerator, Callable, Generator
 
-    from mega.api import MegaAPI
+    import aiohttp
+
     from mega.data_structures import TupleArray
 
 
 logger = logging.getLogger(__name__)
 
 
-class MegaDownloader:
-    def __init__(self, api: MegaAPI) -> None:
-        self._api = api
-        self._progress = ProgressManager()
+async def download_stream(
+    stream: aiohttp.StreamReader,
+    output_path: Path,
+    file_size: int,
+    iv: tuple[int, ...],
+    meta_mac: tuple[int, int],
+    key: tuple[int, ...],
+    progress_hook: Callable[[float], None] | None = None,
+):
+    if await asyncio.to_thread(output_path.exists):
+        raise FileExistsError(errno.EEXIST, output_path)
 
-    async def run(
-        self,
-        url: str,
-        output_path: Path,
-        file_size: int,
-        iv: tuple[int, ...],
-        meta_mac: tuple[int, int],
-        key: tuple[int, ...],
-    ):
-        if await asyncio.to_thread(output_path.exists):
-            raise FileExistsError(errno.EEXIST, output_path)
+    async with _new_temp_download(output_path) as output:
+        with MegaDecryptor(iv, key, meta_mac, file_size) as cypher:
+            await cypher.read_stream(stream, output, progress_hook)
 
-        with (
-            tempfile.NamedTemporaryFile(prefix="megapy_", delete=False) as temp_file,
-            self._progress.new_task(output_path.name, total=file_size) as advance,
-        ):
-            chunk_decryptor = MegaDecryptor(iv, key, meta_mac)
+    return output_path
 
-            async with self._api.download(url) as response:
-                for _, chunk_size in get_chunks(file_size):
-                    raw_chunk = await response.content.readexactly(chunk_size)
-                    chunk = chunk_decryptor.decrypt(raw_chunk)
-                    temp_file.write(chunk)
-                    advance(len(chunk))
 
-        chunk_decryptor.check_integrity()
+@contextlib.asynccontextmanager
+async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
+    temp_file = tempfile.NamedTemporaryFile(prefix="megapy_", delete=False)
+    logger.info(f"Created temp file '{temp_file.name!r}' for '{output_path}'")
+    try:
+        yield temp_file
 
         def move():
+            temp_file.close()
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(temp_file.name, output_path)
+            logger.info(f"Moved temp file '{temp_file.name!r}' to '{output_path}'")
 
         await asyncio.to_thread(move)
-        return output_path
+
+    finally:
+
+        def delete():
+            if not temp_file.closed:
+                temp_file.close()
+            Path(temp_file.name).unlink()
+
+        await asyncio.to_thread(delete)
 
 
-@dataclasses.dataclass(slots=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True)
 class MegaDecryptor:
     iv: tuple[int, ...]
     key: tuple[int, ...]
     meta_mac: tuple[int, int]
+    file_size: int
     _gen: Generator[bytes, bytes | None, None] = dataclasses.field(init=False)
 
     def __post_init__(self) -> None:
         self._gen = _decrypt_chunks(self.iv, self.key, self.meta_mac)
-        _ = next(self._gen)
+
+    def __enter__(self) -> Self:
+        first = next(self._gen)
+        assert first == b""
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if exc_val is None:
+            self.check_integrity()
 
     def decrypt(self, raw_chunk: bytes) -> bytes:
         return self._gen.send(raw_chunk)
@@ -86,6 +100,19 @@ class MegaDecryptor:
         except StopIteration:
             pass
 
+    async def read_stream(
+        self,
+        stream: aiohttp.StreamReader,
+        file_out: IO[bytes],
+        progress_hook: Callable[[float], None] | None,
+    ) -> None:
+        for _, chunk_size in get_chunks(self.file_size):
+            raw_chunk = await stream.readexactly(chunk_size)
+            chunk = self.decrypt(raw_chunk)
+            file_out.write(chunk)
+            if progress_hook is not None:
+                progress_hook(len(chunk))
+
 
 def _decrypt_chunks(
     iv: TupleArray,
@@ -94,17 +121,10 @@ def _decrypt_chunks(
 ) -> Generator[bytes, bytes | None, None]:
     """
     Decrypts chunks of data received via `send()` and yields the decrypted chunks.
-    It decrypts chunks indefinitely until a sentinel value (`None`) is sent.
 
-    NOTE: You MUST send `None` once after all chunks are processed to execute the MAC check.
+    Sending `None` after all chunks are processed will execute a MAC check
 
-    Args:
-        iv (AnyArray):  Initialization vector (iv) as a list or tuple of two 32-bit unsigned integers.
-        k_decrypted (TupleArray):  Decryption key as a tuple of four 32-bit unsigned integers.
-        meta_mac (AnyArray):  The expected MAC value of the final file.
-
-    Yields:
-        bytes:  Decrypted chunk of data. The first `yield` is a blank (`b''`) to initialize generator.
+    The first `yield` is a blank (`b''`) to initialize generator.
 
     """
     key_bytes = a32_to_bytes(key)

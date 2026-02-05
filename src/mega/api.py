@@ -108,6 +108,7 @@ class MegaAPI:
     @contextlib.asynccontextmanager
     async def download(self, url: str | yarl.URL) -> AsyncGenerator[aiohttp.ClientResponse]:
         async with self._lazy_session().get(url, headers=self._default_headers) as resp:
+            resp.raise_for_status()
             yield resp
 
     @staticmethod
