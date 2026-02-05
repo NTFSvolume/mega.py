@@ -13,10 +13,10 @@ import pytest
 from mega import env
 from mega.api import MegaAPI
 from mega.client import Mega
-from mega.core import _setup_logger
 from mega.data_structures import AccountBalance, AccountStats, Node, NodeType, StorageQuota, UserResponse
 from mega.errors import RequestError, RetryRequestError
 from mega.filesystem import UserFileSystem
+from mega.utils import setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -27,7 +27,7 @@ TEST_PUBLIC_URL = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1M
 TEST_FILE = Path(__file__)
 MODULE = "mega.mega"
 
-_setup_logger()
+setup_logger()
 
 
 @pytest.fixture

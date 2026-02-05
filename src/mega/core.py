@@ -8,9 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 
 from Crypto.Cipher import AES
-from rich.logging import RichHandler
 
-from mega import auth, download
+from mega import auth, download, utils
 from mega.api import MegaAPI
 from mega.crypto import (
     a32_to_base64,
@@ -41,13 +40,6 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _setup_logger(name: str = "mega") -> None:
-    handler = RichHandler(show_time=False, rich_tracebacks=True)
-    logger = logging.getLogger(name)
-    logger.setLevel(10)
-    logger.addHandler(handler)
-
-
 class MegaCore:
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self._api = MegaAPI(session)
@@ -58,7 +50,7 @@ class MegaCore:
         self._progress = ProgressManager()
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}>(fs={self.filesystem!r}, vault={self._vault!r})"
+        return f"<{type(self).__name__}>(fs={self._filesystem!r}, vault={self._vault!r})"
 
     async def __aenter__(self) -> Self:
         return self
@@ -73,11 +65,6 @@ class MegaCore:
     def logged_in(self) -> bool:
         return bool(self._vault.master_key)
 
-    @property
-    def filesystem(self) -> UserFileSystem:
-        assert self._filesystem is not None
-        return self._filesystem
-
     async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> None:
         if email and password:
             master_key, self._api.session_id = await auth.login(self._api, email, password)
@@ -87,44 +74,14 @@ class MegaCore:
         self._vault = MegaVault(master_key)
         logger.info("Getting all nodes and decryption keys of the account...")
         self._filesystem = await self._prepare_filesystem()
-        logger.info(f"File system: {self.filesystem}")
+        logger.info(f"File system: {self._filesystem}")
         logger.info("Login complete")
 
     def _deserialize_node(self, node: NodeSerialized) -> Node:
         return self._vault.decrypt(Node.parse(node))
 
-    @staticmethod
-    def parse_file_url(url: str) -> tuple[str, str]:
-        """Parse file id and key from url."""
-        if "/file/" in url:
-            # V2 URL structure
-            # ex: https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq
-            url = url.replace(" ", "")
-            file_id = re.findall(r"\W\w\w\w\w\w\w\w\w\W", url)[0][1:-1]
-            match = re.search(file_id, url)
-            assert match
-            id_index = match.end()
-            key = url[id_index + 1 :]
-            return file_id, key
-        elif "!" in url:
-            # V1 URL structure
-            # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
-            match = re.findall(r"/#!(.*)", url)
-            path = match[0]
-            return tuple(path.split("!"))
-        else:
-            raise ValueError(f"URL key missing from {url}")
-
-    @staticmethod
-    def parse_folder_url(url: str) -> tuple[str, str]:
-        if "/folder/" in url:
-            _, parts = url.split("/folder/", 1)
-        elif "#F!" in url:
-            _, parts = url.split("#F!", 1)
-        else:
-            raise ValidationError("Not a valid folder URL")
-        root_folder_id, shared_key = parts.split("#")
-        return root_folder_id, shared_key
+    parse_file_url = staticmethod(utils.parse_file_url)
+    parse_folder_url = staticmethod(utils.parse_folder_url)
 
     async def _get_public_handle(self, file_id: str) -> str:
         try:

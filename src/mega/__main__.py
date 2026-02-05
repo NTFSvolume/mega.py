@@ -5,11 +5,11 @@ from pprint import pprint
 
 from mega import env
 from mega.client import Mega
-from mega.core import _setup_logger
+from mega.utils import setup_logger
 
 
 async def run() -> None:
-    _setup_logger(__name__)
+    setup_logger(__name__)
 
     parser = argparse.ArgumentParser(description="Download files from a Mega.nz URL.")
     parser.add_argument(
