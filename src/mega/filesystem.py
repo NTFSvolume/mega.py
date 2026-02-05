@@ -153,17 +153,6 @@ class FileSystem(_DictDumper):
                 continue
             yield node_id, path
 
-    def dump(self) -> dict[str, Any]:
-        """Get a JSONable dict representation of this object"""
-        return dict(  # noqa: C408
-            root=self.root.dump() if self.root else None,
-            inbox=self.inbox.dump() if self.inbox else None,
-            trash_bin=self.trash_bin.dump() if self.trash_bin else None,
-            nodes={k: v.dump() for k, v in self._nodes.items()},
-            paths={k: str(v) for k, v in self._paths.items()},
-            children={k: list(v) for k, v in self._children.items()},
-        )
-
     def find(self, query: str | PathLike[str]) -> Node | None:
         """Return the first node which path starts with `query`"""
         query = PurePosixPath(query).as_posix()
@@ -191,6 +180,21 @@ class FileSystem(_DictDumper):
             )
         )
         return dict(sorted(pairs, key=lambda x: str(x[1]).casefold()))
+
+    def dump(self) -> dict[str, Any]:
+        """Get a JSONable dict representation of this object"""
+        return dict(  # noqa: C408
+            root=self.root.dump() if self.root else None,
+            inbox=self.inbox.dump() if self.inbox else None,
+            trash_bin=self.trash_bin.dump() if self.trash_bin else None,
+            nodes={k: v.dump() for k, v in self._nodes.items()},
+            paths={k: str(v) for k, v in self._paths.items()},
+            children={k: list(v) for k, v in self._children.items()},
+        )
+
+    @classmethod
+    def from_dump(cls, dump: dict[str, Any], /) -> Self:
+        return cls._built([Node.from_dump(node) for node in dump["nodes"].values()])
 
     def _ls(self, node_id: NodeID, *, recursive: bool) -> Iterable[NodeID]:
         """Get ID of every child of this node"""

@@ -133,7 +133,7 @@ class _DictParser:
         return {k: v for k, v in data.items() if k in _fields(cls)}
 
     @classmethod
-    def parse(cls, data: dict[str, Any]) -> Self:
+    def parse(cls, data: dict[str, Any], /) -> Self:
         return cls(**cls._filter_dict(data))
 
 
@@ -166,6 +166,12 @@ class Crypto(_DictDumper):
 
     def __iter__(self) -> Generator[tuple[int, ...]]:
         yield from dataclasses.astuple(self)
+
+    @classmethod
+    def from_dump(cls, dump: dict[str, Any]) -> Self:
+        share_key = dump.pop("share_key")
+        crypto = {k: tuple(v) for k, v in dump.items()}
+        return cls(**crypto, share_key=tuple(share_key) if share_key else None)
 
 
 # We populate attrs and crypto after instance creation
@@ -204,6 +210,16 @@ class Node(_DictDumper):
             attributes=None,  # pyright: ignore[reportArgumentType]
             _crypto=None,  # pyright: ignore[reportArgumentType]
         )
+
+    @classmethod
+    def from_dump(cls, dump: dict[str, Any], /) -> Self:
+        dump = dump | dict(  # noqa: C408
+            type=NodeType[str(dump["type"]).upper()],
+            attributes=Attributes(**dump["attributes"]) if dump["attributes"] else None,
+            _crypto=Crypto.from_dump(dump["_crypto"]),
+        )
+
+        return cls(**dump)
 
     def dump(self) -> dict[str, Any]:
         """Get a JSONable dict representation of this object"""
