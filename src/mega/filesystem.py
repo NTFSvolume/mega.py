@@ -4,7 +4,7 @@ from collections.abc import Iterable, Iterator, Sequence
 from os import PathLike
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Self
+from typing import Any, Self
 
 from mega.data_structures import Node, NodeID, NodeType, _DictDumper
 
@@ -153,8 +153,16 @@ class FileSystem(_DictDumper):
                 continue
             yield node_id, path
 
-    def _json_dump(self) -> dict[NodeID, str]:
-        return {k: str(v) for k, v in self._paths.items()}
+    def dump(self) -> dict[str, Any]:
+        """Get a JSONable dict representation of this object"""
+        return dict(  # noqa: C408
+            root=self.root.dump() if self.root else None,
+            inbox=self.inbox.dump() if self.inbox else None,
+            trash_bin=self.trash_bin.dump() if self.trash_bin else None,
+            nodes={k: v.dump() for k, v in self._nodes.items()},
+            paths={k: str(v) for k, v in self._paths.items()},
+            children={k: list(v) for k, v in self._children.items()},
+        )
 
     def find(self, query: str | PathLike[str]) -> Node | None:
         """Return the first node which path starts with `query`"""

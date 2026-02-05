@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_origin, get_type_hints
 from unittest.mock import AsyncMock
@@ -184,13 +185,13 @@ class TestFind:
         assert file1 != file2
 
     async def test_path_not_found_returns_none(self, mega: Mega) -> None:
-        result = await mega.find("not_found")
+        result = await mega.find(str(uuid.uuid4()))
         assert result is None
 
     async def test_exclude_deleted_files(self, mega: Mega, folder_name: str, folder: Node) -> None:
         assert await mega.find(folder_name)
         _ = await mega.delete(folder.id)
-        assert await mega.search(folder_name)
+        assert await mega.search(folder_name, exclude_deleted=False)
         assert not await mega.search(folder_name, exclude_deleted=True)
 
 
@@ -216,7 +217,7 @@ async def test_destroy(mega: Mega, uploaded_file: Node) -> None:
 async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Node) -> None:
     # Upload a single file into a folder
     _ = await mega.upload(
-        __file__,
+        TEST_FILE,
         dest_node=folder,
     )
     path = f"{folder_name}/test.py"

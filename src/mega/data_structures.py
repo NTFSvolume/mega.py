@@ -104,11 +104,25 @@ class FileInfoSerialized(TypedDict):
     g: NotRequired[str]  # direct download URL
 
 
+_FIELDS_CACHE: dict[type, tuple[str, ...]] = {}
+
+
+def _fields(cls: type) -> tuple[str, ...]:
+    if fields := _FIELDS_CACHE.get(cls):
+        return fields
+    fields = _FIELDS_CACHE[cls] = tuple(f.name for f in dataclasses.fields(cls))
+    return fields
+
+
 class _DictDumper:
     __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
     def dump(self) -> dict[str, Any]:
+        """Get a JSONable dict representation of this object"""
         return dataclasses.asdict(self)
+
+    def _shallow_dump(self) -> dict[str, Any]:
+        return {name: getattr(self, name) for name in _fields(type(self))}
 
 
 class _DictParser:
@@ -116,8 +130,7 @@ class _DictParser:
 
     @classmethod
     def _filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
-        fields = [f.name for f in dataclasses.fields(cls)]
-        return {k: v for k, v in data.items() if k in fields}
+        return {k: v for k, v in data.items() if k in _fields(cls)}
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
@@ -191,6 +204,15 @@ class Node(_DictDumper):
             attributes=None,  # pyright: ignore[reportArgumentType]
             _crypto=None,  # pyright: ignore[reportArgumentType]
         )
+
+    def dump(self) -> dict[str, Any]:
+        """Get a JSONable dict representation of this object"""
+        me = self._shallow_dump()
+        me["_crypto"] = self._crypto.dump() if self._crypto else None
+        me["attributes"] = self.attributes.dump() if self.attributes else {}
+        me["keys"] = dict(self.keys)
+        me["type"] = self.type.name.lower()
+        return me
 
 
 _LABELS: Final = "", "red", "orange", "yellow", "green", "blue", "purple", "grey"
