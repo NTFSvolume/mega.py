@@ -123,7 +123,17 @@ class MegaCore:
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 
     async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
-        return await upload.upload(self, file_path, dest_node_id)
+        file_path = Path(file_path)
+        file_id, crypto = await upload.upload(self._api, file_path)
+        return await upload.finish_file_upload(
+            self._api,
+            self._vault.master_key,
+            file_id,
+            file_path,
+            dest_node_id,
+            crypto.full_key,
+            crypto.key,
+        )
 
     async def _download_file(
         self,

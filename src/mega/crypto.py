@@ -23,7 +23,7 @@ CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
 
 
-class Chunk(NamedTuple):
+class ChunkBoundary(NamedTuple):
     offset: int
     size: int
 
@@ -160,16 +160,16 @@ def a32_to_base64(array: AnyArray) -> str:
     return b64_url_encode(a32_to_bytes(array))
 
 
-def get_chunks(size: int) -> Generator[Chunk]:
+def get_chunks(size: int) -> Generator[ChunkBoundary]:
     # generates a list of chunks (offset, chunk_size), where offset refers to the file initial position
     offset = 0
     current_size = init_size = 0x20000
     while offset + current_size < size:
-        yield Chunk(offset, current_size)
+        yield ChunkBoundary(offset, current_size)
         offset += current_size
         if current_size < 0x100000:
             current_size += init_size
-    yield Chunk(offset, size - offset)
+    yield ChunkBoundary(offset, size - offset)
 
 
 def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:

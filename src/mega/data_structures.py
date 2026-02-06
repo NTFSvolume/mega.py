@@ -158,7 +158,7 @@ class FileInfo(_DictDumper):
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class Crypto(_DictDumper):
     key: tuple[int, ...]
-    iv: tuple[int, int, int, int]
+    iv: tuple[int, int]
     meta_mac: tuple[int, int]
 
     full_key: tuple[int, int, int, int]
