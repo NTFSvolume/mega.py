@@ -62,7 +62,7 @@ async def folder(mega: Mega, folder_name: str) -> AsyncGenerator[Node]:
 @pytest.fixture
 async def uploaded_file(mega: Mega, folder_name: str, folder: Node) -> AsyncGenerator[Node]:
     await mega.upload(TEST_FILE, folder.id)
-    path = f"{folder_name}/{TEST_FILE}"
+    path = f"{folder_name}/{TEST_FILE.name}"
     node = await mega.find(path)
     assert node
     yield node
@@ -172,21 +172,26 @@ async def test_create_folder_with_sub_folders(mega: Mega, folder_name: str) -> N
 
 class TestFind:
     async def test_find_file(self, mega: Mega, folder_name: str, folder: Node) -> None:
-        _ = await mega.upload(__file__, dest_node=folder)
-        file1 = await mega.find(f"{folder_name}/test.py")
-        assert file1
+        _ = await mega.upload(TEST_FILE, folder.id)
+        path1 = f"{folder_name}/{TEST_FILE.name}"
+        file1 = await mega.find(path1)
 
         new_folder = await mega.create_folder("new_folder")
-        _ = await mega.upload(__file__, dest_node=new_folder)
+        _ = await mega.upload(TEST_FILE, new_folder.id)
 
-        file2 = await mega.find("new_folder/test.py")
-        assert file2
-        # Check that the correct test.py was found
-        assert file1 != file2
+        path2 = f"new_folder/{TEST_FILE.name}"
+        file2 = await mega.find(path2)
+        assert file1.id != file2.id
+        fs = await mega.get_filesystem()
+        assert fs.resolve(file1.id) != fs.resolve(file2.id)
+        assert str(fs.relative_path(file1.id)) == path1
+        assert str(fs.relative_path(file2.id)) == path2
+        assert str(fs.resolve(file1.id)) == "/" + path1
+        assert str(fs.resolve(file2.id)) == "/" + path2
 
-    async def test_path_not_found_returns_none(self, mega: Mega) -> None:
-        result = await mega.find(str(uuid.uuid4()))
-        assert result is None
+    async def test_path_not_found_raise_file_not_found_error(self, mega: Mega) -> None:
+        with pytest.raises(FileNotFoundError):
+            await mega.find(str(uuid.uuid4()))
 
     async def test_exclude_deleted_files(self, mega: Mega, folder_name: str, folder: Node) -> None:
         assert await mega.find(folder_name)
