@@ -7,9 +7,18 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from mega.core import MegaCore
-from mega.crypto import a32_to_base64, b64_decrypt_attr, b64_to_a32, b64_url_encode, encrypt_attr, encrypt_key
+from mega.crypto import (
+    a32_to_base64,
+    b64_to_a32,
+    b64_url_decode,
+    b64_url_encode,
+    compose_crypto,
+    decrypt_attr,
+    encrypt_attr,
+    encrypt_key,
+)
 from mega.data_structures import AccountStats, Attributes, FileInfo, Node, NodeID, NodeType, UserResponse
-from mega.filesystem import FileSystem, UserFileSystem
+from mega.filesystem import FileSystem
 from mega.utils import throttled_gather
 
 from .errors import RequestError, ValidationError
@@ -25,6 +34,9 @@ logger = logging.getLogger(__name__)
 
 class Mega(MegaCore):
     """Interface with all the public methods of the API"""
+
+    async def get_user(self) -> UserResponse:
+        return await self._api.request({"a": "ug"})
 
     async def search(self, query: str | PathLike[str], *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
         """Return nodes that have "query" as a substring on their path"""
@@ -44,34 +56,52 @@ class Mega(MegaCore):
         fs = await self.get_filesystem()
         return fs.find(query)
 
-    async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
-        if self._filesystem is None or force:
-            async with self._lock:
-                if self._filesystem is None or force:
-                    self._filesystem = await self._prepare_filesystem()
+    async def delete(self, node_id: NodeID) -> bool:
+        """Delete a file or folder by its private id (moves it to the trash bin)"""
+        fs = await self.get_filesystem()
+        return await self.move(node_id, fs.trash_bin.id)
 
-        return self._filesystem
+    async def destroy(self, node_id: NodeID) -> bool:
+        """Destroy a file or folder by its private id (bypasses trash bin)"""
+        resp = await self._destroy(node_id)
+        return self._success(resp)
+
+    async def empty_trash(self) -> bool | None:
+        """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
+
+        fs = await self.get_filesystem()
+        trashed_files = [f.id for f in fs.deleted]
+        if not trashed_files:
+            return
+
+        resp = await self._destroy(*trashed_files)
+        return self._success(resp)
+
+    async def move(self, node_id: NodeID, target_id: NodeID) -> bool:
+        resp = await self._move(node_id, target_id)
+        return self._success(resp)
+
+    async def add_contact(self, email: str) -> bool:
+        resp = await self._edit_contact(email, add=True)
+        return self._success(resp, clear_cache=False)
 
     async def get_public_link(self, file: Node) -> str:
-        if file.type not in (NodeType.FILE, NodeType.FOLDER):
-            raise ValueError
+        if file.type is not NodeType.FILE:
+            raise ValidationError
 
         public_handle = await self._get_public_handle(file.id)
         public_key = a32_to_base64(file._crypto.full_key)
         return f"{self._primary_url}/#!{public_handle}!{public_key}"
 
     async def get_folder_link(self, folder: Node) -> str:
-        if folder.type not in (NodeType.FILE, NodeType.FOLDER):
-            raise ValueError
+        if folder.type is not NodeType.FOLDER:
+            raise ValidationError
 
         if not folder._crypto.share_key:
             raise RequestError("")
         public_handle = await self._get_public_handle(folder.id)
         public_key = a32_to_base64(folder._crypto.share_key)
         return f"{self._primary_url}/#F!{public_handle}!{public_key}"
-
-    async def get_user(self) -> UserResponse:
-        return await self._api.request({"a": "ug"})
 
     async def get_id_from_public_handle(self, public_handle: NodeID) -> str:
         resp: GetNodesResponse = await self._api.request(
@@ -97,27 +127,6 @@ class Mega(MegaCore):
         )
         return AccountStats.parse(resp)
 
-    async def delete(self, node_id: NodeID) -> bool:
-        """Delete a file or folder by its private id (moves it to the trash bin)"""
-        fs = await self.get_filesystem()
-        return await self.move(node_id, fs.trash_bin.id)
-
-    async def destroy(self, node_id: NodeID) -> bool:
-        """Destroy a file or folder by its private id (bypasses trash bin)"""
-        resp = await self._destroy(node_id)
-        return self._success(resp)
-
-    async def empty_trash(self) -> bool | None:
-        """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
-
-        fs = await self.get_filesystem()
-        trashed_files = [f.id for f in fs.deleted]
-        if not trashed_files:
-            return
-
-        resp = await self._destroy(*trashed_files)
-        return self._success(resp)
-
     async def export(self, node: Node) -> str:
         if node.type is NodeType.FILE:
             await self._export_file(node)
@@ -135,7 +144,7 @@ class Mega(MegaCore):
             fs = await self.get_filesystem(force=True)
             return await self.get_folder_link(fs[node.id])
 
-    async def get_nodes_in_public_folder(self, public_handle: NodeID, public_key: str) -> FileSystem:
+    async def get_public_filesystem(self, public_handle: NodeID, public_key: str) -> FileSystem:
         folder: GetNodesResponse = await self._api.request(
             {
                 "a": "f",
@@ -162,7 +171,7 @@ class Mega(MegaCore):
         self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
     ) -> Path:
         full_key = b64_to_a32(public_key)
-        crypto = self._vault.compose_crypto(NodeType.FILE, full_key)
+        crypto = compose_crypto(full_key)
         file_info = await self._request_file_info(public_handle, is_public=True)
         return await self._download_file(
             file_info,
@@ -180,7 +189,7 @@ class Mega(MegaCore):
             A list where each element is either a `Path` (a successful download)
             or an `Exception` (a failed download).
         """
-        fs = await self.get_nodes_in_public_folder(public_handle, public_key)
+        fs = await self.get_public_filesystem(public_handle, public_key)
 
         base_path = Path(output_dir or ".")
         folder_url = f"{self._primary_url}/folder/{public_handle}#{public_key}"
@@ -231,24 +240,15 @@ class Mega(MegaCore):
         )
         return self._success(resp)
 
-    async def move(self, node_id: NodeID, target_id: NodeID) -> bool:
-        resp = await self._move(node_id, target_id)
-        return self._success(resp)
-
-    async def add_contact(self, email: str) -> bool:
-        resp = await self._edit_contact(email, add=True)
-        return self._success(resp, clear_cache=False)
-
     async def remove_contact(self, email: str) -> bool:
         resp = await self._edit_contact(email, add=False)
         return self._success(resp, clear_cache=False)
 
     async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
-        """Get size and name of a public file"""
         full_key = b64_to_a32(public_key)
-        key = self._vault.compose_crypto(NodeType.FILE, full_key).key
+        key = compose_crypto(full_key).key
         file_info = await self._request_file_info(public_handle, is_public=True)
-        name = Attributes.parse(b64_decrypt_attr(file_info._at, key)).name
+        name = Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), key)).name
         return dataclasses.replace(file_info, name=name)
 
     async def import_public_file(
@@ -260,7 +260,7 @@ class Mega(MegaCore):
 
         file_info = await self.get_public_file_info(public_handle, public_key)
         full_key = b64_to_a32(public_key)
-        key = self._vault.compose_crypto(NodeType.FILE, full_key).key
+        key = compose_crypto(full_key).key
         encrypted_key = a32_to_base64(encrypt_key(full_key, self._vault.master_key))
         attributes = b64_url_encode(encrypt_attr({"n": file_info.name}, key))
 

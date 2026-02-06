@@ -5,14 +5,8 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from mega.crypto import (
-    b64_to_a32,
-    b64_url_decode,
-    decrypt_attr,
-    decrypt_key,
-    str_to_a32,
-)
-from mega.data_structures import Attributes, Crypto, Node, NodeSerialized, NodeType
+from mega.crypto import b64_to_a32, b64_url_decode, compose_crypto, decrypt_attr, decrypt_key, str_to_a32
+from mega.data_structures import Attributes, Node, NodeSerialized, NodeType, UserID
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -26,8 +20,9 @@ logger = logging.getLogger(__name__)
 @dataclasses.dataclass(slots=True, frozen=True)
 class MegaVault:
     master_key: tuple[int, ...]
-    shared_keys: dict[str, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
+
     # This is a mapping of owner (user_id) to shared keys. An special owner "EXP" is used for exported (AKA public) file/folders
+    shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
 
     def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
         """
@@ -77,25 +72,6 @@ class MegaVault:
 
         return full_key, share_key
 
-    @staticmethod
-    def compose_crypto(
-        node_type: NodeType, full_key: tuple[int, ...], share_key: tuple[int, ...] | None = None
-    ) -> Crypto:
-        if node_type is NodeType.FILE:
-            key = (
-                full_key[0] ^ full_key[4],
-                full_key[1] ^ full_key[5],
-                full_key[2] ^ full_key[6],
-                full_key[3] ^ full_key[7],
-            )
-
-        else:
-            key = full_key
-
-        iv = *full_key[4:6], 0, 0
-        meta_mac = full_key[6:8]
-        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
-
     def deserialize_node(self, node: NodeSerialized) -> Node:
         return self.decrypt(Node.parse(node))
 
@@ -123,7 +99,7 @@ class MegaVault:
         crypto = attributes = None
         if node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self.get_keys(node)
-            crypto = self.compose_crypto(node.type, full_key, share_key)
+            crypto = compose_crypto(full_key, node.type, share_key)
             attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
 
         else:

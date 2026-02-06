@@ -3,15 +3,32 @@ from typing import Any
 import pytest
 
 from mega import crypto
-from mega.data_structures import AnyArray
 
 
 @pytest.mark.parametrize(
     "file_size, exp_result",
     [
-        (10, ((0, 10),)),
-        (1000, ((0, 1000),)),
-        (1000000, ((0, 131072), (131072, 262144), (393216, 393216), (786432, 213568))),
+        (
+            0,
+            ((0, 0),),
+        ),
+        (
+            10,
+            ((0, 10),),
+        ),
+        (
+            1000,
+            ((0, 1000),),
+        ),
+        (
+            1000000,
+            (
+                (0, 131072),
+                (131072, 262144),
+                (393216, 393216),
+                (786432, 213568),
+            ),
+        ),
         (
             10000000,
             (
@@ -52,7 +69,7 @@ def test_get_chunks(file_size: int, exp_result: tuple[int, int]) -> None:
         ),
     ],
 )
-def test_decrypt_attr(attrs: bytes, key: AnyArray, expected_output: dict[str, Any]) -> None:
+def test_decrypt_attr(attrs: bytes, key: tuple[int, ...], expected_output: dict[str, Any]) -> None:
     output = crypto.decrypt_attr(attrs, key)
     assert output == expected_output
 

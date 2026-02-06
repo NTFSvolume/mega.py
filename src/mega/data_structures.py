@@ -11,12 +11,12 @@ Mega API information
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Generator, Sequence
 from enum import IntEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
     from typing import NotRequired
 
     from typing_extensions import ReadOnly
@@ -25,11 +25,8 @@ NodeID: TypeAlias = str
 UserID: TypeAlias = str
 TimeStamp: TypeAlias = int
 
-TupleArray: TypeAlias = tuple[int, ...]
-AnyArray: TypeAlias = Sequence[int]
 
-
-SharedKeys: TypeAlias = dict[UserID, tuple[int, ...]]
+SharedKeys: TypeAlias = dict[NodeID, tuple[int, ...]]
 
 
 class ByteSize(int):
@@ -157,7 +154,7 @@ class FileInfo(_DictDumper):
 
 @dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
 class Crypto(_DictDumper):
-    key: tuple[int, ...]
+    key: tuple[int, int, int, int]
     iv: tuple[int, int]
     meta_mac: tuple[int, int]
 

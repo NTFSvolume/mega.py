@@ -12,12 +12,13 @@ from Crypto.Cipher import AES
 from Crypto.Math.Numbers import Integer
 from Crypto.PublicKey import RSA
 
+from mega.data_structures import Crypto, NodeType
+
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping
+    from collections.abc import Generator, Mapping, Sequence
 
     from mega.data_structures import AttributesSerialized
 
-    from .data_structures import AnyArray, TupleArray
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
@@ -49,15 +50,15 @@ def _aes_cbc_decrypt(data: bytes, key: bytes) -> bytes:
     return AES.new(key, AES.MODE_CBC, EMPTY_IV).decrypt(data)
 
 
-def _aes_cbc_encrypt_a32(data: AnyArray, key: AnyArray) -> TupleArray:
+def _aes_cbc_encrypt_a32(data: Sequence[int], key: Sequence[int]) -> tuple[int, ...]:
     return str_to_a32(_aes_cbc_encrypt(a32_to_bytes(data), a32_to_bytes(key)))
 
 
-def _aes_cbc_decrypt_a32(data: AnyArray, key: AnyArray) -> TupleArray:
+def _aes_cbc_decrypt_a32(data: Sequence[int], key: Sequence[int]) -> tuple[int, ...]:
     return str_to_a32(_aes_cbc_decrypt(a32_to_bytes(data), a32_to_bytes(key)))
 
 
-def generate_v1_hash(string: str, aeskey: AnyArray) -> str:
+def generate_v1_hash(string: str, aeskey: Sequence[int]) -> str:
     s32 = str_to_a32(string)
     h32 = [0, 0, 0, 0]
     for i in range(len(s32)):
@@ -80,20 +81,20 @@ def prepare_v1_key(password: str) -> tuple[int, ...]:
     return pkey
 
 
-def encrypt_key(array: AnyArray, key: AnyArray) -> TupleArray:
+def encrypt_key(array: Sequence[int], key: Sequence[int]) -> tuple[int, ...]:
     return sum((_aes_cbc_encrypt_a32(array[index : index + 4], key) for index in range(0, len(array), 4)), ())
 
 
-def decrypt_key(array: AnyArray, key: AnyArray) -> TupleArray:
+def decrypt_key(array: Sequence[int], key: Sequence[int]) -> tuple[int, ...]:
     return sum((_aes_cbc_decrypt_a32(array[index : index + 4], key) for index in range(0, len(array), 4)), ())
 
 
-def encrypt_attr(attrs: Mapping[str, Any], key: AnyArray) -> bytes:
+def encrypt_attr(attrs: Mapping[str, Any], key: Sequence[int]) -> bytes:
     attr_bytes: bytes = f"MEGA{json.dumps(attrs)}".encode()
     return _aes_cbc_encrypt(pad_bytes(attr_bytes), a32_to_bytes(key))
 
 
-def decrypt_attr(attr: bytes, key: AnyArray) -> AttributesSerialized:
+def decrypt_attr(attr: bytes, key: Sequence[int]) -> AttributesSerialized:
     attr_bytes = _aes_cbc_decrypt(attr, a32_to_bytes(key))
     if not attr_bytes.startswith(b'MEGA{"'):
         return {}
@@ -109,19 +110,11 @@ def decrypt_attr(attr: bytes, key: AnyArray) -> AttributesSerialized:
         raise RuntimeError(f"Unable to decode file attributes, raw content is: {attr_str}") from e
 
 
-def b64_decrypt_attr(attr: str, key: tuple[int, ...]) -> AttributesSerialized:
-    return decrypt_attr(b64_url_decode(attr), key)
-
-
-def b64_encrypt_attr(attrs: Mapping[str, Any], key: AnyArray) -> str:
-    return b64_url_encode(encrypt_attr(attrs, key))
-
-
-def a32_to_bytes(array: AnyArray) -> bytes:
+def a32_to_bytes(array: Sequence[int]) -> bytes:
     return struct.pack(f">{len(array):.0f}I", *array)
 
 
-def str_to_a32(bytes_or_str: str | bytes) -> TupleArray:
+def str_to_a32(bytes_or_str: str | bytes) -> tuple[int, ...]:
     if isinstance(bytes_or_str, str):
         bytes_ = bytes_or_str.encode()
     else:
@@ -148,7 +141,7 @@ def b64_url_decode(data: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
-def b64_to_a32(string: str) -> TupleArray:
+def b64_to_a32(string: str) -> tuple[int, ...]:
     return str_to_a32(b64_url_decode(string))
 
 
@@ -156,7 +149,7 @@ def b64_url_encode(data: bytes | bytearray) -> str:
     return base64.urlsafe_b64encode(data).decode("utf-8").rstrip("=")
 
 
-def a32_to_base64(array: AnyArray) -> str:
+def a32_to_base64(array: Sequence[int]) -> str:
     return b64_url_encode(a32_to_bytes(array))
 
 
@@ -207,10 +200,9 @@ def generate_hashcash_token(challenge: str) -> str:
 
     easiness = int(easiness)
     threshold = ((easiness & 63) << 1) + 1 << (easiness >> 6) * 7 + 3
-    token_bytes = b64_url_decode(token)
 
     number_of_tokens = 262_144  # 2**18
-    buffer = bytearray(4) + token_bytes * number_of_tokens
+    buffer = bytearray(4) + b64_url_decode(token) * number_of_tokens
 
     nonce = 0
     while True:
@@ -222,3 +214,22 @@ def generate_hashcash_token(challenge: str) -> str:
             return f"{version}:{token}:{b64_url_encode(buffer[:4])}"
 
         nonce += 1
+
+
+def compose_crypto(
+    full_key: tuple[int, ...], node_type: NodeType = NodeType.FILE, share_key: tuple[int, ...] | None = None
+) -> Crypto:
+    if node_type is NodeType.FILE:
+        key = (
+            full_key[0] ^ full_key[4],
+            full_key[1] ^ full_key[5],
+            full_key[2] ^ full_key[6],
+            full_key[3] ^ full_key[7],
+        )
+
+    else:
+        key = full_key
+
+    iv = *full_key[4:6], 0, 0
+    meta_mac = full_key[6:8]
+    return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]

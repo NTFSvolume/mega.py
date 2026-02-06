@@ -4,7 +4,7 @@ import asyncio
 import dataclasses
 import hashlib
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from mega.crypto import (
     a32_to_base64,
@@ -24,7 +24,6 @@ from mega.crypto import (
 
 if TYPE_CHECKING:
     from mega.api import MegaAPI
-    from mega.data_structures import TupleArray
 
 
 logger = logging.getLogger(__name__)
@@ -38,7 +37,12 @@ class AuthInfo:
     mfa_key: str | None = None
 
 
-async def login_anonymous(api: MegaAPI) -> tuple[TupleArray, str]:
+class Credentials(NamedTuple):
+    master_key: tuple[int, ...]
+    session_id: str
+
+
+async def login_anonymous(api: MegaAPI) -> Credentials:
     logger.info("Logging as an anonymous temporary user...")
 
     master_key = tuple(random_u32int() for _ in range(4))
@@ -57,7 +61,7 @@ async def login_anonymous(api: MegaAPI) -> tuple[TupleArray, str]:
 
     temp_session_id: str = (await api.request({"a": "us", "user": user_id}))["tsid"]
     _verify_anon_login(temp_session_id, master_key)
-    return master_key, temp_session_id
+    return Credentials(master_key, temp_session_id)
 
 
 def _verify_anon_login(b64_temp_session_id: str, master_key: tuple[int, ...]) -> None:
@@ -67,10 +71,10 @@ def _verify_anon_login(b64_temp_session_id: str, master_key: tuple[int, ...]) ->
         raise RuntimeError
 
 
-async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None) -> tuple[TupleArray, str]:
+async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None) -> Credentials:
     email = email.lower()
     logger.info("Logging in as user [REDACTED]...")
-    auth = await _get_info(api, email, password)
+    auth = await get_auth_info(api, email, password)
     resp = await api.request(
         {
             "a": "us",
@@ -95,10 +99,10 @@ async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None
     decrypted_sid = int(rsa_key._decrypt(encrypted_sid))  # type: ignore  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownArgumentType]
     sid_bytes = decrypted_sid.to_bytes((decrypted_sid.bit_length() + 7) // 8 or 1, "big")
     session_id = b64_url_encode(sid_bytes[:43])
-    return master_key, session_id
+    return Credentials(master_key, session_id)
 
 
-async def _get_info(api: MegaAPI, email: str, password: str, mfa_key: str | None = None) -> AuthInfo:
+async def get_auth_info(api: MegaAPI, email: str, password: str, mfa_key: str | None = None) -> AuthInfo:
     email = email.lower()
     resp: dict[str, Any] = await api.request(
         {

@@ -14,9 +14,10 @@ from mega.api import MegaAPI
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
-    b64_decrypt_attr,
-    b64_encrypt_attr,
+    b64_url_decode,
     b64_url_encode,
+    decrypt_attr,
+    encrypt_attr,
     encrypt_key,
     random_u32int,
 )
@@ -47,6 +48,14 @@ class MegaCore:
         self._lock = asyncio.Lock()
         self._progress = ProgressManager()
 
+    async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
+        if self._filesystem is None or force:
+            async with self._lock:
+                if self._filesystem is None or force:
+                    self._filesystem = await self._prepare_filesystem()
+
+        return self._filesystem
+
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(fs={self._filesystem!r}, vault={self._vault!r})"
 
@@ -63,7 +72,11 @@ class MegaCore:
     def logged_in(self) -> bool:
         return bool(self._vault.master_key)
 
-    async def login(self, email: str | None, password: str | None, _mfa: str | None = None) -> None:
+    async def login(
+        self,
+        email: str | None = None,
+        password: str | None = None,
+    ) -> None:
         if email and password:
             master_key, self._api.session_id = await auth.login(self._api, email, password)
         else:
@@ -155,7 +168,7 @@ class MegaCore:
         if not file_info.url:
             raise RequestError("File not accessible anymore")
 
-        name = output_name or Attributes.parse(b64_decrypt_attr(file_info._at, crypto.key)).name
+        name = output_name or Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), crypto.key)).name
         output_path = Path(output_folder or Path()) / name
 
         with self._progress.new_task(output_path.name, file_info.size) as progress_hook:
@@ -170,8 +183,8 @@ class MegaCore:
                     progress_hook,
                 )
 
-    async def _export_file(self, node: Node) -> dict[str, Any]:
-        return await self._api.request(
+    async def _export_file(self, node: Node) -> None:
+        _ = await self._api.request(
             {
                 "a": "l",
                 "n": node.id,
@@ -217,7 +230,7 @@ class MegaCore:
     async def _mkdir(self, path: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
         new_key = [random_u32int() for _ in range(4)]
-        encrypt_attribs = b64_encrypt_attr({"n": path}, new_key)
+        encrypt_attribs = b64_url_encode(encrypt_attr({"n": path}, new_key))
         encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 
         # This can return multiple folders if subfolders needed to be created
