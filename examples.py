@@ -3,7 +3,7 @@ import asyncio
 import os
 import uuid
 
-from mega.client import Mega
+from mega.client import MegaNzClient
 
 
 async def test():
@@ -17,7 +17,7 @@ async def test():
     email = os.environ["EMAIL"]
     password = os.environ["PASS"]
 
-    mega = Mega()
+    mega = MegaNzClient()
     # mega = Mega({'verbose': True})  # verbose option for print output
 
     # login

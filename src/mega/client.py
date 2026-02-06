@@ -28,11 +28,12 @@ if TYPE_CHECKING:
 
     from mega.data_structures import GetNodesResponse
 
+__all__ = ["MegaNzClient"]
 
 logger = logging.getLogger(__name__)
 
 
-class Mega(MegaCore):
+class MegaNzClient(MegaCore):
     """Interface with all the public methods of the API"""
 
     async def get_user(self) -> UserResponse:
