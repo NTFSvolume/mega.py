@@ -186,22 +186,27 @@ class MegaCore:
         ok = b64_url_encode(master_key_cipher.encrypt(share_key))
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
         encrypted_node_key = b64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node._crypto.key)))
-        return await self._api.request(
+        resp = await self._api.request(
             {
                 "a": "s2",
+                "cr": [
+                    [node.id],
+                    [node.id],
+                    [0, 0, encrypted_node_key],
+                ],
+                "ha": ha,
+                "i": self._api._client_id,
                 "n": node.id,
+                "ok": ok,
                 "s": [
                     {
-                        "u": "EXP",  # User: export (AKA public)
                         "r": 0,
+                        "u": "EXP",  # User: export (AKA public)
                     }
                 ],
-                "i": self._api._client_id,
-                "ok": ok,
-                "ha": ha,
-                "cr": [[node.id], [node.id], [0, 0, encrypted_node_key]],
             }
         )
+        return resp
 
     def _success(self, resp: int, clear_cache: bool = True) -> bool:
         success = resp == 0
@@ -209,10 +214,10 @@ class MegaCore:
             self._filesystem = None
         return success
 
-    async def _mkdir(self, name: str, parent_node_id: str) -> Node:
+    async def _mkdir(self, path: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
         new_key = [random_u32int() for _ in range(4)]
-        encrypt_attribs = b64_encrypt_attr({"n": name}, new_key)
+        encrypt_attribs = b64_encrypt_attr({"n": path}, new_key)
         encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 
         # This can return multiple folders if subfolders needed to be created

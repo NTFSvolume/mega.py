@@ -64,7 +64,8 @@ class Mega(MegaCore):
         if folder.type not in (NodeType.FILE, NodeType.FOLDER):
             raise ValueError
 
-        assert folder._crypto and folder._crypto.share_key
+        if not folder._crypto.share_key:
+            raise RequestError("")
         public_handle = await self._get_public_handle(folder.id)
         public_key = a32_to_base64(folder._crypto.share_key)
         return f"{self._primary_url}/#F!{public_handle}!{public_key}"
@@ -212,7 +213,7 @@ class Mega(MegaCore):
     async def create_folder(self, path: str | PathLike[str]) -> Node:
         path = PurePosixPath(path).as_posix()
         fs = await self.get_filesystem()
-        return await self._mkdir(name=path, parent_node_id=fs.root.id)
+        return await self._mkdir(path=path, parent_node_id=fs.root.id)
 
     async def rename(self, node: Node, new_name: str) -> bool:
         new_attrs = dataclasses.replace(node.attributes, name=new_name)

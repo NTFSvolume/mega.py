@@ -327,15 +327,13 @@ class StorageQuota(_DictDumper):
         )
 
 
-class UserResponse(TypedDict, total=False):
+class UserResponse(TypedDict):
     u: UserID
-    since: int  # timestamp of account creation
-    email: str
-    emails: list[str]
-    pemails: list[str]
-    name: str
+    since: TimeStamp  # timestamp of account creation
+    ipcc: str  # IP country code (ex: US)
 
-
-class Upload(TypedDict):
-    s: int  # Size
-    p: str  # URL
+    # These fields are not available when using a temp account (anonymous login)
+    email: NotRequired[str]
+    emails: NotRequired[list[str]]
+    pemails: NotRequired[list[str]]
+    name: NotRequired[str]

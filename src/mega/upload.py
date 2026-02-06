@@ -19,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _request_upload_url(api: MegaAPI, file_size: int) -> str:
-    resp = await api.request({"a": "u", "s": file_size})
-    return resp["p"]
+    return (await api.request({"a": "u", "s": file_size}))["p"]
 
 
 async def upload(

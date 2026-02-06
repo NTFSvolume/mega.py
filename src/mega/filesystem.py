@@ -185,11 +185,11 @@ class FileSystem(_DictDumper):
         try:
             nodes = self._inv_paths[path]
         except LookupError:
-            msg = f"A node with '{path =}' does not exists"
+            msg = f"A node with '{path = !s}' does not exists"
             raise FileNotFoundError(errno.ENOENT, msg) from None
         else:
             if len(nodes) > 1:
-                msg = f"There is more that one node with '{path =}'"
+                msg = f"There is more that one node with '{path = !s}'"
                 raise MultipleNodesFoundError(msg, nodes)
 
             assert nodes
