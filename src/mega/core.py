@@ -122,18 +122,25 @@ class MegaCore:
         nodes = await self._vault.deserialize_nodes(nodes_resp["f"])
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 
+    async def _request_upload(self, file_size: int) -> str:
+        resp = await self._api.request({"a": "u", "s": file_size})
+        return resp["p"]
+
     async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
         file_path = Path(file_path)
-        file_id, crypto = await upload.upload(self._api, file_path)
-        return await upload.finish_file_upload(
-            self._api,
-            self._vault.master_key,
-            file_id,
-            file_path,
-            dest_node_id,
-            crypto.full_key,
-            crypto.key,
-        )
+        file_size = file_path.stat().st_size
+
+        with self._progress.new_task(file_path.name, file_size) as progress_hook:
+            file_id, crypto = await upload.upload(self._api, file_path, file_size, progress_hook)
+            return await upload.finish_upload(
+                self._api,
+                self._vault.master_key,
+                file_id,
+                file_path,
+                dest_node_id,
+                crypto.full_key,
+                crypto.key,
+            )
 
     async def _download_file(
         self,

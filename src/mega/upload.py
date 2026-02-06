@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-import os
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
 from mega.chunker import MegaChunker
 from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key, get_chunks, random_u32int
 from mega.data_structures import Crypto
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
     from mega.api import MegaAPI
@@ -18,42 +18,64 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _request_upload(api: MegaAPI, file_size: int) -> str:
+async def _request_upload_url(api: MegaAPI, file_size: int) -> str:
     resp = await api.request({"a": "u", "s": file_size})
     return resp["p"]
 
 
-async def upload(api: MegaAPI, file_path: Path) -> tuple[str, Crypto]:
+async def upload(
+    api: MegaAPI, file_path: Path, file_size: int, progress_hook: Callable[[float], None] | None = None
+) -> tuple[str, Crypto]:
     with file_path.open("rb") as input_file:
-        file_size = os.path.getsize(file_path)
-        upload_url = await _request_upload(api, file_size)
         random_key = tuple(random_u32int() for _ in range(6))
         key, iv = random_key[:4], random_key[4:6]
-
-        upload_progress = 0
-        file_handle = ""
-
         chunker = MegaChunker(iv, key)
-        for offset, size in get_chunks(file_size):
-            chunk = chunker.read(input_file.read(size))
-            file_handle = await api.upload_chunk(upload_url, offset, chunk)
-            upload_progress += len(chunk)
-            logger.info(f"{upload_progress} of {file_size} uploaded ({upload_progress / file_size:0.1f}%)")
-
-        meta_mac = chunker.compute_meta_mac()
-        full_key: tuple[int, ...] = (
-            key[0] ^ iv[0],
-            key[1] ^ iv[1],
-            key[2] ^ meta_mac[0],
-            key[3] ^ meta_mac[1],
-            *iv,
-            *meta_mac,
-        )
-        logger.info("Chunks uploaded")
-        return file_handle, Crypto(key, iv, meta_mac, full_key, None)  # pyright: ignore[reportArgumentType]
+        if file_size == 0:
+            upload_url = await _request_upload_url(api, file_size)
+            file_handle = await api.upload_chunk(upload_url, 0, b"")
+            return file_handle, _compute_crypto(chunker)
+        return await _upload_chunks(api, chunker, input_file, file_size, progress_hook)
 
 
-async def finish_file_upload(
+async def _upload_chunks(
+    api: MegaAPI,
+    chunker: MegaChunker,
+    input_file: IO[bytes],
+    file_size: int,
+    progress_hook: Callable[[float], None] | None = None,
+):
+    upload_progress = 0
+    file_handle = ""
+    upload_url = await _request_upload_url(api, file_size)
+    for offset, size in get_chunks(file_size):
+        chunk = chunker.read(input_file.read(size))
+        file_handle = await api.upload_chunk(upload_url, offset, chunk)
+        logger.info(f"{upload_progress} of {file_size} uploaded ({upload_progress / file_size:0.1f}%)")
+        real_size = len(chunk)
+        upload_progress += real_size
+        if progress_hook is not None:
+            progress_hook(real_size)
+
+    assert file_handle
+    return file_handle, _compute_crypto(chunker)
+
+
+def _compute_crypto(chunker: MegaChunker) -> Crypto:
+    meta_mac = chunker.compute_meta_mac()
+    key, iv = chunker.key, chunker.iv
+    full_key: tuple[int, ...] = (
+        key[0] ^ iv[0],
+        key[1] ^ iv[1],
+        key[2] ^ meta_mac[0],
+        key[3] ^ meta_mac[1],
+        *iv,
+        *meta_mac,
+    )
+
+    return Crypto(key, iv, meta_mac, full_key, None)  # pyright: ignore[reportArgumentType]
+
+
+async def finish_upload(
     api: MegaAPI,
     master_key: tuple[int, ...],
     file_id: NodeID,
