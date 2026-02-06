@@ -31,8 +31,16 @@ class Mega(MegaCore):
         fs = await self.get_filesystem()
         return dict(fs.search(query, exclude_deleted=exclude_deleted))
 
-    async def find(self, query: str | PathLike[str]) -> Node | None:
-        """Return the first node that which path starts with `query`"""
+    async def find(self, query: str | PathLike[str]) -> Node:
+        """Return the single node located at *path*.
+
+        NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
+
+        Raises `MultipleNodesFoundError` if more that one node has this path
+
+        Raises `FileNotFoundError` if this path does not exists on the filesystem
+
+        """
         fs = await self.get_filesystem()
         return fs.find(query)
 
@@ -48,7 +56,7 @@ class Mega(MegaCore):
         if file.type not in (NodeType.FILE, NodeType.FOLDER):
             raise ValueError
 
-        public_handle: NodeID = await self._get_public_handle(file.id)
+        public_handle = await self._get_public_handle(file.id)
         public_key = a32_to_base64(file._crypto.full_key)
         return f"{self._primary_url}/#!{public_handle}!{public_key}"
 
@@ -193,11 +201,13 @@ class Mega(MegaCore):
 
         return await throttled_gather(make_coros(), return_exceptions=True)
 
-    async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> GetNodesResponse:
+    async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> Node:
         if not dest_node_id:
             dest_node_id = (await self.get_filesystem()).root.id
 
-        return await self._upload(file_path, dest_node_id)
+        resp = await self._upload(file_path, dest_node_id)
+        self._filesystem = None
+        return self._vault.deserialize_node(resp["f"][0])
 
     async def create_folder(self, path: str | PathLike[str]) -> Node:
         path = PurePosixPath(path).as_posix()

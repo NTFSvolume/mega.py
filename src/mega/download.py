@@ -67,6 +67,6 @@ async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
         def delete():
             if not temp_file.closed:
                 temp_file.close()
-            Path(temp_file.name).unlink()
+            Path(temp_file.name).unlink(missing_ok=True)
 
         await asyncio.to_thread(delete)

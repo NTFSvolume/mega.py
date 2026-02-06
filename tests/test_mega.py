@@ -61,7 +61,7 @@ async def folder(mega: Mega, folder_name: str) -> AsyncGenerator[Node]:
 
 @pytest.fixture
 async def uploaded_file(mega: Mega, folder_name: str, folder: Node) -> AsyncGenerator[Node]:
-    await mega.upload(TEST_FILE, dest_node=folder)
+    await mega.upload(TEST_FILE, folder.id)
     path = f"{folder_name}/{TEST_FILE}"
     node = await mega.find(path)
     assert node
@@ -74,7 +74,7 @@ def test_mega(mega: Mega) -> None:
 
 async def test_filesystem_is_available_after_login(mega: Mega) -> None:
     assert mega.logged_in
-    fs = mega._filesystem
+    fs = await mega.get_filesystem()
     assert fs
     assert all((fs.root, fs.inbox, fs.trash_bin))
 
@@ -96,7 +96,7 @@ async def test_account_stats(mega: Mega) -> None:
     assert isinstance(resp.storage, StorageQuota)
 
 
-async def test_get_filesystem(mega: Mega, folder_name: str) -> None:
+async def test_get_filesystem(mega: Mega) -> None:
     fs = await mega.get_filesystem()
     assert isinstance(fs, UserFileSystem)
     assert fs.root
@@ -214,18 +214,16 @@ async def test_destroy(mega: Mega, uploaded_file: Node) -> None:
     assert isinstance(resp, int)
 
 
-async def test_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Node) -> None:
-    # Upload a single file into a folder
-    _ = await mega.upload(
-        TEST_FILE,
-        dest_node=folder,
-    )
-    path = f"{folder_name}/test.py"
-    file = await mega.find(path)
-    assert file
-    output_path = await mega.download(file, tmp_path)
+async def test_upload_and_download(mega: Mega, tmp_path: Path, folder_name: str, folder: Node) -> None:
+    node = await mega.upload(TEST_FILE, folder.id)
+    path = f"/{folder_name}/{TEST_FILE.name}"
+    fs = await mega.get_filesystem()
+    assert fs.find(path)
+    assert str(fs.resolve(node.id)) == path
+    output_path = await mega.download(node, tmp_path)
     assert output_path.parent == tmp_path
     assert output_path.is_file()
+    assert output_path.read_text() == TEST_FILE.read_text()
 
 
 async def test_empty_trash(mega: Mega) -> None:
