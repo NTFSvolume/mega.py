@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from Crypto.Cipher import AES
 
-from mega import auth, download, utils
+from mega import auth, download, upload, utils
 from mega.api import MegaAPI
 from mega.crypto import (
     a32_to_base64,
@@ -121,6 +121,9 @@ class MegaCore:
         self._vault.init_shared_keys(nodes_resp)
         nodes = await self._vault.deserialize_nodes(nodes_resp["f"])
         return await asyncio.to_thread(UserFileSystem.build, nodes)
+
+    async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
+        return await upload.upload(self, file_path, dest_node_id)
 
     async def _download_file(
         self,

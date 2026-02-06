@@ -111,6 +111,10 @@ class MegaAPI:
             resp.raise_for_status()
             yield resp
 
+    async def upload_chunk(self, upload_url: str, offset: int, data: bytes) -> str:
+        async with self._lazy_session().post(upload_url + "/" + str(offset), data=data) as resp:
+            return await resp.text()
+
     @staticmethod
     async def _process_resp(response: aiohttp.ClientResponse) -> Any:
         json_resp: list[Any] | int = await response.json()

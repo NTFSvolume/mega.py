@@ -3,44 +3,20 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-import os
-from os import PathLike
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-from Crypto.Cipher import AES
-from Crypto.Util import Counter
-
 from mega.core import MegaCore
-from mega.crypto import (
-    CHUNK_BLOCK_LEN,
-    a32_to_base64,
-    a32_to_bytes,
-    b64_decrypt_attr,
-    b64_to_a32,
-    b64_url_encode,
-    encrypt_attr,
-    encrypt_key,
-    get_chunks,
-    pad_bytes,
-    random_u32int,
-    str_to_a32,
-)
-from mega.data_structures import (
-    AccountStats,
-    Attributes,
-    FileInfo,
-    Node,
-    NodeID,
-    NodeType,
-    UserResponse,
-)
+from mega.crypto import a32_to_base64, b64_decrypt_attr, b64_to_a32, b64_url_encode, encrypt_attr, encrypt_key
+from mega.data_structures import AccountStats, Attributes, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.filesystem import FileSystem, UserFileSystem
 from mega.utils import throttled_gather
 
 from .errors import RequestError, ValidationError
 
 if TYPE_CHECKING:
+    from os import PathLike
+
     from mega.data_structures import GetNodesResponse
 
 
@@ -221,92 +197,7 @@ class Mega(MegaCore):
         if not dest_node_id:
             dest_node_id = (await self.get_filesystem()).root.id
 
-        file_path = Path(file_path)
-        with open(file_path, "rb") as input_file:
-            file_size = os.path.getsize(file_path)
-            upload_url: str = (
-                await self._api.request(
-                    {
-                        "a": "u",
-                        "s": file_size,
-                    }
-                )
-            )["p"]
-
-            # generate random aes key (128) for file, 192 bits of random data
-            new_key = [random_u32int() for _ in range(6)]
-            k_bytes = a32_to_bytes(new_key[:4])
-
-            # and 64 bits for the IV (which has size 128 bits anyway)
-            count = Counter.new(128, initial_value=((new_key[4] << 32) + new_key[5]) << 64)
-            aes = AES.new(k_bytes, AES.MODE_CTR, counter=count)
-
-            upload_progress = 0
-            completion_file_handle = None
-
-            mac_bytes = b"\0" * CHUNK_BLOCK_LEN
-            mac_encryptor = AES.new(k_bytes, AES.MODE_CBC, mac_bytes)
-            iv_bytes = a32_to_bytes([new_key[4], new_key[5], new_key[4], new_key[5]])
-            if file_size > 0:
-                for chunk_start, chunk_size in get_chunks(file_size):
-                    chunk = input_file.read(chunk_size)
-                    actual_size = len(chunk)
-                    upload_progress += actual_size
-                    encryptor = AES.new(k_bytes, AES.MODE_CBC, iv_bytes)
-
-                    mem_view = memoryview(chunk)
-                    for index in range(0, actual_size - CHUNK_BLOCK_LEN, CHUNK_BLOCK_LEN):
-                        block = mem_view[index : index + CHUNK_BLOCK_LEN]
-                        encryptor.encrypt(block)
-
-                    modchunk = (actual_size % CHUNK_BLOCK_LEN) or CHUNK_BLOCK_LEN
-                    # pad last block to 16 bytes
-                    last_block = pad_bytes(mem_view[-modchunk:])
-                    mac_bytes = mac_encryptor.encrypt(encryptor.encrypt(last_block))
-
-                    # encrypt file and upload
-                    chunk = aes.encrypt(chunk)
-                    output_file = await self._api._lazy_session().post(upload_url + "/" + str(chunk_start), data=chunk)
-                    completion_file_handle = await output_file.text()
-                    logger.info("%s of %s uploaded", upload_progress, file_size)
-            else:
-                # empty file
-                output_file = await self._api._lazy_session().post(upload_url + "/0", data="")
-                completion_file_handle = await output_file.text()
-
-            logger.info("Chunks uploaded")
-            logger.info("Setting attributes to complete upload")
-            logger.info("Computing attributes")
-            file_mac: tuple[int, ...] = str_to_a32(mac_bytes)
-
-            # determine meta mac
-            meta_mac = (file_mac[0] ^ file_mac[1], file_mac[2] ^ file_mac[3])
-            attribs = {"n": file_path.name}
-
-            encrypt_attribs = b64_url_encode(encrypt_attr(attribs, new_key[:4]))
-            key: tuple[int, ...] = (
-                new_key[0] ^ new_key[4],
-                new_key[1] ^ new_key[5],
-                new_key[2] ^ meta_mac[0],
-                new_key[3] ^ meta_mac[1],
-                new_key[4],
-                new_key[5],
-                meta_mac[0],
-                meta_mac[1],
-            )
-            encrypted_key = a32_to_base64(encrypt_key(key, self._vault.master_key))
-            logger.info("Sending request to update attributes")
-            # update attributes
-            data: GetNodesResponse = await self._api.request(
-                {
-                    "a": "p",
-                    "t": dest_node_id,
-                    "i": self._api._client_id,
-                    "n": [{"h": completion_file_handle, "t": 0, "a": encrypt_attribs, "k": encrypted_key}],
-                }
-            )
-            logger.info("Upload complete")
-            return data
+        return await self._upload(file_path, dest_node_id)
 
     async def create_folder(self, path: str | PathLike[str]) -> Node:
         path = PurePosixPath(path).as_posix()
