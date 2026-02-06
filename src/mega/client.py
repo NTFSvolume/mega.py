@@ -36,6 +36,7 @@ from mega.data_structures import (
     UserResponse,
 )
 from mega.filesystem import FileSystem, UserFileSystem
+from mega.utils import throttled_gather
 
 from .errors import RequestError, ValidationError
 
@@ -160,7 +161,7 @@ class Mega(MegaCore):
             {"n": public_handle},
         )
 
-        nodes = await self._deserialize_nodes(folder["f"], public_key)
+        nodes = await self._vault.deserialize_nodes(folder["f"], public_key)
         return await asyncio.to_thread(FileSystem.build, nodes)
 
     async def download(self, node: Node, output_dir: str | PathLike[str] | None = None) -> Path:
@@ -186,37 +187,39 @@ class Mega(MegaCore):
 
     async def download_public_folder(
         self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
-    ) -> list[Path | BaseException]:
-        fs = await self.get_nodes_in_public_folder(public_handle, public_key)
-        sem = asyncio.BoundedSemaphore(10)
-        base_path = Path(output_dir or ".")
+    ) -> list[Path | Exception]:
+        """
+        Recursively download all files from a public folder, preserving its internal directory structure.
 
-        async def download_file(file: Node, file_path: PurePosixPath) -> Path | BaseException:
+        Returns:
+            A list where each element is either a `Path` (a successful download)
+            or an `Exception` (a failed download).
+        """
+        fs = await self.get_nodes_in_public_folder(public_handle, public_key)
+
+        base_path = Path(output_dir or ".")
+        folder_url = f"{self._primary_url}/folder/{public_handle}#{public_key}"
+
+        async def worker(file: Node, path: PurePosixPath) -> Path:
+            web_url = folder_url + f"/file/{file.id}"
+            output_folder = base_path / path.parent
             try:
                 file_info = await self._request_file_info(file.id, public_handle)
-                return await self._download_file(
-                    file_info,
-                    file._crypto,
-                    base_path / file_path.parent,
-                    file_path.name,
-                )
-            except BaseException as e:
-                logger.exception(f"Unable to download {file}")
-                return e
-            finally:
-                sem.release()
+                return await self._download_file(file_info, file._crypto, output_folder, path.name)
+            except Exception:
+                logger.exception(f"Unable to download {web_url} to {output_folder}")
+                raise
 
-        results: list[asyncio.Task[Path | BaseException]] = []
-        async with asyncio.TaskGroup() as tg:
+        def make_coros():
             for file in fs.files:
-                path = fs.resolve(file.id)
-                await sem.acquire()
-                results.append(tg.create_task(download_file(file, path)))
+                path = fs.relative_path(file.id)
+                yield (worker(file, path))
 
-        return await asyncio.gather(*results)
+        return await throttled_gather(make_coros(), return_exceptions=True)
 
-    async def upload(self, file_path: str | PathLike[str], dest_node: Node | None = None) -> GetNodesResponse:
-        dest_node_id = dest_node or self.filesystem.root.id
+    async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> GetNodesResponse:
+        if not dest_node_id:
+            dest_node_id = (await self.get_filesystem()).root.id
 
         file_path = Path(file_path)
         with open(file_path, "rb") as input_file:
@@ -375,4 +378,4 @@ class Mega(MegaCore):
         )
 
         self._filesystem = None
-        return self._deserialize_node(resp["f"][0])
+        return self._vault.deserialize_node(resp["f"][0])

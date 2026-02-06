@@ -148,8 +148,12 @@ class FileSystem(_DictDumper):
         if self.trash_bin:
             yield from self.iterdir(self.trash_bin.id)
 
+    def relative_path(self, node_id: NodeID) -> PurePosixPath:
+        """Get the path of this node relative to the root folder"""
+        return self._paths[node_id].relative_to(_POSIX_ROOT)
+
     def resolve(self, node_id: NodeID) -> PurePosixPath:
-        """Get the path of this node"""
+        """Get the absolute path of this node"""
         return self._paths[node_id]
 
     def search(

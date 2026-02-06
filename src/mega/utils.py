@@ -1,9 +1,14 @@
+import asyncio
 import logging
 import re
+from collections.abc import Awaitable, Iterable, Sequence
+from typing import Literal, TypeVar, overload
 
 from rich.logging import RichHandler
 
 from mega.errors import ValidationError
+
+_T = TypeVar("_T")
 
 
 def setup_logger(name: str = "mega") -> None:
@@ -44,3 +49,55 @@ def parse_folder_url(url: str) -> tuple[str, str]:
         raise ValidationError("Not a valid folder URL")
     root_folder_id, shared_key = parts.split("#")
     return root_folder_id, shared_key
+
+
+@overload
+async def throttled_gather(
+    coros: Iterable[Awaitable[_T]], batch_size: int = 10, *, return_exceptions: Literal[False]
+) -> list[_T]: ...
+
+
+@overload
+async def throttled_gather(
+    coros: Iterable[Awaitable[_T]], batch_size: int = 10, *, return_exceptions: bool = True
+) -> list[_T | Exception]: ...
+
+
+async def throttled_gather(
+    coros: Iterable[Awaitable[_T]], batch_size: int = 10, *, return_exceptions: bool = True
+) -> Sequence[_T | Exception]:
+    """Like `asyncio.gather`, but creates tasks lazily to minimize event loop overhead.
+
+    This function ensures there are never more than `batch_size` tasks created at any given time.
+
+    If `return_exceptions` is `False`, any exceptions other than `asyncio.CancelledError` raised within
+    a task will cancel all remaining tasks and wait for them to exit.
+    The exceptions are then combined and raised as an `ExceptionGroup`.
+    """
+
+    semaphore = asyncio.BoundedSemaphore(batch_size)
+    tasks: list[asyncio.Task[_T | Exception]] = []
+
+    abort = False
+
+    async def worker(coro: Awaitable[_T]) -> _T | Exception:
+        try:
+            return await coro
+        except Exception as e:
+            if return_exceptions:
+                return e
+            nonlocal abort
+            abort = True
+            raise
+
+        finally:
+            semaphore.release()
+
+    async with asyncio.TaskGroup() as tg:
+        for coro in coros:
+            if abort:
+                break
+            await semaphore.acquire()
+            tasks.append(tg.create_task(worker(coro)))
+
+    return [t.result() for t in tasks]
