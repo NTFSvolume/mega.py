@@ -4,7 +4,7 @@ from pathlib import Path
 from pprint import pprint
 
 from mega import env
-from mega.client import MegaClient
+from mega.client import MegaNzClient
 from mega.utils import setup_logger
 
 
@@ -26,7 +26,7 @@ async def run() -> None:
     )
     args = parser.parse_args()
 
-    async with MegaClient() as mega:
+    async with MegaNzClient() as mega:
         await mega.login(env.EMAIL, env.PASSWORD)
         stats = await mega.get_account_stats()
         pprint(stats)  # noqa: T203

@@ -5,7 +5,7 @@ import contextlib
 import logging
 import random
 import string
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import aiohttp
 import tenacity
@@ -22,28 +22,29 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+_HEADERS: dict[str, str] = {
+    "Content-Type": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
+}
+
+
 class MegaAPI:
     __slots__ = (
         "__session",
         "_client_id",
-        "_default_headers",
-        "_entrypoint",
         "_managed_session",
         "_request_id",
         "session_id",
     )
 
+    entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
+
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self.session_id: str | None = None
         self._request_id: int = random_u32int()
         self._client_id: str = "".join(random.choices(string.ascii_letters + string.digits, k=10))
-        self._default_headers = {
-            "Content-Type": "application/json",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
-        }
         self.__session: aiohttp.ClientSession | None = session
         self._managed_session: bool = session is not None
-        self._entrypoint: yarl.URL = yarl.URL("https://g.api.mega.co.nz/cs")  # api still uses the old mega.co.nz domain
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self._client_id!r})"
@@ -76,12 +77,12 @@ class MegaAPI:
         if not isinstance(data, list):
             data = [data]
 
-        headers = self._default_headers
+        headers = _HEADERS
 
         for solve_xhashcash in (True, False):
             logger.debug(f"Making POST request with {params=!r} {data=!r} {headers=!r}")
             async with self._lazy_session().post(
-                self._entrypoint, params=params, json=data, headers=headers
+                self.entrypoint, params=params, json=data, headers=headers
             ) as response:
                 # Since around feb 2025, MEGA requires clients to solve a challenge during each login attempt.
                 # When that happens, initial responses returns "402 Payment Required".
@@ -97,7 +98,7 @@ class MegaAPI:
                     logger.info("Solving xhashcash login challenge, this could take a few seconds...")
                     xhashcash_token = await asyncio.to_thread(generate_hashcash_token, xhashcash_challenge)
                     logger.debug(f"Solved xhashcash: challenge={xhashcash_challenge!r}, result={xhashcash_token}")
-                    headers = self._default_headers | {"X-Hashcash": xhashcash_token}
+                    headers = headers | {"X-Hashcash": xhashcash_token}
                     continue
 
                 return await self._process_resp(response)
@@ -107,7 +108,7 @@ class MegaAPI:
 
     @contextlib.asynccontextmanager
     async def download(self, url: str | yarl.URL) -> AsyncGenerator[aiohttp.ClientResponse]:
-        async with self._lazy_session().get(url, headers=self._default_headers) as resp:
+        async with self._lazy_session().get(url, headers=_HEADERS) as resp:
             resp.raise_for_status()
             yield resp
 

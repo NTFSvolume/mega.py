@@ -59,7 +59,7 @@ class NodeType(IntEnum):
 class NodeSerialized(TypedDict):
     h: NodeID  # ID
     p: NodeID  # Parent ID
-    u: UserID  # Owner (user ID)
+    u: NotRequired[UserID]  # Owner (user ID), not present in transfer.it nodes
     t: ReadOnly[NodeType]
     a: str  # Serialized attributes
     ts: TimeStamp  # creation date
@@ -189,15 +189,20 @@ class Node(_DictDumper):
 
     @classmethod
     def parse(cls, node: NodeSerialized) -> Node:
+        owner = node.get("u", "")
         if k := node.get("k"):
-            keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
+            if owner:
+                keys: dict[str, str] = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
+
+            else:
+                keys = {owner: k}
         else:
             keys = {}
 
         return Node(
             id=node["h"],
             parent_id=node["p"],
-            owner=node["u"],
+            owner=owner,
             created_at=node["ts"],
             type=NodeType(node["t"]),
             keys=MappingProxyType(keys),

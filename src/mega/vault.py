@@ -5,7 +5,7 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from mega.crypto import b64_to_a32, b64_url_decode, compose_crypto, decrypt_attr, decrypt_key, str_to_a32
+from mega.crypto import b64_to_a32, b64_url_decode, compose_crypto, decrypt_attr, decrypt_key
 from mega.data_structures import Attributes, Node, NodeSerialized, NodeType, UserID
 
 if TYPE_CHECKING:
@@ -64,7 +64,7 @@ class MegaVault:
 
         # public files/folders
         elif share_key := self.shared_keys.get("EXP", {}).get(node.id):
-            encrypted_key = str_to_a32(b64_url_decode(next(iter(node.keys.values()))))
+            encrypted_key = b64_to_a32(next(iter(node.keys.values())))
             full_key = decrypt_key(encrypted_key, share_key)
 
         else:
