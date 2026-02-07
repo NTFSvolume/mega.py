@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import datetime
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -16,7 +15,7 @@ from mega.client import MegaNzClient
 from mega.data_structures import AccountBalance, AccountStats, Node, NodeType, StorageQuota
 from mega.errors import RequestError, RetryRequestError
 from mega.filesystem import UserFileSystem
-from mega.utils import setup_logger
+from mega.utils import setup_logger, str_utc_now
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -37,8 +36,7 @@ async def http_client() -> aiohttp.ClientSession:
 
 @pytest.fixture()
 def folder_name() -> str:
-    now = datetime.datetime.now().astimezone(datetime.UTC).replace(tzinfo=None).strftime("%Y%m%d_%H%M%S_%f")
-    return f"mega.py_testfolder_{now}"
+    return f"mega.py_testfolder_{str_utc_now()}"
 
 
 @pytest.fixture(name="mega")

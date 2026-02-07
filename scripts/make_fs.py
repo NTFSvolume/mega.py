@@ -1,17 +1,22 @@
 from __future__ import annotations
 
 import dataclasses
+import itertools
 import json
 import random
 import time
 from pathlib import Path, PurePosixPath
 from pprint import pprint
 from types import MappingProxyType
+from typing import TYPE_CHECKING
 
 from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key
 from mega.data_structures import _LABELS, Attributes, Crypto, Node, NodeType
-from mega.filesystem import FileSystem
-from mega.utils import random_id, random_u32int_array
+from mega.filesystem import UserFileSystem
+from mega.utils import random_id, random_u32int_array, str_utc_now
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable
 
 _FOLDERS = (
     "assets",
@@ -50,34 +55,40 @@ _FILENAMES = (
 
 master_key = random_u32int_array(4)
 
+_POSIX_ROOT = PurePosixPath("/")
+_E_NODE_PATHS = {
+    NodeType.ROOT_FOLDER: _POSIX_ROOT / "Cloud Drive",
+    NodeType.INBOX: _POSIX_ROOT / "Inbox",
+    NodeType.TRASH: _POSIX_ROOT / "Trash Bin",
+}
 
-def generate_paths(root_name: str = "", max_depth: int = 4, max_items_per_dir: int = 10) -> list[PurePosixPath]:
+
+def generate_paths(
+    root_name: PurePosixPath | str = "",
+    *,
+    max_depth: int = 3,
+    min_items_per_dir: int = 1,
+    max_items_per_dir: int = 5,
+) -> Generator[PurePosixPath]:
     root_path = PurePosixPath("/") / root_name
-    paths = {root_path}
 
-    def built_tree(current_path: PurePosixPath, depth: int) -> None:
-        if depth > max_depth:
-            return
-
-        num_items = random.randint(1, max_items_per_dir)
-
+    def built_tree(current_path: PurePosixPath, depth: int) -> Generator[PurePosixPath]:
+        num_children = random.randint(min_items_per_dir, max_items_per_dir)
         here: set[str] = set()
-
-        for _ in range(num_items):
-            is_file = random.random() < 0.75
-
+        threshold = random.random()
+        while len(here) < num_children:
+            is_file = random.random() < threshold
             name = random.choice(_FILENAMES if is_file else _FOLDERS)
 
             if name not in here:
                 new_path = current_path / name
-                paths.add(new_path)
+                yield new_path
                 here.add(name)
 
-                if not is_file:
-                    built_tree(new_path, depth + 1)
+                if not is_file and depth < max_depth:
+                    yield from built_tree(new_path, depth + 1)
 
-    built_tree(root_path, 0)
-    return sorted(paths, key=lambda x: str(x).casefold())
+    yield from built_tree(root_path, 0)
 
 
 def create_node(name: str, parent_id: str) -> Node:
@@ -105,15 +116,13 @@ def create_node(name: str, parent_id: str) -> Node:
     )
 
 
-def esp_node(node_type: NodeType) -> Node:
-    name = {
-        NodeType.ROOT_FOLDER: "Cloud Drive",
-        NodeType.INBOX: "Inbox",
-        NodeType.TRASH: "Trash Bin",
-    }[node_type]
+def s_node(node_type: NodeType) -> tuple[PurePosixPath, Node]:
+    name = _E_NODE_PATHS[node_type].name
     attributes = Attributes(name)
 
-    return dataclasses.replace(
+    path = _POSIX_ROOT if node_type is NodeType.ROOT_FOLDER else _E_NODE_PATHS[node_type]
+
+    return path, dataclasses.replace(
         create_node("", ""),
         attributes=attributes,
         _a="",
@@ -123,32 +132,33 @@ def esp_node(node_type: NodeType) -> Node:
     )
 
 
-def generate_nodes(paths: list[PurePosixPath]) -> list[Node]:
-    root = esp_node(NodeType.ROOT_FOLDER)
-    inbox = esp_node(NodeType.INBOX)
-    trash_bin = esp_node(NodeType.TRASH)
+def generate_nodes(paths: Iterable[PurePosixPath]) -> list[Node]:
+    map = dict(s_node(t) for t in _E_NODE_PATHS)
 
-    map = {
-        paths[0]: root,
-        PurePosixPath("/") / inbox.attributes.name: inbox,
-        PurePosixPath("/") / trash_bin.attributes.name: trash_bin,
-    }
-
-    for path in paths[1:]:
+    for path in sorted(paths, key=lambda x: str(x).casefold()):
+        if path in map:
+            continue
         parent_id = map[path.parent].id
-        node = create_node(path.name, parent_id)
-        map[path] = node
+        map[path] = create_node(path.name, parent_id)
 
     return list(map.values())
 
 
-if __name__ == "__main__":
+def generate_random_fs() -> UserFileSystem:
     paths = generate_paths()
-    deleted = generate_paths("Trash Bin", max_items_per_dir=3)
+    deleted = generate_paths("Trash Bin", max_depth=2, max_items_per_dir=3)
 
-    fs = FileSystem.build(generate_nodes(paths + deleted[1:]))
+    return fs_from_paths(itertools.chain(paths, deleted))
+
+
+def fs_from_paths(nodes_map: Iterable[PurePosixPath | str]) -> UserFileSystem:
+    return UserFileSystem.build(generate_nodes(_POSIX_ROOT / v for v in nodes_map))
+
+
+if __name__ == "__main__":
+    fs = generate_random_fs()
     pprint(fs)  # noqa: T203
-    out = Path(__file__).parent.parent / "tests" / "fake_fs.json"
+    out = Path(__file__).parent.parent / "tests" / f"fake_fs_{str_utc_now()}.json"
     print(f"Writing filesystem to '{out!s}'")  # noqa: T201
     dump = fs.dump()
 

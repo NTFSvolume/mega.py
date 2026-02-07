@@ -1,4 +1,5 @@
 import asyncio
+import datetime
 import logging
 import random
 import re
@@ -30,6 +31,15 @@ def random_u32int_array(lenght: int) -> tuple[int, ...]:
 
 def random_id(length: int) -> str:
     return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
+
+
+def utc_now() -> datetime.datetime:
+    """Naive UTC now"""
+    return datetime.datetime.now().astimezone(datetime.UTC).replace(tzinfo=None)
+
+
+def str_utc_now() -> str:
+    return utc_now().strftime("%Y%m%d_%H%M%S_%f")
 
 
 def parse_file_url(url: str) -> tuple[str, str]:
