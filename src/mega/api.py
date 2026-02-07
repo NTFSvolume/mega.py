@@ -39,17 +39,17 @@ def retry(
     min_delay: float = 2.0,
     max_delay: float = 30.0,
     backoff: int = 2,
-) -> Callable[[Callable[_P, _R]], Callable[_P, Coroutine[None, None, _R]]]:
+) -> Callable[[Callable[_P, Coroutine[None, None, _R]]], Callable[_P, Coroutine[None, None, _R]]]:
     if not isinstance(exceptions, Sequence):
         exceptions = [exceptions]
 
-    def wrapper(func: Callable[_P, _R]) -> Callable[_P, Coroutine[None, None, _R]]:
+    def wrapper(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, Coroutine[None, None, _R]]:
         @wraps(func)
         async def inner_wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
             current_delay = delay
             for attempt in range(1, attempts + 1):
                 try:
-                    return func(*args, **kwargs)
+                    return await func(*args, **kwargs)
                 except tuple(exceptions) as exc:
                     if attempt >= attempts:
                         raise
