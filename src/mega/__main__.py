@@ -33,6 +33,8 @@ async def run() -> None:
     async with connect() as mega:
         await dump_fs(mega, output)
         # await download_folder(mega, args.url, args.output_dir)
+        link: str = args.url
+        await download_file(mega, link, output)
 
 
 @contextlib.asynccontextmanager
@@ -62,6 +64,13 @@ async def dump_fs(mega: MegaNzClient, output: Path) -> None:
     out.parent.mkdir(exist_ok=True)
     logger.info(f"Creating filesystem dump at '{out!s}'")
     out.write_text(json.dumps(fs.dump(), indent=2, ensure_ascii=False))
+
+
+async def download_file(mega: MegaNzClient, url: str, output: Path) -> None:
+    public_handle, public_key = mega.parse_file_url(url)
+    logger.info(f"Downloading '{url!s}'")
+    path = await mega.download_public_file(public_handle, public_key, output)
+    logger.info(f"Download of '{url!s}' finished. File save at '{path!s}'")
 
 
 async def download_folder(mega: MegaNzClient, url: str, output: Path) -> None:
