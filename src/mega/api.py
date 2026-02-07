@@ -3,10 +3,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-from typing import TYPE_CHECKING, Any, ClassVar, Self
+from collections.abc import Sequence
+from functools import wraps
+from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, Self, TypeVar
 
 import aiohttp
-import tenacity
 import yarl
 
 from mega.crypto import generate_hashcash_token
@@ -15,7 +16,10 @@ from mega.utils import random_id, random_u32int
 from .errors import RequestError, RetryRequestError
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
+    from collections.abc import AsyncGenerator, Callable, Coroutine
+
+    _P = ParamSpec("_P")
+    _R = TypeVar("_R")
 
 
 logger = logging.getLogger(__name__)
@@ -25,6 +29,41 @@ _HEADERS: dict[str, str] = {
     "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
 }
+
+
+def retry(
+    *,
+    exceptions: Sequence[type[Exception]] | type[Exception],
+    attempts: int = 10,
+    delay: float = 0.5,
+    min_delay: float = 2.0,
+    max_delay: float = 30.0,
+    backoff: int = 2,
+) -> Callable[[Callable[_P, Coroutine[None, None, _R]]], Callable[_P, Coroutine[None, None, _R]]]:
+    if not isinstance(exceptions, Sequence):
+        exceptions = [exceptions]
+
+    def wrapper(func: Callable[_P, Coroutine[None, None, _R]]) -> Callable[_P, Coroutine[None, None, _R]]:
+        @wraps(func)
+        async def inner_wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+            current_delay = delay
+            for attempt in range(1, attempts + 1):
+                try:
+                    return await func(*args, **kwargs)
+                except tuple(exceptions) as exc:
+                    if attempt >= attempts:
+                        raise
+
+                    logger.warning(f"Retrying {func.__qualname__} after attempt {attempt} ({exc})")
+                    await asyncio.sleep(current_delay)
+                    exp = current_delay**backoff
+                    current_delay = max(min_delay, min(exp, max_delay))
+            else:
+                raise RuntimeError
+
+        return inner_wrapper
+
+    return wrapper
 
 
 class MegaAPI:
@@ -63,10 +102,7 @@ class MegaAPI:
             self.__session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
         return self.__session
 
-    @tenacity.retry(
-        retry=tenacity.retry_if_exception_type(RetryRequestError),
-        wait=tenacity.wait_exponential(multiplier=2, min=2, max=60),
-    )
+    @retry(exceptions=RetryRequestError, attempts=10, max_delay=60.0)
     async def request(self, data: dict[str, Any] | list[dict[str, Any]], params: dict[str, Any] | None = None) -> Any:
         params = {"id": self._request_id} | (params or {})
         self._request_id += 1
