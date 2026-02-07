@@ -7,7 +7,7 @@ import pytest
 
 from mega.data_structures import Node
 from mega.errors import MultipleNodesFoundError
-from mega.filesystem import UserFileSystem
+from mega.filesystem import _POSIX_ROOT, UserFileSystem
 
 NODE_ID = "0fPFklV3"
 FIND_NODE_ID = "0fPFklV3"
@@ -54,7 +54,7 @@ def test_path_resolve(fs: UserFileSystem) -> None:
     node = fs.find(path)
     assert node is fs.find(rel_path)
     assert fs.relative_path(node.id) == rel_path
-    assert fs.resolve(node.id) == PurePosixPath("/") / rel_path
+    assert fs.resolve(node.id) == _POSIX_ROOT / rel_path
 
 
 def test_search(fs: UserFileSystem) -> None:

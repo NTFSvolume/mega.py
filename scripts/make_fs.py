@@ -70,7 +70,7 @@ def generate_paths(
     min_items_per_dir: int = 1,
     max_items_per_dir: int = 5,
 ) -> Generator[PurePosixPath]:
-    root_path = PurePosixPath("/") / root_name
+    root_path = _POSIX_ROOT / root_name
 
     def built_tree(current_path: PurePosixPath, depth: int) -> Generator[PurePosixPath]:
         num_children = random.randint(min_items_per_dir, max_items_per_dir)
