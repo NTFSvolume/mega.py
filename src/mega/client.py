@@ -185,7 +185,7 @@ class MegaNzClient(MegaCore):
 
     async def download_public_folder(
         self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
-    ) -> list[Path | Exception]:
+    ) -> tuple[list[Path], list[Exception]]:
         """
         Recursively download all files from a public folder, preserving its internal directory structure.
 
@@ -213,7 +213,13 @@ class MegaNzClient(MegaCore):
                 path = fs.relative_path(file.id)
                 yield (worker(file, path))
 
-        return await throttled_gather(make_coros(), return_exceptions=True)
+        results = await throttled_gather(make_coros(), return_exceptions=True)
+        success: list[Path] = []
+        fails: list[Exception] = [
+            result for result in results if isinstance(result, Exception) or (success.append(result) and False)
+        ]
+
+        return success, fails
 
     async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> Node:
         if not dest_node_id:
