@@ -69,8 +69,8 @@ def retry(
 class MegaAPI:
     __slots__ = (
         "__session",
+        "_auto_close_session",
         "_client_id",
-        "_managed_session",
         "_request_id",
         "session_id",
     )
@@ -82,13 +82,13 @@ class MegaAPI:
         self._request_id: int = random_u32int()
         self._client_id: str = random_id(10)
         self.__session: aiohttp.ClientSession | None = session
-        self._managed_session: bool = session is not None
+        self._auto_close_session: bool = session is None
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self._client_id!r})"
 
     async def close(self) -> None:
-        if self._managed_session and self.__session:
+        if self._auto_close_session and self.__session:
             await self.__session.close()
 
     async def __enter__(self) -> Self:
