@@ -28,11 +28,13 @@ _PROGRESS_HOOK_FACTORY: ContextVar[ProgressHookFactory | None] = ContextVar("_PR
 current_hook: ContextVar[ProgressHook] = ContextVar("current_hook", default=lambda _: None)
 
 
-def _truncate_desc(desc: str, length: int = 30, placeholder: str = "...") -> str:
-    if len(desc) < length:
-        return desc
-
-    return f"{desc[: length - len(placeholder)]}{placeholder}"
+@contextlib.contextmanager
+def set_progress_factory(hook_factory: ProgressHookFactory) -> Generator[None]:
+    token = _PROGRESS_HOOK_FACTORY.set(hook_factory)
+    try:
+        yield
+    finally:
+        _PROGRESS_HOOK_FACTORY.reset(token)
 
 
 @contextlib.contextmanager
@@ -60,35 +62,15 @@ def new_progress() -> Generator[None]:
     def hook_factory(*args, **kwargs):
         return _new_rich_task(progress, *args, **kwargs)
 
-    token = _PROGRESS_HOOK_FACTORY.set(hook_factory)
-
-    try:
-        with progress:
-            yield
-    finally:
-        _PROGRESS_HOOK_FACTORY.reset(token)
+    with progress, set_progress_factory(hook_factory):
+        yield
 
 
-async def test() -> None:
-    import random
+def _truncate_desc(desc: str, length: int = 30, placeholder: str = "...") -> str:
+    if len(desc) < length:
+        return desc
 
-    async def task(name: str) -> None:
-        total = 1e6 * random.randint(200, 2000)
-        max_step = int(total / 20)
-        kind = random.choice(("UP", "DOWN"))
-        with new_task(name, total, kind):
-            advance = current_hook.get()
-            done = 0
-            while done < total:
-                chunk = min(random.randint(0, max_step), total - done)
-                done += chunk
-                advance(chunk)
-                await asyncio.sleep(0.1)
-
-    with new_progress():
-        async with asyncio.TaskGroup() as tg:
-            for idx in range(random.randint(2, 10)):
-                tg.create_task(task(f"file{idx}"))
+    return f"{desc[: length - len(placeholder)]}{placeholder}"
 
 
 def _new_rich_progress() -> Progress | None:
@@ -134,6 +116,28 @@ def _new_rich_task(
         yield progress_hook
     finally:
         progress.remove_task(task_id=task_id)
+
+
+async def test() -> None:
+    import random
+
+    async def task(name: str) -> None:
+        total = 1e6 * random.randint(200, 2000)
+        max_step = int(total / 20)
+        kind = random.choice(("UP", "DOWN"))
+        with new_task(name, total, kind):
+            advance = current_hook.get()
+            done = 0
+            while done < total:
+                chunk = min(random.randint(0, max_step), total - done)
+                done += chunk
+                advance(chunk)
+                await asyncio.sleep(0.1)
+
+    with new_progress():
+        async with asyncio.TaskGroup() as tg:
+            for idx in range(random.randint(2, 10)):
+                tg.create_task(task(f"file{idx}"))
 
 
 if __name__ == "__main__":  # pragma: no coverage

@@ -95,11 +95,13 @@ source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
     { name = "pycryptodome" },
-    { name = "rich" },
     { name = "tenacity" },
 ]
 
 [package.dev-dependencies]
+cli = [
+    { name = "rich" },
+]
 dev = [
     { name = "coverage", extra = ["toml"] },
     { name = "pre-commit" },
@@ -108,6 +110,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
     { name = "requests-mock" },
+    { name = "rich" },
     { name = "ruff" },
     { name = "typing-extensions" },
 ]
@@ -116,11 +119,11 @@ dev = [
 requires-dist = [
     { name = "aiohttp", specifier = ">=3.11.18" },
     { name = "pycryptodome", specifier = "==3.19.0" },
-    { name = "rich", specifier = ">=13.0.0" },
     { name = "tenacity", specifier = ">=9.0.0" },
 ]
 
 [package.metadata.requires-dev]
+cli = [{ name = "rich", specifier = ">=14.0.0" }]
 dev = [
     { name = "coverage", extras = ["toml"], specifier = ">=7.7.0" },
     { name = "pre-commit", specifier = ">=4.2.0" },
@@ -129,6 +132,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "pytest-mock", specifier = ">=3.14.0" },
     { name = "requests-mock", specifier = ">=1.12.1" },
+    { name = "rich", specifier = ">=14.0.0" },
     { name = "ruff", specifier = ">=0.13.1" },
     { name = "typing-extensions", specifier = ">=4.15.0" },
 ]
