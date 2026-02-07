@@ -31,16 +31,16 @@ SharedKeys: TypeAlias = dict[NodeID, tuple[int, ...]]
 class ByteSize(int):
     def human_readable(self) -> str:
         """(ex: '150.5MB')"""
-        scale = 1000
+        scale = 1024
         me = float(self)
-        for unit in ("B", "KB", "MB", "GB", "TB", "PB"):
+        for unit in ("B", "KiB", "MiB", "GiB", "TiB", "PiB"):
             if abs(me) < scale:
                 if unit == "B":
                     return f"{me:0.0f}{unit}"
                 return f"{me:0.1f}{unit}"
             me /= scale
 
-        return f"{me:0.1f}EB"
+        return f"{me:0.1f}EiB"
 
     def __repr__(self) -> str:
         return self.human_readable()
