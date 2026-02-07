@@ -22,7 +22,7 @@ from mega.data_structures import AccountStats, Attributes, FileInfo, Node, NodeI
 from mega.filesystem import FileSystem
 from mega.utils import throttled_gather
 
-from .errors import RequestError, ValidationError
+from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
     from os import PathLike
@@ -95,7 +95,7 @@ class MegaNzClient(MegaCore):
 
         public_handle = await self._get_public_handle(file.id)
         public_key = a32_to_base64(file._crypto.full_key)
-        return f"{self._primary_url}/#!{public_handle}!{public_key}"
+        return f"{self._primary_url}/file/{public_handle}#{public_key}"
 
     async def get_folder_link(self, folder: Node) -> str:
         if folder.type is not NodeType.FOLDER:
@@ -224,8 +224,26 @@ class MegaNzClient(MegaCore):
         return self._vault.deserialize_node(resp["f"][0])
 
     async def create_folder(self, path: str | PathLike[str]) -> Node:
+        """Create a folder at the given path.
+
+        If a folder already exists at that path, the existing folder node is
+        returned instead of creating a new one.
+
+        Note:
+            Although MEGA allows creating nodes that share the same path,
+            mega.py intentionally does **not** support this behaviour.
+        """
         path = PurePosixPath(path).as_posix()
         fs = await self.get_filesystem()
+        try:
+            node = fs.find(path)
+
+            if node.type is not NodeType.FOLDER:
+                msg = f"Can't create a folder at '{path!s}'. Node {node.id} already has this path"
+                raise MegaNzError(msg)
+            return node
+        except FileNotFoundError:
+            pass
         return await self._mkdir(path=path, parent_node_id=fs.root.id)
 
     async def rename(self, node: Node, new_name: str) -> bool:
