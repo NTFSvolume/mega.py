@@ -421,7 +421,7 @@
       "owner": "me",
       "type": "file",
       "attributes": {
-        "name": "main.py",
+        "name": "logo.png",
         "label": "blue",
         "favorited": false
       },
@@ -868,7 +868,7 @@
     "MBlNlb2P": "/styles.css",
     "7N9QiWZ9": "/tests",
     "RDJJI2lv": "/tests/logo.png",
-    "pHWVIQLd": "/tests/main.py",
+    "pHWVIQLd": "/tests/logo.png",
     "oImwb6nN": "/tests/script.js",
     "FIXitv4F": "/tests/scripts",
     "0fPFklV3": "/tests/scripts/notes.txt",

@@ -212,7 +212,7 @@ class Node(_DictDumper):
     type: NodeType
     attributes: Attributes
     created_at: TimeStamp
-    keys: MappingProxyType[UserID, str]
+    keys: MappingProxyType[UserID, str] = dataclasses.field(compare=False)
     share_owner: UserID | None
     share_key: str | None
 
@@ -250,7 +250,7 @@ class Node(_DictDumper):
         dump = dump | dict(  # noqa: C408
             type=NodeType[str(dump["type"]).upper()],
             attributes=Attributes(**dump["attributes"]) if dump["attributes"] else None,
-            _crypto=Crypto.from_dump(dump["_crypto"]),
+            _crypto=Crypto.from_dump(dump["_crypto"]) if dump["_crypto"] else None,
         )
 
         return cls(**dump)

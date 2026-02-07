@@ -1,13 +1,17 @@
+from __future__ import annotations
+
 import dataclasses
 import errno
-from collections.abc import Generator, Iterable, Iterator, Sequence
-from os import PathLike
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Any, Self
+from typing import TYPE_CHECKING, Any, Self
 
 from mega.data_structures import Node, NodeID, NodeType, _DictDumper
 from mega.errors import MultipleNodesFoundError
+
+if TYPE_CHECKING:
+    from collections.abc import Generator, Iterable, Iterator, Sequence
+    from os import PathLike
 
 _POSIX_ROOT = PurePosixPath("/")
 
