@@ -1,11 +1,14 @@
 import argparse
 import asyncio
+import logging
 from pathlib import Path
 from pprint import pprint
 
 from mega import env
 from mega.client import MegaNzClient
 from mega.utils import setup_logger
+
+logger = logging.getLogger(__name__)
 
 
 async def run() -> None:
@@ -29,8 +32,9 @@ async def run() -> None:
     async with MegaNzClient() as mega:
         await mega.login(env.EMAIL, env.PASSWORD)
         stats = await mega.get_account_stats()
-        pprint(stats)  # noqa: T203
-        public_handle, public_key = mega.parse_file_url(args.url)
+        pprint(stats.dump())  # noqa: T203
+        public_handle, public_key = mega.parse_folder_url(args.url)
+        logger.info(f"Downloading {args.url}")
         with mega.show_progress_bar():
             await mega.download_public_folder(public_handle, public_key, args.output_dir)
 

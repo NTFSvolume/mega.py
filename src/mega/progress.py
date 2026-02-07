@@ -28,6 +28,13 @@ _PROGRESS_HOOK_FACTORY: ContextVar[ProgressHookFactory | None] = ContextVar("_PR
 current_hook: ContextVar[ProgressHook] = ContextVar("current_hook", default=lambda _: None)
 
 
+def _truncate_desc(desc: str, length: int = 30, placeholder: str = "...") -> str:
+    if len(desc) < length:
+        return desc
+
+    return f"{desc[: length - len(placeholder)]}{placeholder}"
+
+
 @contextlib.contextmanager
 def new_task(description: str, total: float, kind: Literal["UP", "DOWN"]) -> Generator[None]:
     factory = _PROGRESS_HOOK_FACTORY.get()
@@ -35,7 +42,7 @@ def new_task(description: str, total: float, kind: Literal["UP", "DOWN"]) -> Gen
         yield
         return
 
-    with factory(description, total, kind) as progress_hook:
+    with factory(_truncate_desc(description), total, kind) as progress_hook:
         token = current_hook.set(progress_hook)
         try:
             yield
@@ -69,7 +76,7 @@ async def test() -> None:
         total = 1e6 * random.randint(200, 2000)
         max_step = int(total / 20)
         kind = random.choice(("UP", "DOWN"))
-        with new_task(name, total, kind=kind):
+        with new_task(name, total, kind):
             advance = current_hook.get()
             done = 0
             while done < total:

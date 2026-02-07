@@ -140,7 +140,7 @@ class MegaCore:
         file_path = Path(file_path)
         file_size = file_path.stat().st_size
 
-        with progress.new_task(file_path.name, file_size):
+        with progress.new_task(file_path.name, file_size, "UP"):
             file_id, crypto = await upload.upload(self._api, file_path, file_size)
             return await upload.finish_upload(
                 self._api,
@@ -168,7 +168,7 @@ class MegaCore:
         name = output_name or Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), crypto.key)).name
         output_path = Path(output_folder or Path()) / name
 
-        with progress.new_task(output_path.name, file_info.size):
+        with progress.new_task(output_path.name, file_info.size, "DOWN"):
             async with self._api.download(file_info.url) as response:
                 return await download.stream_download(
                     response.content,
