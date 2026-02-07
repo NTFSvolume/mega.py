@@ -51,7 +51,7 @@ _FILENAMES = (
 master_key = random_u32int_array(4)
 
 
-def generate_paths(root_name: str = "", max_depth: int = 3, max_items_per_dir: int = 10) -> list[PurePosixPath]:
+def generate_paths(root_name: str = "", max_depth: int = 4, max_items_per_dir: int = 10) -> list[PurePosixPath]:
     root_path = PurePosixPath("/") / root_name
     paths = {root_path}
 
@@ -105,16 +105,34 @@ def create_node(name: str, parent_id: str) -> Node:
     )
 
 
-def generate_nodes(paths: list[PurePosixPath]) -> list[Node]:
-    root = dataclasses.replace(
+def esp_node(node_type: NodeType) -> Node:
+    name = {
+        NodeType.ROOT_FOLDER: "Cloud Drive",
+        NodeType.INBOX: "Inbox",
+        NodeType.TRASH: "Trash Bin",
+    }[node_type]
+    attributes = Attributes(name)
+
+    return dataclasses.replace(
         create_node("", ""),
-        attributes=Attributes("Cloud Drive"),
+        attributes=attributes,
         _a="",
         keys=MappingProxyType({}),
-        type=NodeType.ROOT_FOLDER,
+        type=node_type,
         _crypto=None,
     )
-    map = {paths[0]: root}
+
+
+def generate_nodes(paths: list[PurePosixPath]) -> list[Node]:
+    root = esp_node(NodeType.ROOT_FOLDER)
+    inbox = esp_node(NodeType.INBOX)
+    trash_bin = esp_node(NodeType.TRASH)
+
+    map = {
+        paths[0]: root,
+        PurePosixPath("/") / inbox.attributes.name: inbox,
+        PurePosixPath("/") / trash_bin.attributes.name: trash_bin,
+    }
 
     for path in paths[1:]:
         parent_id = map[path.parent].id
@@ -126,8 +144,15 @@ def generate_nodes(paths: list[PurePosixPath]) -> list[Node]:
 
 if __name__ == "__main__":
     paths = generate_paths()
-    fs = FileSystem.build(generate_nodes(paths))
+    deleted = generate_paths("Trash Bin", max_items_per_dir=3)
+
+    fs = FileSystem.build(generate_nodes(paths + deleted[1:]))
     pprint(fs)  # noqa: T203
     out = Path(__file__).parent.parent / "tests" / "fake_fs.json"
     print(f"Writing filesystem to '{out!s}'")  # noqa: T201
-    out.write_text(json.dumps(fs.dump(), indent=2, ensure_ascii=False))
+    dump = fs.dump()
+
+    del dump["inv_paths"]
+    del dump["children"]
+
+    out.write_text(json.dumps(dump, indent=2, ensure_ascii=False))

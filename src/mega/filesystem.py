@@ -216,15 +216,20 @@ class FileSystem(_DictDumper):
         )
         return dict(sorted(pairs, key=lambda x: str(x[1]).casefold()))
 
-    def dump(self) -> dict[str, Any]:
+    def dump(self, *, simple: bool = False) -> dict[str, Any]:
         """Get a JSONable dict representation of this object"""
-        return dict(  # noqa: C408
+        dump = dict(  # noqa: C408
+            file_count=self.file_count,
+            folder_count=self.folder_count,
             root=self.root.dump() if self.root else None,
             inbox=self.inbox.dump() if self.inbox else None,
             trash_bin=self.trash_bin.dump() if self.trash_bin else None,
-            file_count=self.file_count,
-            folder_count=self.folder_count,
             nodes={node_id: node.dump() for node_id, node in self._nodes.items()},
+        )
+        if simple:
+            return dump
+
+        return dump | dict(  # noqa: C408
             paths={node_id: str(path) for node_id, path in self._paths.items()},
             inv_paths={str(path): node_id for path, node_id in self._inv_paths.items()},
             children=dict(self._children),
