@@ -115,7 +115,8 @@ class SimpleFileSystem(NodeWalker, _DictDumper):
 
         for node in nodes:
             nodes_map[node.id] = node
-            children.setdefault(node.parent_id, []).append(node.id)
+            if node.parent_id:
+                children.setdefault(node.parent_id, []).append(node.id)
             match node.type:
                 case NodeType.FILE:
                     file_count += 1
