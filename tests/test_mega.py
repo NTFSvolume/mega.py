@@ -185,11 +185,11 @@ class TestFind:
         file2 = await mega.find(path2)
         assert file1.id != file2.id
         fs = await mega.get_filesystem()
-        assert fs.resolve(file1.id) != fs.resolve(file2.id)
+        assert fs.absolute_path(file1.id) != fs.absolute_path(file2.id)
         assert str(fs.relative_path(file1.id)) == path1
         assert str(fs.relative_path(file2.id)) == path2
-        assert str(fs.resolve(file1.id)) == "/" + path1
-        assert str(fs.resolve(file2.id)) == "/" + path2
+        assert str(fs.absolute_path(file1.id)) == "/" + path1
+        assert str(fs.absolute_path(file2.id)) == "/" + path2
 
     async def test_path_not_found_raise_file_not_found_error(self, mega: MegaNzClient) -> None:
         with pytest.raises(FileNotFoundError):
@@ -226,7 +226,7 @@ async def test_upload_and_download(mega: MegaNzClient, tmp_path: Path, folder_na
     path = f"/{folder_name}/{TEST_FILE.name}"
     fs = await mega.get_filesystem()
     assert fs.find(path)
-    assert str(fs.resolve(node.id)) == path
+    assert str(fs.absolute_path(node.id)) == path
     output_path = await mega.download(node, tmp_path)
     assert output_path.parent == tmp_path
     assert output_path.is_file()

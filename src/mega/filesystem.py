@@ -15,19 +15,19 @@ from mega.data_structures import Node, NodeID, NodeType, _DictDumper
 from mega.errors import MultipleNodesFoundError
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Iterable, Iterator, Sequence
+    from collections.abc import Generator, Iterable, Iterator
     from os import PathLike
 
 _POSIX_ROOT = PurePosixPath("/")
 
 
-class NodeLookup(NamedTuple):
+class _NodeLookup(NamedTuple):
     node_id: NodeID
     path: PurePosixPath
     was_deleted: bool
 
 
-def _resolve_paths(walker: NodeWalker, *roots: Node) -> Generator[NodeLookup]:
+def _resolve_paths(walker: _NodeWalker, *roots: Node) -> Generator[_NodeLookup]:
     def walk(node_id: str, current_path: PurePosixPath) -> Generator[tuple[NodeID, PurePosixPath]]:
         for node in walker.iterdir(node_id):
             node_path = current_path / node.attributes.name
@@ -40,14 +40,14 @@ def _resolve_paths(walker: NodeWalker, *roots: Node) -> Generator[NodeLookup]:
         name = root.attributes.name
         path = _POSIX_ROOT if root.type is NodeType.ROOT_FOLDER else _POSIX_ROOT / name
 
-        yield NodeLookup(root.id, path, False)
+        yield _NodeLookup(root.id, path, False)
         deleted = root.type is NodeType.TRASH
         for child_id, child_path in walk(root.id, path):
-            yield NodeLookup(child_id, child_path, deleted)
+            yield _NodeLookup(child_id, child_path, deleted)
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
-class NodeWalker:
+class _NodeWalker:
     _nodes: MappingProxyType[NodeID, Node] = dataclasses.field(repr=False)
     _children: MappingProxyType[NodeID, tuple[NodeID, ...]] = dataclasses.field(repr=False)
 
@@ -69,7 +69,7 @@ class NodeWalker:
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
-class SimpleFileSystem(NodeWalker, _DictDumper):
+class SimpleFileSystem(_NodeWalker, _DictDumper):
     """A simple representation of Mega.nz's file system.
 
     Supports lookups and traversal of nodes by node ID.
@@ -105,8 +105,14 @@ class SimpleFileSystem(NodeWalker, _DictDumper):
         """A mapping of nodes to their inmediate children"""
         return self._children
 
+    @property
+    def deleted(self) -> Iterable[Node]:
+        """files or folders currently on the trash bin (Non recursive)"""
+        if self.trash_bin:
+            yield from self.iterdir(self.trash_bin.id)
+
     @classmethod
-    def build(cls, nodes: Sequence[Node]) -> Self:
+    def build(cls, nodes: Iterable[Node]) -> Self:
         root = inbox = trash_bin = None
         file_count = folder_count = 0
 
@@ -152,6 +158,10 @@ class SimpleFileSystem(NodeWalker, _DictDumper):
             nodes={node_id: node.dump() for node_id, node in self.nodes.items()},
         )
 
+    @classmethod
+    def from_dump(cls, dump: dict[str, Any], /) -> Self:
+        return cls.build(Node.from_dump(node) for node in dump["nodes"].values())
+
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
 class FileSystem(SimpleFileSystem):
@@ -168,7 +178,7 @@ class FileSystem(SimpleFileSystem):
     _deleted: frozenset[NodeID] = dataclasses.field(repr=False)
 
     @classmethod
-    def build(cls, nodes: Sequence[Node]) -> Self:
+    def build(cls, nodes: Iterable[Node]) -> Self:
         # This is really expensive
         # We do 5 loops over all nodes:
         # SimpleFileSystem:
@@ -182,7 +192,7 @@ class FileSystem(SimpleFileSystem):
 
         self = SimpleFileSystem.build(nodes)
 
-        roots = list(filter(None, (self.root, self.inbox, self.trash_bin))) or [nodes[0]]
+        roots = list(filter(None, (self.root, self.inbox, self.trash_bin))) or [next(iter(self.nodes.values()))]
         paths: dict[NodeID, PurePosixPath] = {}
         inv_paths: dict[PurePosixPath, list[NodeID]] = {}
         deleted_ids: set[NodeID] = set()
@@ -234,17 +244,11 @@ class FileSystem(SimpleFileSystem):
             if node.type is NodeType.FOLDER and node.id not in self._deleted:
                 yield node
 
-    @property
-    def deleted(self) -> Iterable[Node]:
-        """All files or folders currently on the trash bin (Non recursive)"""
-        if self.trash_bin:
-            yield from self.iterdir(self.trash_bin.id)
-
     def dirmap(self, node_id: str, *, recursive: bool = False) -> dict[NodeID, PurePosixPath]:
         """Creates a mapping from `node id` -> `Path` only including children of this node"""
 
         pairs = (
-            (child_id, self.resolve(child_id))
+            (child_id, self.absolute_path(child_id))
             for child_id in self._ls(
                 node_id,
                 recursive=recursive,
@@ -254,9 +258,9 @@ class FileSystem(SimpleFileSystem):
 
     def relative_path(self, node_id: NodeID) -> PurePosixPath:
         """Get the path of this node relative to the root folder"""
-        return self._paths[node_id].relative_to(_POSIX_ROOT)
+        return self.absolute_path(node_id).relative_to(_POSIX_ROOT)
 
-    def resolve(self, node_id: NodeID) -> PurePosixPath:
+    def absolute_path(self, node_id: NodeID) -> PurePosixPath:
         """Get the absolute path of this node"""
         return self._paths[node_id]
 
@@ -313,12 +317,8 @@ class FileSystem(SimpleFileSystem):
             children=dict(self.children),
         )
 
-    @classmethod
-    def from_dump(cls, dump: dict[str, Any], /) -> Self:
-        return cls.build([Node.from_dump(node) for node in dump["nodes"].values()])
 
-
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
 class UserFileSystem(FileSystem):
     root: Node
     inbox: Node

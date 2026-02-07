@@ -54,7 +54,7 @@ def test_path_resolve(fs: UserFileSystem) -> None:
     node = fs.find(path)
     assert node is fs.find(rel_path)
     assert fs.relative_path(node.id) == rel_path
-    assert fs.resolve(node.id) == _POSIX_ROOT / rel_path
+    assert fs.absolute_path(node.id) == _POSIX_ROOT / rel_path
 
 
 def test_search(fs: UserFileSystem) -> None:
@@ -112,7 +112,7 @@ def test_iter_dir(fs: UserFileSystem) -> None:
     node = fs.find("/tests")
 
     def get_path(recursive: bool) -> list[str]:
-        return sorted(str(fs.resolve(n.id)) for n in fs.iterdir(node.id, recursive=recursive))
+        return sorted(str(fs.absolute_path(n.id)) for n in fs.iterdir(node.id, recursive=recursive))
 
     assert get_path(recursive=False) == sorted(children)
     assert get_path(recursive=True) == sorted(recursive_children)
