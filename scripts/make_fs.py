@@ -11,7 +11,7 @@ from types import MappingProxyType
 from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key
 from mega.data_structures import _LABELS, Attributes, Crypto, Node, NodeType
 from mega.filesystem import FileSystem
-from mega.utils import random_id, random_u32int, random_u32int_array
+from mega.utils import random_id, random_u32int_array
 
 _FOLDERS = (
     "assets",
@@ -82,10 +82,11 @@ def generate_paths(root_name: str = "", max_depth: int = 3, max_items_per_dir: i
 
 def create_node(name: str, parent_id: str) -> Node:
     owner = "me"
-    random_key = tuple(random_u32int() for _ in range(6))
+    random_key = random_u32int_array(6)
     key, iv = random_key[:4], random_key[4:]
     meta_mac = (0, 0)
-    crypto = Crypto.compose(key, iv, meta_mac)
+    type_ = NodeType.FOLDER if name in _FOLDERS else NodeType.FILE
+    crypto = Crypto.compose(key, iv, meta_mac, type_)
     attris = Attributes(name, random.choice(_LABELS), random.choice((True, False)))
     encrypted_key = a32_to_base64(encrypt_key(key, master_key))
 
@@ -93,7 +94,7 @@ def create_node(name: str, parent_id: str) -> Node:
         id=random_id(8),
         parent_id=parent_id,
         owner="me",
-        type=NodeType.FOLDER if name in _FOLDERS else NodeType.FILE,
+        type=type_,
         attributes=attris,
         created_at=int(time.time()),
         keys=MappingProxyType({owner: encrypted_key}),
