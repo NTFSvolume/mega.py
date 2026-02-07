@@ -1,6 +1,8 @@
 import asyncio
 import logging
+import random
 import re
+import string
 from collections.abc import Awaitable, Iterable, Sequence
 from typing import Literal, TypeVar, overload
 
@@ -16,6 +18,18 @@ def setup_logger(name: str = "mega") -> None:
     logger = logging.getLogger(name)
     logger.setLevel(10)
     logger.addHandler(handler)
+
+
+def random_u32int() -> int:
+    return random.randint(0, 0xFFFFFFFF)
+
+
+def random_u32int_array(lenght: int) -> tuple[int, ...]:
+    return tuple(random_u32int() for _ in range(lenght))
+
+
+def random_id(length: int) -> str:
+    return "".join(random.choice(string.ascii_letters + string.digits) for _ in range(length))
 
 
 def parse_file_url(url: str) -> tuple[str, str]:

@@ -3,15 +3,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import random
-import string
 from typing import TYPE_CHECKING, Any, ClassVar, Self
 
 import aiohttp
 import tenacity
 import yarl
 
-from mega.crypto import generate_hashcash_token, random_u32int
+from mega.crypto import generate_hashcash_token
+from mega.utils import random_id, random_u32int
 
 from .errors import RequestError, RetryRequestError
 
@@ -42,7 +41,7 @@ class MegaAPI:
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         self.session_id: str | None = None
         self._request_id: int = random_u32int()
-        self._client_id: str = "".join(random.choices(string.ascii_letters + string.digits, k=10))
+        self._client_id: str = random_id(10)
         self.__session: aiohttp.ClientSession | None = session
         self._managed_session: bool = session is not None
 

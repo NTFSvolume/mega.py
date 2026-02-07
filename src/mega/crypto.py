@@ -4,7 +4,6 @@ import base64
 import hashlib
 import json
 import math
-import random
 import struct
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -36,10 +35,6 @@ def pad_bytes(data: bytes | memoryview[int], length: int = CHUNK_BLOCK_LEN) -> b
             return data.tobytes() + padding
         return data + padding
     return data  # pyright: ignore[reportReturnType]
-
-
-def random_u32int() -> int:
-    return random.randint(0, 0xFFFFFFFF)
 
 
 def _aes_cbc_encrypt(data: bytes, key: bytes) -> bytes:

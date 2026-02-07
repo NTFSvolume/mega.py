@@ -19,7 +19,6 @@ from mega.crypto import (
     decrypt_attr,
     encrypt_attr,
     encrypt_key,
-    random_u32int,
 )
 from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
 from mega.filesystem import UserFileSystem
@@ -229,7 +228,7 @@ class MegaCore:
 
     async def _mkdir(self, path: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
-        new_key = [random_u32int() for _ in range(4)]
+        new_key = utils.random_u32int_array(4)
         encrypt_attribs = b64_url_encode(encrypt_attr({"n": path}, new_key))
         encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 

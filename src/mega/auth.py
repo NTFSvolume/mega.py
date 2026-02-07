@@ -18,9 +18,9 @@ from mega.crypto import (
     generate_v1_hash,
     mpi_to_int,
     prepare_v1_key,
-    random_u32int,
     str_to_a32,
 )
+from mega.utils import random_u32int_array
 
 if TYPE_CHECKING:
     from mega.api import MegaAPI
@@ -45,9 +45,9 @@ class Credentials(NamedTuple):
 async def login_anonymous(api: MegaAPI) -> Credentials:
     logger.info("Logging as an anonymous temporary user...")
 
-    master_key = tuple(random_u32int() for _ in range(4))
-    password_aes_key = tuple(random_u32int() for _ in range(4))
-    session_challenge = tuple(random_u32int() for _ in range(4))
+    master_key = random_u32int_array(4)
+    password_aes_key = random_u32int_array(4)
+    session_challenge = random_u32int_array(4)
 
     user_id: str = await api.request(
         {

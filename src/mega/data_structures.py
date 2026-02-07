@@ -16,7 +16,6 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
-    from collections.abc import Generator
     from typing import NotRequired
 
     from typing_extensions import ReadOnly
@@ -161,8 +160,41 @@ class Crypto(_DictDumper):
     full_key: tuple[int, int, int, int]
     share_key: tuple[int, ...] | None
 
-    def __iter__(self) -> Generator[tuple[int, ...]]:
-        yield from dataclasses.astuple(self)
+    @classmethod
+    def compose(
+        cls, key: tuple[int, ...], iv: tuple[int, ...], meta_mac: tuple[int, ...], node_type: NodeType = NodeType.FILE
+    ) -> Crypto:
+        if node_type is NodeType.FILE:
+            full_key: tuple[int, ...] = (
+                key[0] ^ iv[0],
+                key[1] ^ iv[1],
+                key[2] ^ meta_mac[0],
+                key[3] ^ meta_mac[1],
+                *iv,
+                *meta_mac,
+            )
+        else:
+            full_key = key
+        return Crypto(key, iv, meta_mac, full_key, None)  # pyright: ignore[reportArgumentType]
+
+    @classmethod
+    def decompose(
+        cls, full_key: tuple[int, ...], node_type: NodeType = NodeType.FILE, share_key: tuple[int, ...] | None = None
+    ) -> Crypto:
+        if node_type is NodeType.FILE:
+            key = (
+                full_key[0] ^ full_key[4],
+                full_key[1] ^ full_key[5],
+                full_key[2] ^ full_key[6],
+                full_key[3] ^ full_key[7],
+            )
+
+        else:
+            key = full_key
+
+        iv = *full_key[4:6], 0, 0
+        meta_mac = full_key[6:8]
+        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
 
     @classmethod
     def from_dump(cls, dump: dict[str, Any]) -> Self:
