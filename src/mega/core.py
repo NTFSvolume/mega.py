@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from Crypto.Cipher import AES
 
-from mega import auth, download, upload, utils
+from mega import auth, download, progress, upload, utils
 from mega.api import MegaAPI
 from mega.crypto import (
     a32_to_base64,
@@ -22,7 +22,6 @@ from mega.crypto import (
 )
 from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
 from mega.filesystem import UserFileSystem
-from mega.progress import ProgressManager
 from mega.vault import MegaVault
 
 from .errors import MegaNzError, RequestError, ValidationError
@@ -45,7 +44,6 @@ class MegaCore:
         self._vault = MegaVault(())
         self._filesystem: UserFileSystem | None = None
         self._lock = asyncio.Lock()
-        self._progress = ProgressManager()
 
     async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
         if self._filesystem is None or force:
@@ -142,8 +140,8 @@ class MegaCore:
         file_path = Path(file_path)
         file_size = file_path.stat().st_size
 
-        with self._progress.new_task(file_path.name, file_size) as progress_hook:
-            file_id, crypto = await upload.upload(self._api, file_path, file_size, progress_hook)
+        with progress.new_task(file_path.name, file_size):
+            file_id, crypto = await upload.upload(self._api, file_path, file_size)
             return await upload.finish_upload(
                 self._api,
                 self._vault.master_key,
@@ -170,7 +168,7 @@ class MegaCore:
         name = output_name or Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), crypto.key)).name
         output_path = Path(output_folder or Path()) / name
 
-        with self._progress.new_task(output_path.name, file_info.size) as progress_hook:
+        with progress.new_task(output_path.name, file_info.size):
             async with self._api.download(file_info.url) as response:
                 return await download.stream_download(
                     response.content,
@@ -179,7 +177,6 @@ class MegaCore:
                     crypto.iv,
                     crypto.meta_mac,
                     crypto.key,
-                    progress_hook,
                 )
 
     async def _export_file(self, node: Node) -> None:

@@ -6,6 +6,7 @@ import logging
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+from mega import progress
 from mega.core import MegaCore
 from mega.crypto import (
     a32_to_base64,
@@ -35,6 +36,8 @@ logger = logging.getLogger(__name__)
 
 class MegaNzClient(MegaCore):
     """Interface with all the public methods of the API"""
+
+    show_progress_bar = staticmethod(progress.new_progress)
 
     async def get_user(self) -> UserResponse:
         return await self._api.request({"a": "ug"})

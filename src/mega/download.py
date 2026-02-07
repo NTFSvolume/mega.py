@@ -9,11 +9,12 @@ import tempfile
 from pathlib import Path
 from typing import IO, TYPE_CHECKING
 
+from mega import progress
 from mega.chunker import MegaChunker
 from mega.crypto import get_chunks
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Callable
+    from collections.abc import AsyncGenerator
 
     import aiohttp
 
@@ -28,19 +29,18 @@ async def stream_download(
     iv: tuple[int, ...],
     meta_mac: tuple[int, int],
     key: tuple[int, ...],
-    progress_hook: Callable[[float], None] | None = None,
-):
+) -> Path:
     if await asyncio.to_thread(output_path.exists):
         raise FileExistsError(errno.EEXIST, output_path)
 
     chunker = MegaChunker(iv, key, meta_mac)
+    progress_hook = progress.current_hook.get()
     async with _new_temp_download(output_path) as output:
         for _, chunk_size in get_chunks(file_size):
             raw_chunk = await stream.readexactly(chunk_size)
             chunk = chunker.read(raw_chunk)
             output.write(chunk)
-            if progress_hook is not None:
-                progress_hook(len(chunk))
+            progress_hook(len(chunk))
 
         chunker.check_integrity()
 

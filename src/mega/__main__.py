@@ -31,7 +31,8 @@ async def run() -> None:
         stats = await mega.get_account_stats()
         pprint(stats)  # noqa: T203
         public_handle, public_key = mega.parse_file_url(args.url)
-        await mega.download_public_folder(public_handle, public_key, args.output_dir)
+        with mega.show_progress_bar():
+            await mega.download_public_folder(public_handle, public_key, args.output_dir)
 
 
 def main() -> None:
