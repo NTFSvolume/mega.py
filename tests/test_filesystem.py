@@ -71,6 +71,13 @@ def test_search(fs: UserFileSystem) -> None:
     assert sorted(results.values()) == sorted(PurePosixPath(v) for v in expected)
 
 
+def test_search_exclude_deleted(fs: UserFileSystem) -> None:
+    results = dict(fs.search("/"))
+    assert len(results) == 18
+    results = dict(fs.search("/", exclude_deleted=False))
+    assert len(results) == 20
+
+
 def test_find(fs: UserFileSystem) -> None:
     node = fs.find("/tests/scripts/notes.txt")
     assert node is fs[FIND_NODE_ID]

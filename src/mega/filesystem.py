@@ -106,9 +106,6 @@ class FileSystem(_DictDumper):
         """Get the node with this ID"""
         return self._nodes[node_id]
 
-    def _was_deleted(self, node: Node) -> bool:
-        return node.parent_id == self.trash_bin.id if self.trash_bin else False
-
     @property
     def nodes(self) -> MappingProxyType[NodeID, Node]:
         """A mapping of every node"""
@@ -135,22 +132,28 @@ class FileSystem(_DictDumper):
     @property
     def files(self) -> Iterable[Node]:
         """All files that are NOT deleted"""
+        deleted = {n.id for n in self._deleted()}
         for node in self:
-            if node.type is NodeType.FILE and not self._was_deleted(node):
+            if node.type is NodeType.FILE and not deleted:
                 yield node
 
     @property
     def folders(self) -> Iterable[Node]:
         """All folders that are NOT deleted"""
+        deleted = {n.id for n in self._deleted()}
         for node in self:
-            if node.type is NodeType.FOLDER and not self._was_deleted(node):
+            if node.type is NodeType.FOLDER and node.id not in deleted:
                 yield node
 
     @property
     def deleted(self) -> Iterable[Node]:
+        """All files or folders currently on the trash bin (Non recursive)"""
+        yield from self._deleted(recursive=False)
+
+    def _deleted(self, *, recursive: bool = True) -> Iterable[Node]:
         """All files or folders currently on the trash bin"""
         if self.trash_bin:
-            yield from self.iterdir(self.trash_bin.id)
+            yield from self.iterdir(self.trash_bin.id, recursive=recursive)
 
     def relative_path(self, node_id: NodeID) -> PurePosixPath:
         """Get the path of this node relative to the root folder"""
@@ -166,13 +169,15 @@ class FileSystem(_DictDumper):
         """Returns nodes that have "query" as a substring on their path"""
 
         query = PurePosixPath(query).as_posix()
+        deleted = {n.id for n in self._deleted()}
 
         for node_id, path in self._paths.items():
             if query not in path.as_posix():
                 continue
 
-            if exclude_deleted and self._was_deleted(self[node_id]):
+            if exclude_deleted and node_id in deleted:
                 continue
+
             yield node_id, path
 
     def find(self, path: str | PathLike[str]) -> Node:
