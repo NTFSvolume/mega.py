@@ -94,8 +94,7 @@ def generate_paths(
 def create_node(name: str, parent_id: str) -> Node:
     owner = "me"
     random_key = random_u32int_array(6)
-    key, iv = random_key[:4], random_key[4:]
-    meta_mac = (0, 0)
+    key, iv, meta_mac = random_key[:4], random_key[4:], (0, 0)
     type_ = NodeType.FOLDER if name in _FOLDERS else NodeType.FILE
     crypto = Crypto.compose(key, iv, meta_mac, type_)
     attris = Attributes(name, random.choice(_LABELS), random.choice((True, False)))
@@ -104,7 +103,7 @@ def create_node(name: str, parent_id: str) -> Node:
     return Node(
         id=random_id(8),
         parent_id=parent_id,
-        owner="me",
+        owner=owner,
         type=type_,
         attributes=attris,
         created_at=int(time.time()),
