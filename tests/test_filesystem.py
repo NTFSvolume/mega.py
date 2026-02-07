@@ -16,7 +16,8 @@ DELETED_NODE_IDS = "t8HkzBH2", "8EwHVJna"
 
 @pytest.fixture(name="fs")
 async def filesystem() -> UserFileSystem:
-    return UserFileSystem.from_dump(json.loads(Path("fake_fs.json").read_text()))
+    path = Path(__file__).parent / "fake_fs.json"
+    return UserFileSystem.from_dump(json.loads(path.read_text()))
 
 
 def test_filesystem_has_root(fs: UserFileSystem) -> None:
