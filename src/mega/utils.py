@@ -7,14 +7,14 @@ import string
 from collections.abc import Awaitable, Iterable, Sequence
 from typing import Literal, TypeVar, overload
 
-from rich.logging import RichHandler
-
 from mega.errors import ValidationError
 
 _T = TypeVar("_T")
 
 
 def setup_logger(name: str = "mega") -> None:
+    from rich.logging import RichHandler
+
     handler = RichHandler(show_time=False, rich_tracebacks=True)
     logger = logging.getLogger(name)
     logger.setLevel(10)
