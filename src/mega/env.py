@@ -2,13 +2,15 @@ import os
 
 from dotenv import dotenv_values
 
-dot_env = dotenv_values()
+_DOT_ENV = dotenv_values()
+_ENV_NAMES: set[str] = set()
 
 
-def get_env_var(name: str) -> str | None:
+def env(name: str) -> str | None:
     env_name = f"MEGA_NZ_{name}"
-    return os.getenv(env_name) or dot_env.get(env_name)
+    _ENV_NAMES.add(env_name)
+    return os.getenv(env_name) or _DOT_ENV.get(env_name)
 
 
-EMAIL = get_env_var("EMAIL")
-PASSWORD = get_env_var("PASSWORD")
+EMAIL = env("EMAIL")
+PASSWORD = env("PASSWORD")

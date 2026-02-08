@@ -5,12 +5,12 @@ import logging
 import random
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Self
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from Crypto.Cipher import AES
 
 from mega import auth, download, progress, upload, utils
-from mega.api import MegaAPI
+from mega.api import AbstractApiClient
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
@@ -21,10 +21,9 @@ from mega.crypto import (
     encrypt_key,
 )
 from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
+from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.filesystem import UserFileSystem
 from mega.vault import MegaVault
-
-from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
     from os import PathLike
@@ -37,13 +36,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class MegaCore:
+class MegaCore(AbstractApiClient):
+    __slots__ = ("_filesystem", "_lock", "_vault")
+    _primary_url: ClassVar[str] = "https://mega.nz"
+
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self._api = MegaAPI(session)
-        self._primary_url = "https://mega.nz"
-        self._vault = MegaVault(())
+        super().__init__(session)
+
+        self._vault: MegaVault = MegaVault(())
         self._filesystem: UserFileSystem | None = None
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock = asyncio.Lock()
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}>(fs={self._filesystem!r}, vault={self._vault!r}, logged_in={self.logged_in!r})"
+
+    @property
+    def logged_in(self) -> bool:
+        return bool(self._vault.master_key)
 
     async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
         if self._filesystem is None or force:
@@ -52,22 +61,6 @@ class MegaCore:
                     self._filesystem = await self._prepare_filesystem()
 
         return self._filesystem
-
-    def __repr__(self) -> str:
-        return f"<{type(self).__name__}>(fs={self._filesystem!r}, vault={self._vault!r})"
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(self, *_) -> None:
-        await self.close()
-
-    async def close(self) -> None:
-        await self._api.close()
-
-    @property
-    def logged_in(self) -> bool:
-        return bool(self._vault.master_key)
 
     async def login(
         self,
@@ -90,7 +83,7 @@ class MegaCore:
 
     async def _get_public_handle(self, file_id: str) -> str:
         try:
-            return await self._api.request(
+            return await self._api.post(
                 {
                     "a": "l",
                     "n": file_id,
@@ -108,7 +101,7 @@ class MegaCore:
         parent_id: str | None = None,
         is_public: bool = False,
     ) -> FileInfo:
-        resp: FileInfoSerialized = await self._api.request(
+        resp: FileInfoSerialized = await self._api.post(
             {
                 "a": "g",
                 "g": 1,
@@ -120,7 +113,7 @@ class MegaCore:
         return FileInfo.parse(resp)
 
     async def _prepare_filesystem(self) -> UserFileSystem:
-        nodes_resp: GetNodesResponse = await self._api.request(
+        nodes_resp: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
                 "c": 1,
@@ -133,7 +126,7 @@ class MegaCore:
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 
     async def _request_upload(self, file_size: int) -> str:
-        resp = await self._api.request({"a": "u", "s": file_size})
+        resp = await self._api.post({"a": "u", "s": file_size})
         return resp["p"]
 
     async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
@@ -169,7 +162,7 @@ class MegaCore:
         output_path = Path(output_folder or Path()) / name
 
         with progress.new_task(output_path.name, file_info.size, "DOWN"):
-            async with self._api.download(file_info.url) as response:
+            async with self._api.get(file_info.url) as response:
                 return await download.encrypted_stream(
                     response.content,
                     output_path,
@@ -180,11 +173,11 @@ class MegaCore:
                 )
 
     async def _export_file(self, node: Node) -> None:
-        _ = await self._api.request(
+        _ = await self._api.post(
             {
                 "a": "l",
                 "n": node.id,
-                "i": self._api._client_id,
+                "i": self._api.client_id,
             },
         )
 
@@ -195,7 +188,7 @@ class MegaCore:
         ok = b64_url_encode(master_key_cipher.encrypt(share_key))
         share_key_cipher = AES.new(share_key, AES.MODE_ECB)
         encrypted_node_key = b64_url_encode(share_key_cipher.encrypt(a32_to_bytes(node._crypto.key)))
-        resp = await self._api.request(
+        resp = await self._api.post(
             {
                 "a": "s2",
                 "cr": [
@@ -204,7 +197,7 @@ class MegaCore:
                     [0, 0, encrypted_node_key],
                 ],
                 "ha": ha,
-                "i": self._api._client_id,
+                "i": self._api.client_id,
                 "n": node.id,
                 "ok": ok,
                 "s": [
@@ -230,7 +223,7 @@ class MegaCore:
         encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 
         # This can return multiple folders if subfolders needed to be created
-        folders: GetNodesResponse = await self._api.request(
+        folders: GetNodesResponse = await self._api.post(
             {
                 "a": "p",
                 "t": parent_node_id,
@@ -242,7 +235,7 @@ class MegaCore:
                         "k": encrypted_key,
                     },
                 ],
-                "i": self._api._client_id,
+                "i": self._api.client_id,
             },
         )
         self._filesystem = None
@@ -252,24 +245,24 @@ class MegaCore:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             raise ValidationError("add_contact requires a valid email address")
 
-        return await self._api.request(
+        return await self._api.post(
             {
                 "a": "ur",
                 "u": email,
                 "l": "1" if add else "0",
-                "i": self._api._client_id,
+                "i": self._api.client_id,
             },
         )
 
     async def _destroy(self, *node_ids: NodeID) -> int:
         """Destroy a file or folder by its private id (bypass trash bin)"""
         self._filesystem = None
-        return await self._api.request(
+        return await self._api.post(
             [
                 {
                     "a": "d",
                     "n": node_id,
-                    "i": self._api._client_id,
+                    "i": self._api.client_id,
                 }
                 for node_id in node_ids
             ],
@@ -277,11 +270,11 @@ class MegaCore:
 
     async def _move(self, node_id: NodeID, target_id: NodeID) -> int:
         self._filesystem = None
-        return await self._api.request(
+        return await self._api.post(
             {
                 "a": "m",
                 "n": node_id,
                 "t": target_id,
-                "i": self._api._client_id,
+                "i": self._api.client_id,
             },
         )

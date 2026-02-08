@@ -41,7 +41,7 @@ class MegaNzClient(MegaCore):
         return progress.new_progress()
 
     async def get_user(self) -> UserResponse:
-        return await self._api.request({"a": "ug"})
+        return await self._api.post({"a": "ug"})
 
     async def search(self, query: str | PathLike[str], *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
         """Return nodes that have "query" as a substring on their path"""
@@ -108,7 +108,7 @@ class MegaNzClient(MegaCore):
         return f"{self._primary_url}/#F!{public_handle}!{public_key}"
 
     async def get_id_from_public_handle(self, public_handle: NodeID) -> str:
-        resp: GetNodesResponse = await self._api.request(
+        resp: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
                 "f": 1,
@@ -119,7 +119,7 @@ class MegaNzClient(MegaCore):
         return resp["f"][0]["h"]
 
     async def get_account_stats(self) -> AccountStats:
-        resp: dict[str, Any] = await self._api.request(
+        resp: dict[str, Any] = await self._api.post(
             {
                 "a": "uq",
                 "xfer": 1,  # transfer quota
@@ -149,7 +149,7 @@ class MegaNzClient(MegaCore):
             return await self.get_folder_link(fs[node.id])
 
     async def get_public_filesystem(self, public_handle: NodeID, public_key: str) -> FileSystem:
-        folder: GetNodesResponse = await self._api.request(
+        folder: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
                 "c": 1,
@@ -262,13 +262,13 @@ class MegaNzClient(MegaCore):
         attribs = b64_url_encode(encrypt_attr(new_attrs.serialize(), node._crypto.key))
         encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._vault.master_key))
 
-        resp = await self._api.request(
+        resp = await self._api.post(
             {
                 "a": "a",
                 "attr": attribs,
                 "key": encrypted_key,
                 "n": node.id,
-                "i": self._api._client_id,
+                "i": self._api.client_id,
             },
         )
         return self._success(resp)
@@ -300,7 +300,7 @@ class MegaNzClient(MegaCore):
         encrypted_key = a32_to_base64(encrypt_key(full_key, self._vault.master_key))
         attributes = b64_url_encode(encrypt_attr({"n": file_info.name}, key))
 
-        resp: GetNodesResponse = await self._api.request(
+        resp: GetNodesResponse = await self._api.post(
             {
                 "a": "p",
                 "t": dest_node_id,

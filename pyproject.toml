@@ -3,6 +3,7 @@ name = "async-mega.py"
 authors = [{name = "NTFSvolume", email = "NTFSvolume@proton.me"}]
 dependencies = [
     "aiohttp>=3.11.18",
+    "aiolimiter>=1.2.1",
     "pycryptodome==3.19.0"
 ]
 description = "Python library for the Mega.nz and Transfer.it API"

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 import yarl
 
 from mega import download, progress
-from mega.api import ApiClient, MegaAPI
+from mega.api import AbstractApiClient, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeType
 from mega.filesystem import FileSystem
@@ -19,6 +19,8 @@ from mega.utils import setup_logger, throttled_gather
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from os import PathLike
+
+    import aiohttp
 
     from mega.data_structures import GetNodesResponse, NodeSerialized
 
@@ -29,24 +31,24 @@ logger = logging.getLogger(__name__)
 
 
 class TransferItAPI(MegaAPI):
-    entrypoint: ClassVar[yarl.URL] = yarl.URL("https://bt7.api.mega.co.nz/cs")
+    _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://bt7.api.mega.co.nz/cs")
 
-    async def request(self, data: dict[str, Any] | list[dict[str, Any]], params: dict[str, Any] | None = None) -> Any:
+    async def post(self, json: dict[str, Any] | list[dict[str, Any]], params: dict[str, Any] | None = None) -> Any:
         params = {
             "v": 3,
             "domain": "transferit",
             "lang": "en",
             "bc": 1,
         } | (params or {})
-        return await super().request(data, params)
+        return await super().post(json, params)
 
 
-class TransferItClient(ApiClient):
-    def __init__(self) -> None:
-        self._api = TransferItAPI()
+class TransferItClient(AbstractApiClient):
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:  # pyright: ignore[reportMissingSuperCall]
+        self._api = TransferItAPI(session)
 
     async def get_filesystem(self, transfer_id: TransferID) -> FileSystem:
-        folder: GetNodesResponse = await self._api.request(
+        folder: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
                 "c": 1,
@@ -55,8 +57,7 @@ class TransferItClient(ApiClient):
             },
             {"x": transfer_id},
         )
-        nodes = await asyncio.to_thread(self._deserialize_nodes, folder["f"])
-        return await asyncio.to_thread(FileSystem.build, nodes)
+        return await asyncio.to_thread(self._deserialize_nodes, folder["f"])
 
     @staticmethod
     def parse_url(url: str) -> TransferID:
@@ -69,7 +70,7 @@ class TransferItClient(ApiClient):
             case _:
                 raise ValueError
 
-    def get_download_link(self, transfer_id: TransferID, file: Node, password: str | None = None) -> str:
+    def create_download_url(self, transfer_id: TransferID, file: Node, password: str | None = None) -> str:
         """Get a direct download URL to the node
 
         NOTE: Download requests need `https://transfer.it` as referer in the headers
@@ -79,8 +80,8 @@ class TransferItClient(ApiClient):
             url = url.update_query(pw=password)
         return str(url)
 
-    def _deserialize_nodes(self, nodes: Iterable[NodeSerialized]) -> list[Node]:
-        return [self._decrypt(Node.parse(node)) for node in nodes]
+    def _deserialize_nodes(self, nodes: Iterable[NodeSerialized]) -> FileSystem:
+        return FileSystem.build([self._decrypt(Node.parse(node)) for node in nodes])
 
     def _decrypt(self, node: Node) -> Node:
         crypto = attributes = None
@@ -109,7 +110,7 @@ class TransferItClient(ApiClient):
         async def worker(file: Node, path: PurePosixPath) -> Path:
             web_url = folder_url + f"#{file.id}"
             output_folder = base_path / path.parent
-            dl_link = self.get_download_link(transfer_id, file)
+            dl_link = self.create_download_url(transfer_id, file)
             try:
                 return await self._download_file(dl_link, output_folder, path.name)
             except Exception:
@@ -138,7 +139,7 @@ class TransferItClient(ApiClient):
         name = output_name or yarl.URL(dl_link).query["fn"]
         output_path = Path(output_folder or Path()) / name
 
-        async with self._api.download(dl_link, headers={"Referer": "https://transfer.it/"}) as response:
+        async with self._api.get(dl_link, headers={"Referer": "https://transfer.it/"}) as response:
             size = int(response.headers["Content-Length"])
             with progress.new_task(name, size, "DOWN"):
                 return await download.stream(response.content, output_path)

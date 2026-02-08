@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _request_upload_url(api: MegaAPI, file_size: int) -> str:
-    return (await api.request({"a": "u", "s": file_size}))["p"]
+    return (await api.post({"a": "u", "s": file_size}))["p"]
 
 
 async def upload(api: MegaAPI, file_path: Path, file_size: int) -> tuple[str, Crypto]:
@@ -34,7 +34,7 @@ async def upload(api: MegaAPI, file_path: Path, file_size: int) -> tuple[str, Cr
             meta_mac = 0, 0
             return file_handle, Crypto.compose(key, iv, meta_mac)
 
-        chunker = MegaChunker(iv, key)
+        chunker = MegaChunker(iv, key)  # pyright: ignore[reportArgumentType]
         return await _upload_chunks(api, chunker, input_file, file_size)
 
 
@@ -74,11 +74,11 @@ async def finish_upload(
     encrypt_attribs = b64_url_encode(encrypt_attr({"n": file_path.name}, key))
     encrypted_key = a32_to_base64(encrypt_key(full_key, master_key))
 
-    data: GetNodesResponse = await api.request(
+    data: GetNodesResponse = await api.post(
         {
             "a": "p",
             "t": dest_node_id,
-            "i": api._client_id,
+            "i": api.client_id,
             "n": [
                 {
                     "h": file_id,

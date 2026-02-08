@@ -51,7 +51,7 @@ async def login_anonymous(api: MegaAPI) -> Credentials:
     password_aes_key = random_u32int_array(4)
     session_challenge = random_u32int_array(4)
 
-    user_id: str = await api.request(
+    user_id: str = await api.post(
         {
             "a": "up",
             "k": a32_to_base64(encrypt_key(master_key, password_aes_key)),
@@ -61,7 +61,7 @@ async def login_anonymous(api: MegaAPI) -> Credentials:
         },
     )
 
-    temp_session_id: str = (await api.request({"a": "us", "user": user_id}))["tsid"]
+    temp_session_id: str = (await api.post({"a": "us", "user": user_id}))["tsid"]
     _verify_anon_login(temp_session_id, master_key)
     return Credentials(master_key, temp_session_id)
 
@@ -77,7 +77,7 @@ async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None
     email = email.lower()
     logger.info(f"Login in as {email}...")
     auth = await get_auth_info(api, email, password)
-    resp = await api.request(
+    resp = await api.post(
         {
             "a": "us",
             "user": auth.email,
@@ -112,7 +112,7 @@ def _decrypt_session_id(rsa_key: RsaKey, b64_session_id: str) -> str:
 
 async def get_auth_info(api: MegaAPI, email: str, password: str, mfa_key: str | None = None) -> AuthInfo:
     email = email.lower()
-    resp: dict[str, Any] = await api.request(
+    resp: dict[str, Any] = await api.post(
         {
             "a": "us0",
             "user": email,

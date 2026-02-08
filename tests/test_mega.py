@@ -279,12 +279,12 @@ class TestAPIRequest:
     @pytest.mark.parametrize("value", [-4, -9, [-2], [-400]])
     async def test_when_api_returns_int_raises_exception(self, value: Any) -> None:
         with pytest.raises(RequestError):
-            await MegaAPI._process_resp(self._fake_resp(value))
+            await MegaAPI._parse_response(self._fake_resp(value))
 
     @pytest.mark.parametrize("value", [-3, [-3]])
     async def test_when_api_returns_negative_3_raise_retry_error(self, value: Any) -> None:
         with pytest.raises(RetryRequestError):
-            await MegaAPI._process_resp(self._fake_resp(value))
+            await MegaAPI._parse_response(self._fake_resp(value))
 
     @pytest.mark.parametrize(
         "value, expected",
@@ -295,5 +295,5 @@ class TestAPIRequest:
         ],
     )
     async def test_when_api_returns_dict_or_list_the_response_is_valid(self, value: Any, expected: Any) -> None:
-        resp = await MegaAPI._process_resp(self._fake_resp(value))
+        resp = await MegaAPI._parse_response(self._fake_resp(value))
         assert resp == expected

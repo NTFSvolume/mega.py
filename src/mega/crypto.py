@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import math
 import struct
+import time
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from Crypto.Cipher import AES
@@ -16,6 +18,7 @@ if TYPE_CHECKING:
 
     from mega.data_structures import AttributesSerialized
 
+logger = logging.getLogger(__name__)
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
@@ -184,6 +187,8 @@ def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
 
 
 def generate_hashcash_token(challenge: str) -> str:
+    logger.info("Solving xhashcash login challenge, this could take a few seconds...")
+    start = time.monotonic()
     version, easiness, _date, token = challenge.split(":")
     version = int(version)
     if version != 1:
@@ -202,6 +207,9 @@ def generate_hashcash_token(challenge: str) -> str:
         result = int.from_bytes(digest[:4], "big")
 
         if result <= threshold:
-            return f"{version}:{token}:{b64_url_encode(buffer[:4])}"
+            result = f"{version}:{token}:{b64_url_encode(buffer[:4])}"
+            took = time.monotonic() - start
+            logger.info(f"Solved xhashcash: {challenge = !r}, {result = !r}, iterations = {nonce}, {took = :.2f}s")
+            return result
 
         nonce += 1

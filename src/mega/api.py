@@ -2,18 +2,20 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, ParamSpec, Self, TypeVar
+from types import MappingProxyType
+from typing import TYPE_CHECKING, Any, ClassVar, Literal, ParamSpec, Self, TypeVar
 
 import aiohttp
 import yarl
+from aiolimiter import AsyncLimiter
 
 from mega.crypto import generate_hashcash_token
+from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
-
-from .errors import RequestError, RetryRequestError
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Callable, Coroutine
@@ -22,12 +24,12 @@ if TYPE_CHECKING:
     _R = TypeVar("_R")
 
 
+_RATE_LIMIT = AsyncLimiter(100, 60)
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0"
+_DEFAULT_HEADERS: MappingProxyType[str, str] = MappingProxyType({"User-Agent": _UA})
+
+
 logger = logging.getLogger(__name__)
-
-
-_HEADERS: dict[str, str] = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
-}
 
 
 def retry(
@@ -64,28 +66,46 @@ def retry(
     return wrapper
 
 
+@dataclasses.dataclass(slots=True, weakref_slot=True, init=False)
 class MegaAPI:
-    __slots__ = (
-        "__session",
-        "_auto_close_session",
-        "_client_id",
-        "_request_id",
-        "session_id",
-    )
+    session_id: str | None
+    _request_id: int
+    _client_id: str
 
-    entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
+    __session: aiohttp.ClientSession | None
+    _auto_close_session: bool
+
+    _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
 
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self.session_id: str | None = None
-        self._request_id: int = random_u32int()
-        self._client_id: str = random_id(10)
-        self.__session: aiohttp.ClientSession | None = session
-        self._auto_close_session: bool = session is None
+        self.session_id = None
+        self._request_id = random_u32int()
+        self._client_id = random_id(10)
+        self.__session = session
+        self._auto_close_session = session is None
+
+    @property
+    def entrypoint(self) -> yarl.URL:
+        return self._entrypoint
+
+    @property
+    def client_id(self) -> str:
+        return self._client_id
+
+    @property
+    def request_id(self) -> int:
+        return self._request_id
+
+    @property
+    def _session(self) -> aiohttp.ClientSession:
+        if self.__session is None:
+            self.__session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
+        return self.__session
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self._client_id!r})"
+        return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self.client_id!r}, auto_close_session={self._auto_close_session!r})"
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
         if self._auto_close_session and self.__session:
             await self.__session.close()
 
@@ -93,67 +113,73 @@ class MegaAPI:
         return self
 
     async def __aexit__(self, *_) -> None:
-        await self.close()
+        await self.aclose()
 
-    def _lazy_session(self) -> aiohttp.ClientSession:
-        if self.__session is None:
-            self.__session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
-        return self.__session
+    close = aclose
 
     @retry(exceptions=RetryRequestError, attempts=10, max_delay=60.0)
-    async def request(self, data: dict[str, Any] | list[dict[str, Any]], params: dict[str, Any] | None = None) -> Any:
+    async def post(self, json: dict[str, Any] | list[dict[str, Any]], params: dict[str, Any] | None = None) -> Any:
         params = {"id": self._request_id} | (params or {})
         self._request_id += 1
         if self.session_id:
             params["sid"] = self.session_id
 
-        if not isinstance(data, list):
-            data = [data]
-
-        headers = _HEADERS | {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
 
         for solve_xhashcash in (True, False):
-            logger.debug(f"Making POST request with {params=!r} {data=!r} {headers=!r}")
-            async with self._lazy_session().post(
-                self.entrypoint, params=params, json=data, headers=headers
-            ) as response:
+            async with self.__request(
+                "POST",
+                self._entrypoint,
+                params=params,
+                json=json if isinstance(json, list) else [json],
+                headers=headers,
+            ) as resp:
                 # Since around feb 2025, MEGA requires clients to solve a challenge during each login attempt.
                 # When that happens, initial responses returns "402 Payment Required".
-                # Challenge is inside the `X-Hashcash` header.
                 # We need to solve the challenge and re-made the request with same params + the computed token
                 # See:  https://github.com/gpailler/MegaApiClient/issues/248#issuecomment-2692361193
 
-                if xhashcash_challenge := response.headers.get("X-Hashcash"):
+                if xhashcash_challenge := resp.headers.get("X-Hashcash"):
                     if not solve_xhashcash:
                         msg = f"Login failed. Mega requested a proof of work with xhashcash: {xhashcash_challenge}"
                         raise RequestError(msg)
 
-                    logger.info("Solving xhashcash login challenge, this could take a few seconds...")
-                    xhashcash_token = await asyncio.to_thread(generate_hashcash_token, xhashcash_challenge)
-                    logger.debug(f"Solved xhashcash: challenge={xhashcash_challenge!r}, result={xhashcash_token}")
-                    headers = headers | {"X-Hashcash": xhashcash_token}
+                    headers["X-Hashcash"] = await asyncio.to_thread(generate_hashcash_token, xhashcash_challenge)
                     continue
 
-                return await self._process_resp(response)
+                return await self._parse_response(resp)
 
         raise ValueError
 
     @contextlib.asynccontextmanager
-    async def download(
-        self, url: str | yarl.URL, headers: dict[str, str] | None = None
+    async def get(
+        self, url: str | yarl.URL, headers: Mapping[str, str] | None = None
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
-        headers = _HEADERS | (headers or {})
-        async with self._lazy_session().get(url, headers=headers) as resp:
+        async with self.__request("GET", url, headers=headers) as resp:
             resp.raise_for_status()
             yield resp
 
-    async def upload_chunk(self, upload_url: str, offset: int, data: bytes) -> str:
-        async with self._lazy_session().post(upload_url + "/" + str(offset), data=data) as resp:
+    async def upload_chunk(self, upload_url: str | yarl.URL, offset: int, data: bytes) -> str:
+        async with self.__request("POST", yarl.URL(upload_url) / str(offset), data=data) as resp:
             return await resp.text()
 
+    @contextlib.asynccontextmanager
+    async def __request(
+        self,
+        method: Literal["GET", "POST"],
+        url: str | yarl.URL,
+        headers: Mapping[str, str] | None = None,
+        **kwargs: Any,
+    ) -> AsyncGenerator[aiohttp.ClientResponse]:
+        kwargs["headers"] = _DEFAULT_HEADERS | (headers or {})
+        params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
+        logger.debug(f"Making {method} request to {url!s} with {params}")
+        async with _RATE_LIMIT, self._session.request(method, url, **kwargs) as resp:
+            yield resp
+
     @staticmethod
-    async def _process_resp(response: aiohttp.ClientResponse) -> Any:
-        json_resp: list[Any] | int = await response.json()
+    async def _parse_response(response: aiohttp.ClientResponse) -> Any:
+        json_resp = await response.json()
         resp = json_resp
         logger.debug(f"Got response [{response.status}] json={json_resp!r}")
 
@@ -173,8 +199,11 @@ class MegaAPI:
         return resp
 
 
-class ApiClient:
-    _api: MegaAPI  # pyright: ignore[reportUninitializedInstanceVariable]
+class AbstractApiClient:
+    __slots__ = ("_api",)
+
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        self._api: MegaAPI = MegaAPI(session)
 
     async def __aenter__(self) -> Self:
         return self
