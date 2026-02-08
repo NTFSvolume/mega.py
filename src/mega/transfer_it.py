@@ -64,7 +64,8 @@ class TransferItClient:
     def get_download_link(self, transfer_id: TransferID, file: Node, password: str | None = None) -> str:
         """Get a direct download URL to the node
 
-        NOTE: Download requests need `https://transfer.it` as referer in the headers"""
+        NOTE: Download requests need `https://transfer.it` as referer in the headers
+        """
         url = (self._api.entrypoint / "g").with_query(x=transfer_id, n=file.id, fn=file.attributes.name)
         if password:
             url = url.update_query(pw=password)

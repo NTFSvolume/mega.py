@@ -1,5 +1,4 @@
-"""
-Mega API information
+"""Mega API information
 =====================
 
 - This file contains definitions for some of the properties within the API.
@@ -162,7 +161,11 @@ class Crypto(_DictDumper):
 
     @classmethod
     def compose(
-        cls, key: tuple[int, ...], iv: tuple[int, ...], meta_mac: tuple[int, ...], node_type: NodeType = NodeType.FILE
+        cls,
+        key: tuple[int, ...],
+        iv: tuple[int, ...],
+        meta_mac: tuple[int, ...],
+        node_type: NodeType = NodeType.FILE,
     ) -> Crypto:
         if node_type is NodeType.FILE:
             full_key: tuple[int, ...] = (
@@ -179,7 +182,10 @@ class Crypto(_DictDumper):
 
     @classmethod
     def decompose(
-        cls, full_key: tuple[int, ...], node_type: NodeType = NodeType.FILE, share_key: tuple[int, ...] | None = None
+        cls,
+        full_key: tuple[int, ...],
+        node_type: NodeType = NodeType.FILE,
+        share_key: tuple[int, ...] | None = None,
     ) -> Crypto:
         if node_type is NodeType.FILE:
             key = (
@@ -322,7 +328,7 @@ class AccountStats(_DictParser, _DictDumper):
                 "storage": StorageQuota.parse(data),
                 "balance": AccountBalance.parse(data.get("balance")),
                 "metrics": {node_id: StorageMetrics.parse(stats) for node_id, stats in data["cstrgn"].items()},
-            }
+            },
         )
         return cls(**clean_data)
 

@@ -122,12 +122,10 @@ def str_to_a32(bytes_or_str: str | bytes) -> tuple[int, ...]:
 
 
 def mpi_to_int(data: bytes) -> int:
-    """
-    A Multi-precision integer (mpi) is encoded as a series of bytes in big-endian
+    """A Multi-precision integer (mpi) is encoded as a series of bytes in big-endian
     order. The first two bytes are a header which tell the number of bits in
     the integer. The rest of the bytes are the integer.
     """
-
     return int(data[2:].hex(), CHUNK_BLOCK_LEN)
 
 
@@ -212,7 +210,9 @@ def generate_hashcash_token(challenge: str) -> str:
 
 
 def compose_crypto(
-    full_key: tuple[int, ...], node_type: NodeType = NodeType.FILE, share_key: tuple[int, ...] | None = None
+    full_key: tuple[int, ...],
+    node_type: NodeType = NodeType.FILE,
+    share_key: tuple[int, ...] | None = None,
 ) -> Crypto:
     if node_type is NodeType.FILE:
         key = (

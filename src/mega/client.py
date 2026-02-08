@@ -72,11 +72,10 @@ class MegaNzClient(MegaCore):
 
     async def empty_trash(self) -> bool | None:
         """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
-
         fs = await self.get_filesystem()
         trashed_files = [f.id for f in fs.deleted]
         if not trashed_files:
-            return
+            return None
 
         resp = await self._destroy(*trashed_files)
         return self._success(resp)
@@ -113,7 +112,7 @@ class MegaNzClient(MegaCore):
                 "a": "f",
                 "f": 1,
                 "p": public_handle,
-            }
+            },
         )
 
         return resp["f"][0]["h"]
@@ -127,7 +126,7 @@ class MegaNzClient(MegaCore):
                 "mstrg": 1,  # max storage
                 "pro": 1,
                 "v": 2,
-            }
+            },
         )
         return AccountStats.parse(resp)
 
@@ -136,7 +135,7 @@ class MegaNzClient(MegaCore):
             await self._export_file(node)
             return await self.get_public_link(node)
 
-        elif node.type is not NodeType.FOLDER:
+        if node.type is not NodeType.FOLDER:
             msg = f"Can only export files or folders, not {node.type}"
             raise ValidationError(msg)
 
@@ -172,7 +171,10 @@ class MegaNzClient(MegaCore):
         )
 
     async def download_public_file(
-        self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
+        self,
+        public_handle: NodeID,
+        public_key: str,
+        output_dir: str | PathLike[str] | None = None,
     ) -> Path:
         full_key = b64_to_a32(public_key)
         crypto = compose_crypto(full_key)
@@ -184,10 +186,12 @@ class MegaNzClient(MegaCore):
         )
 
     async def download_public_folder(
-        self, public_handle: NodeID, public_key: str, output_dir: str | PathLike[str] | None = None
+        self,
+        public_handle: NodeID,
+        public_key: str,
+        output_dir: str | PathLike[str] | None = None,
     ) -> tuple[list[Path], list[Exception]]:
-        """
-        Recursively download all files from a public folder, preserving its internal directory structure.
+        """Recursively download all files from a public folder, preserving its internal directory structure.
 
         Returns:
             A list where each element is either a `Path` (a successful download)
@@ -264,7 +268,7 @@ class MegaNzClient(MegaCore):
                 "key": encrypted_key,
                 "n": node.id,
                 "i": self._api._client_id,
-            }
+            },
         )
         return self._success(resp)
 
@@ -280,7 +284,10 @@ class MegaNzClient(MegaCore):
         return dataclasses.replace(file_info, name=name)
 
     async def import_public_file(
-        self, public_handle: NodeID, public_key: str, dest_node_id: NodeID | None = None
+        self,
+        public_handle: NodeID,
+        public_key: str,
+        dest_node_id: NodeID | None = None,
     ) -> Node:
         """Import the public file into user account"""
         if not dest_node_id:
@@ -304,7 +311,7 @@ class MegaNzClient(MegaCore):
                         "k": encrypted_key,
                     },
                 ],
-            }
+            },
         )
 
         self._filesystem = None

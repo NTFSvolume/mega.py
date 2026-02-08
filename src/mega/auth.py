@@ -54,9 +54,9 @@ async def login_anonymous(api: MegaAPI) -> Credentials:
             "a": "up",
             "k": a32_to_base64(encrypt_key(master_key, password_aes_key)),
             "ts": b64_url_encode(
-                a32_to_bytes(session_challenge) + a32_to_bytes(encrypt_key(session_challenge, master_key))
+                a32_to_bytes(session_challenge) + a32_to_bytes(encrypt_key(session_challenge, master_key)),
             ),
-        }
+        },
     )
 
     temp_session_id: str = (await api.request({"a": "us", "user": user_id}))["tsid"]
@@ -80,7 +80,7 @@ async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None
             "a": "us",
             "user": auth.email,
             "uh": auth.hash,
-        }
+        },
     )
 
     b64_session_id: str = resp["csid"]
@@ -108,7 +108,7 @@ async def get_auth_info(api: MegaAPI, email: str, password: str, mfa_key: str | 
         {
             "a": "us0",
             "user": email,
-        }
+        },
     )
     version: int = resp["v"]
     salt: str | None = resp.get("s")

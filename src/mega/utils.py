@@ -58,14 +58,13 @@ def parse_file_url(url: str) -> tuple[str, str]:
         id_index = match.end()
         key = url[id_index + 1 :]
         return file_id, key
-    elif "!" in url:
+    if "!" in url:
         # V1 URL structure
         # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
         match = re.findall(r"/#!(.*)", url)
         path = match[0]
         return tuple(path.split("!"))
-    else:
-        raise ValueError(f"URL key missing from {url}")
+    raise ValueError(f"URL key missing from {url}")
 
 
 def parse_folder_url(url: str) -> tuple[str, str]:
@@ -81,18 +80,27 @@ def parse_folder_url(url: str) -> tuple[str, str]:
 
 @overload
 async def throttled_gather(
-    coros: Iterable[Awaitable[_T]], batch_size: int = 10, *, return_exceptions: Literal[False]
+    coros: Iterable[Awaitable[_T]],
+    batch_size: int = 10,
+    *,
+    return_exceptions: Literal[False],
 ) -> list[_T]: ...
 
 
 @overload
 async def throttled_gather(
-    coros: Iterable[Awaitable[_T]], batch_size: int = 10, *, return_exceptions: bool = True
+    coros: Iterable[Awaitable[_T]],
+    batch_size: int = 10,
+    *,
+    return_exceptions: bool = True,
 ) -> list[_T | Exception]: ...
 
 
 async def throttled_gather(
-    coros: Iterable[Awaitable[_T]], batch_size: int = 10, *, return_exceptions: bool = True
+    coros: Iterable[Awaitable[_T]],
+    batch_size: int = 10,
+    *,
+    return_exceptions: bool = True,
 ) -> Sequence[_T | Exception]:
     """Like `asyncio.gather`, but creates tasks lazily to minimize event loop overhead.
 
@@ -102,7 +110,6 @@ async def throttled_gather(
     a task will cancel all remaining tasks and wait for them to exit.
     The exceptions are then combined and raised as an `ExceptionGroup`.
     """
-
     semaphore = asyncio.BoundedSemaphore(batch_size)
     tasks: list[asyncio.Task[_T | Exception]] = []
 

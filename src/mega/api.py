@@ -58,8 +58,7 @@ def retry(
                     await asyncio.sleep(current_delay)
                     exp = current_delay**backoff
                     current_delay = max(min_delay, min(exp, max_delay))
-            else:
-                raise RuntimeError
+            raise RuntimeError
 
         return inner_wrapper
 
@@ -138,8 +137,7 @@ class MegaAPI:
 
                 return await self._process_resp(response)
 
-        else:
-            raise ValueError
+        raise ValueError
 
     @contextlib.asynccontextmanager
     async def download(self, url: str | yarl.URL) -> AsyncGenerator[aiohttp.ClientResponse]:

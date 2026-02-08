@@ -17,7 +17,11 @@ if TYPE_CHECKING:
         def __enter__(self) -> ProgressHook: ...
 
         def __exit__(
-            self, typ: type[BaseException] | None, value: BaseException | None, traceback: TracebackType | None, /
+            self,
+            typ: type[BaseException] | None,
+            value: BaseException | None,
+            traceback: TracebackType | None,
+            /,
         ) -> Any: ...
 
     class ProgressHookFactory(Protocol):
@@ -105,7 +109,10 @@ def _new_rich_progress() -> Progress | None:
 
 @contextlib.contextmanager
 def _new_rich_task(
-    progress: Progress, description: str, total: float, kind: Literal["UP", "DOWN"]
+    progress: Progress,
+    description: str,
+    total: float,
+    kind: Literal["UP", "DOWN"],
 ) -> Generator[ProgressHook]:
     task_id = progress.add_task(description, total=total, kind=kind)
 

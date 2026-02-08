@@ -25,14 +25,12 @@ class MegaVault:
     shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
 
     def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
-        """
-        Init shared key not associated with a user.
+        """Init shared key not associated with a user.
         Seems to happen when a folder is shared,
         some files are exchanged and then the
         folder is un-shared.
         Keys are stored in files['s'] and files['ok']
         """
-
         self.shared_keys["EXP"] = {}
         new_keys: SharedKeys = {}
         for share_key in nodes_response["ok"]:
@@ -77,7 +75,6 @@ class MegaVault:
 
     async def deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
         """Processes multiple nodes at once, decrypting their keys and attributes"""
-
         # We can't run this loop in another thread because we modify the vault in place
 
         share_key = b64_to_a32(public_key) if public_key else None

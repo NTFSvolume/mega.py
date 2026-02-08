@@ -1,6 +1,7 @@
 """A read-only representation of the Mega.nz's filesystem
 
-NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path"""
+NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
+"""
 
 from __future__ import annotations
 
@@ -107,7 +108,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
 
     @property
     def deleted(self) -> Iterable[Node]:
-        """files or folders currently on the trash bin (Non recursive)"""
+        """Files or folders currently on the trash bin (Non recursive)"""
         if self.trash_bin:
             yield from self.iterdir(self.trash_bin.id)
 
@@ -225,13 +226,13 @@ class FileSystem(SimpleFileSystem):
     def inv_paths(self) -> MappingProxyType[PurePosixPath, tuple[NodeID, ...]]:
         """A mapping of paths to every node located at that path
 
-        Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path"""
+        Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
+        """
         return self._inv_paths
 
     @property
     def files(self) -> Iterable[Node]:
         """All files that are NOT deleted (recursive)"""
-
         for node in self:
             if node.type is NodeType.FILE and not self._deleted:
                 yield node
@@ -239,14 +240,12 @@ class FileSystem(SimpleFileSystem):
     @property
     def folders(self) -> Iterable[Node]:
         """All folders that are NOT deleted (recursive)"""
-
         for node in self:
             if node.type is NodeType.FOLDER and node.id not in self._deleted:
                 yield node
 
     def dirmap(self, node_id: str, *, recursive: bool = False) -> dict[NodeID, PurePosixPath]:
         """Creates a mapping from `node id` -> `Path` only including children of this node"""
-
         pairs = (
             (child_id, self.absolute_path(child_id))
             for child_id in self._ls(
@@ -265,10 +264,12 @@ class FileSystem(SimpleFileSystem):
         return self._paths[node_id]
 
     def search(
-        self, query: str | PathLike[str], *, exclude_deleted: bool = True
+        self,
+        query: str | PathLike[str],
+        *,
+        exclude_deleted: bool = True,
     ) -> Iterable[tuple[NodeID, PurePosixPath]]:
         """Returns nodes that have "query" as a substring on their path"""
-
         query = PurePosixPath(query).as_posix()
 
         for node_id, path in self._paths.items():

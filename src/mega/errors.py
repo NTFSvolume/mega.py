@@ -57,9 +57,7 @@ _CODE_TO_DESCRIPTIONS: Final = {
 
 
 class RequestError(MegaNzError):
-    """
-    Error in API request
-    """
+    """Error in API request"""
 
     def __init__(self, msg: str | int) -> None:
         self.code = code = msg if isinstance(msg, int) else None

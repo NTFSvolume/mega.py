@@ -94,7 +94,7 @@ class MegaCore:
                 {
                     "a": "l",
                     "n": file_id,
-                }
+                },
             )
         except RequestError as e:
             if e.code == -11:
@@ -125,7 +125,7 @@ class MegaCore:
                 "a": "f",
                 "c": 1,
                 "r": 1,  # recursive
-            }
+            },
         )
 
         self._vault.init_shared_keys(nodes_resp)
@@ -185,7 +185,7 @@ class MegaCore:
                 "a": "l",
                 "n": node.id,
                 "i": self._api._client_id,
-            }
+            },
         )
 
     async def _export_folder(self, node: Node) -> dict[str, Any]:
@@ -211,9 +211,9 @@ class MegaCore:
                     {
                         "r": 0,
                         "u": "EXP",  # User: export (AKA public)
-                    }
+                    },
                 ],
-            }
+            },
         )
         return resp
 
@@ -240,10 +240,10 @@ class MegaCore:
                         "t": 1,
                         "a": encrypt_attribs,
                         "k": encrypted_key,
-                    }
+                    },
                 ],
                 "i": self._api._client_id,
-            }
+            },
         )
         self._filesystem = None
         return self._vault.deserialize_node(folders["f"][0])
@@ -258,7 +258,7 @@ class MegaCore:
                 "u": email,
                 "l": "1" if add else "0",
                 "i": self._api._client_id,
-            }
+            },
         )
 
     async def _destroy(self, *node_ids: NodeID) -> int:
@@ -272,7 +272,7 @@ class MegaCore:
                     "i": self._api._client_id,
                 }
                 for node_id in node_ids
-            ]
+            ],
         )
 
     async def _move(self, node_id: NodeID, target_id: NodeID) -> int:
@@ -283,5 +283,5 @@ class MegaCore:
                 "n": node_id,
                 "t": target_id,
                 "i": self._api._client_id,
-            }
+            },
         )

@@ -39,7 +39,10 @@ async def upload(api: MegaAPI, file_path: Path, file_size: int) -> tuple[str, Cr
 
 
 async def _upload_chunks(
-    api: MegaAPI, chunker: MegaChunker, input_file: IO[bytes], file_size: int
+    api: MegaAPI,
+    chunker: MegaChunker,
+    input_file: IO[bytes],
+    file_size: int,
 ) -> tuple[str, Crypto]:
     upload_progress = 0
     file_handle = ""
@@ -82,9 +85,9 @@ async def finish_upload(
                     "t": 0,
                     "a": encrypt_attribs,
                     "k": encrypted_key,
-                }
+                },
             ],
-        }
+        },
     )
     logger.info("Upload complete")
     return data
