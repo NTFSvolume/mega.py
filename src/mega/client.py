@@ -36,7 +36,9 @@ logger = logging.getLogger(__name__)
 class MegaNzClient(MegaCore):
     """Interface with all the public methods of the API"""
 
-    show_progress_bar = staticmethod(progress.new_progress)
+    @property
+    def progress_bar(self):
+        return progress.new_progress()
 
     async def get_user(self) -> UserResponse:
         return await self._api.request({"a": "ug"})

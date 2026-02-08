@@ -145,7 +145,7 @@ class TransferItClient(ApiClient):
 
 
 async def run() -> None:
-    setup_logger(__name__)
+    setup_logger()
 
     parser = argparse.ArgumentParser(description="Download files from a transfer.it URL.")
     parser.add_argument(

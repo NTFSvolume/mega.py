@@ -82,7 +82,7 @@ class MegaCore:
         self._vault = MegaVault(master_key)
         logger.info("Getting all nodes and decryption keys of the account...")
         self._filesystem = await self._prepare_filesystem()
-        logger.info(f"File system: {self._filesystem}")
+        logger.debug(f"File system: {self._filesystem}")
         logger.info("Login complete")
 
     parse_file_url = staticmethod(utils.parse_file_url)

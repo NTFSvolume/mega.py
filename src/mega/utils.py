@@ -16,12 +16,12 @@ if TYPE_CHECKING:
     _T = TypeVar("_T")
 
 
-def setup_logger(name: str = "mega") -> None:
+def setup_logger(level: int = logging.INFO) -> None:
     from rich.logging import RichHandler
 
     handler = RichHandler(show_time=False, rich_tracebacks=True)
-    logger = logging.getLogger(name)
-    logger.setLevel(10)
+    logger = logging.getLogger("mega")
+    logger.setLevel(level)
     logger.addHandler(handler)
 
 
