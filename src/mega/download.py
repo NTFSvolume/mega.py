@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def stream_download(
+async def encrypted_stream(
     stream: aiohttp.StreamReader,
     output_path: Path,
     file_size: int,
@@ -37,8 +37,8 @@ async def stream_download(
     progress_hook = progress.current_hook.get()
     async with _new_temp_download(output_path) as output:
         for _, chunk_size in get_chunks(file_size):
-            raw_chunk = await stream.readexactly(chunk_size)
-            chunk = chunker.read(raw_chunk)
+            encrypted_chunk = await stream.readexactly(chunk_size)
+            chunk = chunker.read(encrypted_chunk)
             output.write(chunk)
             progress_hook(len(chunk))
 
@@ -47,10 +47,25 @@ async def stream_download(
     return output_path
 
 
+async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
+    if await asyncio.to_thread(output_path.exists):
+        raise FileExistsError(errno.EEXIST, output_path)
+
+    chunk_size = 1024 * 1024 * 10  # 10MB
+    progress_hook = progress.current_hook.get()
+    async with _new_temp_download(output_path) as output:
+        async for chunk in stream.iter_chunked(chunk_size):
+            output.write(chunk)
+            progress_hook(len(chunk))
+
+    return output_path
+
+
 @contextlib.asynccontextmanager
 async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
+    # We need NamedTemporaryFile to not delete on file.close() but on context exit, which is not supported until python 3.12
     temp_file = tempfile.NamedTemporaryFile(prefix="megapy_", delete=False)
-    logger.info(f"Created temp file '{temp_file.name!r}' for '{output_path}'")
+    logger.info(f"Created temp file '{temp_file.name!r}' for '{output_path!s}'")
     try:
         yield temp_file
 
@@ -58,7 +73,7 @@ async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
             temp_file.close()
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(temp_file.name, output_path)
-            logger.info(f"Moved temp file '{temp_file.name!r}' to '{output_path}'")
+            logger.info(f"Moved temp file '{temp_file.name}' to '{output_path!s}'")
 
         await asyncio.to_thread(move)
 

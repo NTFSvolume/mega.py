@@ -170,7 +170,7 @@ class MegaCore:
 
         with progress.new_task(output_path.name, file_info.size, "DOWN"):
             async with self._api.download(file_info.url) as response:
-                return await download.stream_download(
+                return await download.encrypted_stream(
                     response.content,
                     output_path,
                     file_info.size,
