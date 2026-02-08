@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mega")
 
 
-app = CLIApp()
+app = CLIApp(add_completion=False)
 CWD = Path.cwd()
 
 

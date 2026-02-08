@@ -23,6 +23,8 @@ from mega.crypto import (
 from mega.utils import random_u32int_array
 
 if TYPE_CHECKING:
+    from Crypto.PublicKey.RSA import RsaKey
+
     from mega.api import MegaAPI
 
 
@@ -73,7 +75,7 @@ def _verify_anon_login(b64_temp_session_id: str, master_key: tuple[int, ...]) ->
 
 async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None) -> Credentials:
     email = email.lower()
-    logger.info("Logging in as user [REDACTED]...")
+    logger.info(f"Login in as {email}...")
     auth = await get_auth_info(api, email, password)
     resp = await api.request(
         {
@@ -90,6 +92,12 @@ async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None
     master_key = decrypt_key(b64_to_a32(b64_master_key), auth.password_aes_key)
     private_key = a32_to_bytes(decrypt_key(b64_to_a32(b64_private_key), master_key))
     rsa_key = decrypt_rsa_key(private_key)
+    session_id = _decrypt_session_id(rsa_key, b64_session_id)
+    return Credentials(master_key, session_id)
+
+
+def _decrypt_session_id(rsa_key: RsaKey, b64_session_id: str) -> str:
+    logger.debug("Decrypting session id")
     encrypted_sid = mpi_to_int(b64_url_decode(b64_session_id))
 
     # TODO: Investigate how to decrypt using the current pycryptodome library.
@@ -99,7 +107,7 @@ async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None
     decrypted_sid = int(rsa_key._decrypt(encrypted_sid))  # type: ignore  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownArgumentType]
     sid_bytes = decrypted_sid.to_bytes((decrypted_sid.bit_length() + 7) // 8 or 1, "big")
     session_id = b64_url_encode(sid_bytes[:43])
-    return Credentials(master_key, session_id)
+    return session_id
 
 
 async def get_auth_info(api: MegaAPI, email: str, password: str, mfa_key: str | None = None) -> AuthInfo:
