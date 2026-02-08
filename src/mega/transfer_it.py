@@ -7,8 +7,8 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 import yarl
 
 from mega.api import MegaAPI
-from mega.crypto import b64_to_a32, b64_url_decode, compose_crypto, decrypt_attr
-from mega.data_structures import Attributes, Node, NodeType
+from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
+from mega.data_structures import Attributes, Crypto, Node, NodeType
 from mega.filesystem import FileSystem
 
 if TYPE_CHECKING:
@@ -77,7 +77,7 @@ class TransferItClient:
     def _decrypt(self, node: Node) -> Node:
         crypto = attributes = None
         assert node.type in (NodeType.FILE, NodeType.FOLDER)
-        full_key, share_key = b64_to_a32(next(iter(node.keys.values()))), None
-        crypto = compose_crypto(full_key, node.type, share_key)
+        full_key = b64_to_a32(next(iter(node.keys.values())))
+        crypto = Crypto.decompose(full_key, node.type)
         attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
         return dataclasses.replace(node, _crypto=crypto, attributes=attributes)

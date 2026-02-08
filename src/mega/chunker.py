@@ -21,15 +21,15 @@ logger = logging.getLogger(__name__)
 class MegaChunker:
     """Decrypts/encrypts a flow of chunks using Mega's CBC algorithm"""
 
-    iv: tuple[int, ...]
-    key: tuple[int, ...]
-    expected_mac: tuple[int, int] | None = None
+    iv: tuple[int, int]
+    key: tuple[int, int, int, int]
+    expected_meta_mac: tuple[int, int] | None = None
 
     _gen: Generator[bytes, bytes | None, tuple[int, int]] = dataclasses.field(init=False, repr=False)
     _computed_meta_mac: tuple[int, int] | None = dataclasses.field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        self._gen = _iter_chunks(self.iv, self.key, decrypt=bool(self.expected_mac))
+        self._gen = _iter_chunks(self.iv, self.key, decrypt=bool(self.expected_meta_mac))
         _ = next(self._gen)
 
     def read(self, raw_chunk: bytes) -> bytes:
@@ -47,16 +47,16 @@ class MegaChunker:
         return self._computed_meta_mac
 
     def check_integrity(self) -> None:
-        if not self.expected_mac:
+        if not self.expected_meta_mac:
             raise RuntimeError
         meta_mac = self.compute_meta_mac()
-        if self.expected_mac != meta_mac:
+        if self.expected_meta_mac != meta_mac:
             raise RuntimeError("Mismatched mac")
 
 
 def _iter_chunks(
-    iv: tuple[int, ...],
-    key: tuple[int, ...],
+    iv: tuple[int, int],
+    key: tuple[int, int, int, int],
     *,
     decrypt: bool,
 ) -> Generator[bytes, bytes | None, tuple[int, int]]:

@@ -13,12 +13,11 @@ from mega.crypto import (
     b64_to_a32,
     b64_url_decode,
     b64_url_encode,
-    compose_crypto,
     decrypt_attr,
     encrypt_attr,
     encrypt_key,
 )
-from mega.data_structures import AccountStats, Attributes, FileInfo, Node, NodeID, NodeType, UserResponse
+from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.filesystem import FileSystem
 from mega.utils import throttled_gather
 
@@ -177,7 +176,7 @@ class MegaNzClient(MegaCore):
         output_dir: str | PathLike[str] | None = None,
     ) -> Path:
         full_key = b64_to_a32(public_key)
-        crypto = compose_crypto(full_key)
+        crypto = Crypto.decompose(full_key)
         file_info = await self._request_file_info(public_handle, is_public=True)
         return await self._download_file(
             file_info,
@@ -278,7 +277,7 @@ class MegaNzClient(MegaCore):
 
     async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
         full_key = b64_to_a32(public_key)
-        key = compose_crypto(full_key).key
+        key = Crypto.decompose(full_key).key
         file_info = await self._request_file_info(public_handle, is_public=True)
         name = Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), key)).name
         return dataclasses.replace(file_info, name=name)
@@ -295,7 +294,7 @@ class MegaNzClient(MegaCore):
 
         file_info = await self.get_public_file_info(public_handle, public_key)
         full_key = b64_to_a32(public_key)
-        key = compose_crypto(full_key).key
+        key = Crypto.decompose(full_key).key
         encrypted_key = a32_to_base64(encrypt_key(full_key, self._vault.master_key))
         attributes = b64_url_encode(encrypt_attr({"n": file_info.name}, key))
 

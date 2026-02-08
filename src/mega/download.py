@@ -26,9 +26,9 @@ async def stream_download(
     stream: aiohttp.StreamReader,
     output_path: Path,
     file_size: int,
-    iv: tuple[int, ...],
+    iv: tuple[int, int],
     meta_mac: tuple[int, int],
-    key: tuple[int, ...],
+    key: tuple[int, int, int, int],
 ) -> Path:
     if await asyncio.to_thread(output_path.exists):
         raise FileExistsError(errno.EEXIST, output_path)

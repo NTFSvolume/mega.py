@@ -5,8 +5,8 @@ import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from mega.crypto import b64_to_a32, b64_url_decode, compose_crypto, decrypt_attr, decrypt_key
-from mega.data_structures import Attributes, Node, NodeSerialized, NodeType, UserID
+from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr, decrypt_key
+from mega.data_structures import Attributes, Crypto, Node, NodeSerialized, NodeType, UserID
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -96,7 +96,7 @@ class MegaVault:
         crypto = attributes = None
         if node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self.get_keys(node)
-            crypto = compose_crypto(full_key, node.type, share_key)
+            crypto = Crypto.decompose(full_key, node.type, share_key)
             attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
 
         else:

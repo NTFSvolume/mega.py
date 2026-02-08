@@ -11,8 +11,6 @@ from Crypto.Cipher import AES
 from Crypto.Math.Numbers import Integer
 from Crypto.PublicKey import RSA
 
-from mega.data_structures import Crypto, NodeType
-
 if TYPE_CHECKING:
     from collections.abc import Generator, Mapping, Sequence
 
@@ -207,24 +205,3 @@ def generate_hashcash_token(challenge: str) -> str:
             return f"{version}:{token}:{b64_url_encode(buffer[:4])}"
 
         nonce += 1
-
-
-def compose_crypto(
-    full_key: tuple[int, ...],
-    node_type: NodeType = NodeType.FILE,
-    share_key: tuple[int, ...] | None = None,
-) -> Crypto:
-    if node_type is NodeType.FILE:
-        key = (
-            full_key[0] ^ full_key[4],
-            full_key[1] ^ full_key[5],
-            full_key[2] ^ full_key[6],
-            full_key[3] ^ full_key[7],
-        )
-
-    else:
-        key = full_key
-
-    iv = *full_key[4:6], 0, 0
-    meta_mac = full_key[6:8]
-    return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
