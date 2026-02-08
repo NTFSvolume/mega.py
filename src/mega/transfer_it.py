@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import asyncio
 import dataclasses
 import logging
@@ -9,11 +10,11 @@ from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 import yarl
 
 from mega import download, progress
-from mega.api import MegaAPI
+from mega.api import ApiClient, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeType
 from mega.filesystem import FileSystem
-from mega.utils import throttled_gather
+from mega.utils import setup_logger, throttled_gather
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -40,9 +41,9 @@ class TransferItAPI(MegaAPI):
         return await super().request(data, params)
 
 
-class TransferItClient:
+class TransferItClient(ApiClient):
     def __init__(self) -> None:
-        self._api: TransferItAPI = TransferItAPI()
+        self._api = TransferItAPI()
 
     async def get_filesystem(self, transfer_id: TransferID) -> FileSystem:
         folder: GetNodesResponse = await self._api.request(
@@ -112,7 +113,7 @@ class TransferItClient:
             try:
                 return await self._download_file(dl_link, output_folder, path.name)
             except Exception:
-                logger.exception(f"Unable to download {web_url} to {output_folder}")
+                logger.error(f"Unable to download {web_url} to {output_folder}")
                 raise
 
         def make_coros():
@@ -137,7 +138,46 @@ class TransferItClient:
         name = output_name or yarl.URL(dl_link).query["fn"]
         output_path = Path(output_folder or Path()) / name
 
-        async with self._api.download(dl_link) as response:
+        async with self._api.download(dl_link, headers={"Referer": "https://transfer.it/"}) as response:
             size = int(response.headers["Content-Length"])
             with progress.new_task(name, size, "DOWN"):
                 return await download.stream(response.content, output_path)
+
+
+async def run() -> None:
+    setup_logger(__name__)
+
+    parser = argparse.ArgumentParser(description="Download files from a transfer.it URL.")
+    parser.add_argument(
+        "url",
+        help="The Mega.nz URL to download from.",
+        metavar="URL",
+    )
+    parser.add_argument(
+        "--output-dir",
+        "-o",
+        default=Path("transfer.it"),
+        help="The directory to save the downloaded file. Defaults to the current directory.",
+        metavar="DIR",
+    )
+    args = parser.parse_args()
+    output: Path = args.output_dir.resolve()
+    link: str = args.url
+    async with TransferItClient() as client:
+        with progress.new_progress():
+            await download_transfer(client, link, output)
+
+
+async def download_transfer(client: TransferItClient, url: str, output: Path) -> None:
+    transfer_id = client.parse_url(url)
+    logger.info(f"Downloading '{url!s}'")
+    success, fails = await client.download_transfer(transfer_id, output / transfer_id)
+    logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+
+
+def main() -> None:
+    asyncio.run(run())
+
+
+if __name__ == "__main__":
+    main()

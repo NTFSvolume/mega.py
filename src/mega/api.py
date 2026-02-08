@@ -26,7 +26,6 @@ logger = logging.getLogger(__name__)
 
 
 _HEADERS: dict[str, str] = {
-    "Content-Type": "application/json",
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0",
 }
 
@@ -111,7 +110,7 @@ class MegaAPI:
         if not isinstance(data, list):
             data = [data]
 
-        headers = _HEADERS
+        headers = _HEADERS | {"Content-Type": "application/json"}
 
         for solve_xhashcash in (True, False):
             logger.debug(f"Making POST request with {params=!r} {data=!r} {headers=!r}")
@@ -140,8 +139,11 @@ class MegaAPI:
         raise ValueError
 
     @contextlib.asynccontextmanager
-    async def download(self, url: str | yarl.URL) -> AsyncGenerator[aiohttp.ClientResponse]:
-        async with self._lazy_session().get(url, headers=_HEADERS) as resp:
+    async def download(
+        self, url: str | yarl.URL, headers: dict[str, str] | None = None
+    ) -> AsyncGenerator[aiohttp.ClientResponse]:
+        headers = _HEADERS | (headers or {})
+        async with self._lazy_session().get(url, headers=headers) as resp:
             resp.raise_for_status()
             yield resp
 
@@ -169,3 +171,16 @@ class MegaAPI:
             raise RequestError(resp)
 
         return resp
+
+
+class ApiClient:
+    _api: MegaAPI  # pyright: ignore[reportUninitializedInstanceVariable]
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *_) -> None:
+        await self.close()
+
+    async def close(self) -> None:
+        await self._api.close()
