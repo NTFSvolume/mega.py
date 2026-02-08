@@ -1,14 +1,13 @@
 [project]
 name = "async-mega.py"
-authors = [{name = "O'Dwyer Software", email = "hello@odwyer.software"}]
+authors = [{name = "NTFSvolume", email = "NTFSvolume@proton.me"}]
 dependencies = [
     "aiohttp>=3.11.18",
     "pycryptodome==3.19.0"
 ]
-description = "Python lib for the Mega.co.nz API."
+description = "Python library for the Mega.nz and Transfer.it API"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
-maintainers = [{name = "NTFSvolume"}]
 readme = "README.md"
 requires-python = ">=3.11"
 version = "1.11.0"
