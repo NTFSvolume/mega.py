@@ -1,15 +1,19 @@
+from __future__ import annotations
+
 import asyncio
 import datetime
 import logging
 import random
 import re
 import string
-from collections.abc import Awaitable, Iterable, Sequence
-from typing import Literal, TypeVar, overload
+from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
 from mega.errors import ValidationError
 
-_T = TypeVar("_T")
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Iterable, Sequence
+
+    _T = TypeVar("_T")
 
 
 def setup_logger(name: str = "mega") -> None:

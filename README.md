@@ -1,4 +1,4 @@
-# Async Mega.py (Updated)
+# Async Mega.py
 
 [![PyPI - Version](https://img.shields.io/pypi/v/async-mega-py)](https://pypi.org/project/async-mega-py/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/async-mega-py)](https://pypi.org/project/async-mega-py/)
@@ -6,18 +6,25 @@
 [![GitHub License](https://img.shields.io/github/license/NTFSvolume/mega.py)](https://github.com/NTFSvolume/mega.py/blob/master/LICENSE)
 [![CI](https://github.com/NTFSvolume/mega.py/actions/workflows/ci.yml/badge.svg)](https://github.com/NTFSvolume/mega.py/actions/workflows/ci.yml)
 
-Python library for the [Mega.nz](https://mega.nz/) API
+Python library for the [Mega.nz](https://mega.nz/) and [Transfer.it](https://transfer.it/) API
 
 Supports:
 
-- login
-- upload
-- download
-- delete
-- search
-- sharing
-- renaming
-- moving files
+- Login (with credentials or creating a temporary account)
+- Upload
+- Download (files and folders)
+- Delete
+- Search
+- Export (public sharing)
+- Import public files to your account
+- Renaming
+- Moving files
+- Add/remove contacts
+- Get account stats (storage quota, transfer quota, balance (PRO accounts only))
+
+# TODO:
+
+- [ ] Support multifactor authentication (MFA) login
 
 ## API Information
 
@@ -25,184 +32,232 @@ Please check [`src/mega/data_structures.py`](src/mega/data_structures.py) for de
 
 ## How To Use
 
-### 1. Import the client
+> [!TIP]
+> You can run the commands bellow in an interactive python (the asyncio REPL). Try them in real time as is, using `async/await` keywords!
+>
+> ```uv run -p3.12 python -m asyncio```
+
+To interact with Mega, import the client and call the `login`. Login should always be the first thing you do. Almost all operations require login into a valid account.
 
 ```python
-from mega.client import Mega
+from mega.client import MegaNzClient
+
+email = "my_email@email.com"
+password = "12345"
+async with MegaNzClient() as mega:
+    await mega.login(email, password)
+
 ```
 
-### 2. Create an instance of the client
+You can call `login` without params to create a temporary account:
 
 ```python
-mega = Mega()
-```
+from mega.client import MegaNzClient
 
-### 3. Login to Mega
+async with MegaNzClient() as mega:
+    await mega.login() # login using a temporary anonymous account
 
-```python
-await mega.login(email, password)
-await mega.login() # login using a temporary anonymous account
 ```
 
 ## Methods
 
-### Get user details
+Check [`src/mega/client.py`](src/mega/client.py) and [`src/mega/data_structures.py`](src/mega/data_structures.py)to view the details of all public methods and which objects each one return.
+
+The client deserializes the raw responses from the API and always returns `dataclasses`, `bool` or `Paths` (except for `get_user` which returns a normal `dict`)
+
+> [!TIP]
+> All dataclasses returned by the client have a `dump` method to convert them to a normal `dict` if required
 
 ```python
-details = await mega.get_user()
-```
+# Get user details
+# Includes email, user id, history of all emails, creation timestamp, etc...
+await mega.get_user()
 
-### Get account balance (Pro accounts only)
+# Get account stats
+# ex: Balance, storage quota, transfer quota, usage metrics, etc...
+await mega.get_account_stats()
 
-```python
-balance = await mega.get_balance()
-```
+# Add/remove contacts
+contact = "test@mega.nz"
+await mega.add_contact(contact)
+await mega.remove_contact(contact)
 
-### Get account disk quota
+# Upload a file, and get its public link
+my_real_file = '/home/user/myfile.doc' # Change this to a real file path!
+uploaded_file = await mega.upload(my_real_file)
+await mega.export(uploaded_file)
 
-```python
-quota = await mega.get_quota()
-```
+# Download a file
+output_dir = "my downloads"
+await mega.download(uploaded_file, output_dir)
 
-### Get account storage space
+# Download a public file
+url = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
+public_handle, public_key = mega.parse_file_url(url)  
+await mega.download_public_file(public_handle, public_key, output_dir)
 
-```python
-space = await mega.get_storage_space()
-```
+# Download a public folder
+url = "https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc"
+public_handle, public_key = mega.parse_folder_url(url)
+success, fails = await mega.download_public_folder(public_handle, public_key, output_dir)
+print(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
 
-### Get account files
-
-```python
-files = await mega.get_files()
-```
-
-### Get files in trash bin
-
-```python
-deleted_files = await mega.get_files_in_node(4)  # Options: root(2), inbox(3), trashbin (4)
-```
-
-### Get file system
-
-```python
-fs = await mega.build_file_system()
-```
-
-### Upload a file, and get its public link
-
-```python
-file = await mega.upload('myfile.doc')
-link = await mega.get_upload_link(file)
-# see client.py for destination and filename options
-```
-
-### Export a file or folder
-
-```python
-public_exported_web_link = await mega.export('myfile.doc')
-public_exported_web_link = await mega.export('my_mega_folder/my_sub_folder_to_share')
-# e.g. https://mega.nz/#F!WlVl1CbZ!M3wmhwZDENMNUJoBsdzFng
-```
-
-### Search a file or folder (recursively)
-
-Search returns every file/folder that contains the  search query in its path
-
-If you have these files in your account:
-
-```bash
-├── dir1
-│   ├── file1.txt
-│   └── file2.md
-├── dir2
-│   └── subdir
-│       └── file3.log
-├── trash_bin
-│   └── file4.mov
-└── file5.txt
-```
-
-```python
-
-result = await mega.search('file1.txt') # Returns a list with 1 element, dir1/file1.txt
-result = await mega.search('file') # Returns a list with 5 elements
-result = await mega.search('file', exclude_deleted=True) # Returns a list with 4 elements
-result = await mega.search('.txt') # Returns a list with 2 elements
-result = await mega.search('dir1/file') # Returns a list with 2 elements
-```
-
-### Find a file or folder
-
-Like `search`, but the path must start with the search query and only returns the first element (if found)
-
-```python
-result = await mega.find('file3.log') # None
-result = await mega.find('dir2/file3.log') # None
-result = await mega.find('dir2/subdir/file3') # File() at dir2/subdir/file3.log'
-result = await mega.find('dir2/subdir/file3.log') # File() at dir2/subdir/file3.log'
-```
-
-### Upload a file to a destination folder
-
-```python
-folder = await mega.find('dir2/subdir')
-await mega.upload('myfile.doc', dest_node=folder)
-```
-
-### Download a file, optionally specify destination folder
-
-```python
-file = await mega.find('dir2/subdir/file3.log')
-await mega.download(file)
-await mega.download(file, dest_path='/home/john-smith/Desktop')
-await mega.download(file, dest_path='/home/john-smith/Desktop', dest_filename='my_logs.log')
-```
-
-Download will show a progress bar on the terminal. To disable it, create an instance of the mega client with the progress bar disabled
-
-```python
-mega = Mega(use_progress_bar=False)
-```
-
-You can also disable the progress bar on an existing instance
-
-```python
-mega.use_progress_bar = False
-```
-
-### Download a file from an URL
-
-```python
-url = 'https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc'
-await mega.download_url(url, dest_filename='my_file.zip')
-```
-
-### Download a public folder
-
-```python
-url = 'https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc'
-await mega.download_folder_url(url, dest_path ="downloads/my_music")
-```
-
-### Import a file from URL, optionally specify destination folder
-
-```python
-url = 'https://mega.co.nz/#!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc'
-await mega.import_public_url(url)
-folder = await mega.find('dir2')
-await mega.import_public_url(url, dest_node=folder)
-```
-
-### Create a folder
-
-```python
+# Create a folder
 await mega.create_folder('new_folder')
 await mega.create_folder('new_folder/sub_folder/subsub_folder')
+
+# Rename a file or a folder
+folder = await mega.find('new_folder/sub_folder/subsub_folder')
+await mega.rename(folder, new_name='my_new_name')
+
+# Delete or destroy folder
+
+await mega.delete(folder.id) # This sends it to the trash bin (still counts towards your quota)
+await mega.destoy(folder.id) # This removes it completely
+
+# Import a file from URL
+url = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
+public_handle, public_key = mega.parse_file_url(url)
+await mega.import_public_file(public_handle, public_key, dest_node_id=folder.id)
 ```
 
-### Rename a file or a folder
+> [!TIP]
+> You can show a progress bar on the terminal for each download/upload by calling them within the `show_progress_bar()` context manager:
+
 
 ```python
-file = await mega.find('dir2/subdir/file3.log')
-await mega.rename(file, new_name='dir2/subdir/old_logs.log')
+url = "https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc"
+public_handle, public_key = mega.parse_folder_url(url)
+with mega.show_progress_bar():  
+    success, fails = await mega.download_public_folder(public_handle, public_key, output_dir)
+```
+
+## The filesystem object
+
+The filesystem is a read only copy of your account's file structure.
+
+> [!IMPORTANT]  
+> `mega.py` caches your filesystem until you make a request to modify it. ex: `create_dir` or `upload`
+>
+> That means calls to `mega.get_filesystem()` will not reflect changes made by third parties (ex: MegaNZ's website or the MegaNZ's app)
+>
+> You can force it to fetch current data by using `mega.get_filesystem(force=True)`
+
+```python
+# Get a read only copy of your filesystem
+fs = await mega.get_filesystem()
+
+# save a copy of your filesystem as json
+import json
+from pathlib import Path
+
+dump = json.dumps(fs.dump(), indent=2, ensure_ascii=False)
+Path("my_fs.json").write_text(dump)
+```
+
+### What can the filesystem object do?
+
+We are gonna use the example filesystem found at [`tests/fake_fs.json`](tests/fake_fs.json) which has this structure:
+
+```json
+"paths": {
+    "qCZrYJVK": "/",
+    "FeWnQouH": "/backup.sql",
+    "coJ3yMOW": "/docker-compose.yml",
+    "FzL3QdIj": "/Inbox",
+    "2gL2GPaJ": "/index.html",
+    "msinsVCj": "/logo.png",
+    "MBlNlb2P": "/styles.css",
+    "7N9QiWZ9": "/tests",
+    "RDJJI2lv": "/tests/logo.png",
+    "pHWVIQLd": "/tests/logo.png",
+    "oImwb6nN": "/tests/script.js",
+    "FIXitv4F": "/tests/scripts",
+    "0fPFklV3": "/tests/scripts/notes.txt",
+    "l9zkz1GU": "/tests/scripts/script.js",
+    "E4LqT4EF": "/tests/scripts/styles.css",
+    "i6ry53xV": "/tests/setup.sh",
+    "Iri7NRCx": "/tests/utils.py",
+    "2Tae8amE": "/Trash Bin",
+    "t8HkzBH2": "/Trash Bin/data",
+    "8EwHVJna": "/Trash Bin/data/docker-compose.yml"
+  }
+```
+
+### Read the filesystem from a file dump
+
+```python
+from mega.filesystem import UserFileSystem
+
+dump = Path("tests/fake_fs.json").read_text()
+fs = UserFileSystem.from_dump(json.loads(dump))
+
+# Search for nodes
+query = "tests/script"
+for node_id, path in fs.search(query):
+    print (node_id)
+    print (path)
+
+# or
+dict(fs.search(query))
+```
+
+The output will be:
+
+```json
+{
+    "oImwb6nN": "/tests/script.js",
+    "FIXitv4F": "/tests/scripts",
+    "0fPFklV3": "/tests/scripts/notes.txt",
+    "l9zkz1GU": "/tests/scripts/script.js",
+    "E4LqT4EF": "/tests/scripts/styles.css",
+}
+```
+
+
+
+```python
+# Get the path to a node
+path = fs.absolute_path("0fPFklV3")
+# Should be: /tests/scripts/notes.txt
+
+# Find a node by its *exact* path
+result = fs.find("/tests/scripts/notes.txt")
+assert result.id == "0fPFklV3"
+
+```
+
+```python
+# Get deleted files and folders (on the trash bin)
+list(fs.deleted)
+
+# List all the children of a folder (resursive)
+folder = fs.find("/tests")
+for node in fs.iterdir(folder.id, recursive=True):
+    print(fs.absolute_path(node))
+
+```
+Output will be:
+
+```json
+[
+    "/tests/logo.png",
+    "/tests/logo.png",
+    "/tests/script.js",
+    "/tests/scripts",
+    "/tests/scripts/notes.txt",
+    "/tests/scripts/script.js",
+    "/tests/scripts/styles.css"
+]
+```
+
+> [!IMPORTANT]  
+> Mega's filesystem is *not* POSIX-compliant: multiple nodes may have the same path.
+>
+> If 2 nodes have the same path, find will throw an error.
+
+```python
+fs.find("/tests/logo.png") # This will fail
+# You will have to call search and choose which one you actually want
+dict(fs.search("/tests/logo.png"))
 ```

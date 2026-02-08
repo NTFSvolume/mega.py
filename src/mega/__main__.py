@@ -1,13 +1,18 @@
+from __future__ import annotations
+
 import argparse
 import asyncio
 import contextlib
 import logging
-from collections.abc import AsyncGenerator
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from mega import env
 from mega.client import MegaNzClient
 from mega.utils import setup_logger
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncGenerator
 
 logger = logging.getLogger(__name__)
 
