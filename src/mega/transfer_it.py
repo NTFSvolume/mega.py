@@ -95,7 +95,7 @@ class TransferItClient(AbstractApiClient):
         transfer_id: TransferID,
         output_dir: str | PathLike[str] | None = None,
         root_id: NodeID | None = None,
-    ) -> tuple[list[Path], list[Exception]]:
+    ) -> download.DownloadResult:
         """Recursively download all files from a transfer, preserving its internal directory structure.
 
         Returns:
@@ -122,12 +122,7 @@ class TransferItClient(AbstractApiClient):
             fs.files_from(root_id),
             return_exceptions=True,
         )
-        success: list[Path] = []
-        fails: list[Exception] = [
-            result for result in results if isinstance(result, Exception) or (success.append(result) and False)
-        ]
-
-        return success, fails
+        return download.DownloadResult.build(results)
 
     async def _download_file(self, dl_link: str, output_path: str | PathLike[str]) -> Path:
         output_path = Path(output_path)

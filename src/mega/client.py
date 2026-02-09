@@ -18,6 +18,7 @@ from mega.crypto import (
     encrypt_key,
 )
 from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
+from mega.download import DownloadResult
 from mega.filesystem import FileSystem
 from mega.utils import throttled_gather
 
@@ -188,7 +189,7 @@ class MegaNzClient(MegaCore):
         public_key: str,
         output_dir: str | PathLike[str] | None = None,
         root_id: NodeID | None = None,
-    ) -> tuple[list[Path], list[Exception]]:
+    ) -> DownloadResult:
         """Recursively download all files from a public folder, preserving its internal directory structure.
 
         Returns:
@@ -211,12 +212,7 @@ class MegaNzClient(MegaCore):
                 raise
 
         results = await throttled_gather(worker, fs.files_from(root_id), return_exceptions=True)
-        success: list[Path] = []
-        fails: list[Exception] = [
-            result for result in results if isinstance(result, Exception) or (success.append(result) and False)
-        ]
-
-        return success, fails
+        return DownloadResult.build(results)
 
     async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> Node:
         if not dest_node_id:

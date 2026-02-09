@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import errno
 import logging
 import shutil
@@ -85,3 +86,20 @@ async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
             Path(temp_file.name).unlink(missing_ok=True)
 
         await asyncio.to_thread(delete)
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class DownloadResult:
+    success: tuple[Path, ...]
+    fails: tuple[Exception, ...]
+
+    def __iter__(self) -> tuple[tuple[Path, ...], tuple[Exception, ...]]:
+        return self.success, self.fails
+
+    @classmethod
+    def build(cls, results: list[Path | Exception]):
+        success: list[Path] = []
+        fails: list[Exception] = [
+            result for result in results if isinstance(result, Exception) or (success.append(result) and False)
+        ]
+        return cls(tuple(success), tuple(fails))
