@@ -29,6 +29,7 @@ if TYPE_CHECKING:
 
 
 _PROGRESS_HOOK_FACTORY: ContextVar[ProgressHookFactory | None] = ContextVar("_PROGRESS_HOOK_FACTORY", default=None)
+_DESCRIPTION_MAX_LENGTH: ContextVar[int] = ContextVar("_DESCRIPTION_MAX_LENGTH", default=80)
 current_hook: ContextVar[ProgressHook] = ContextVar("current_hook", default=lambda _: None)
 
 
@@ -63,11 +64,17 @@ def new_progress() -> Generator[None]:
         yield
         return
 
+    name_limit = progress.live.console.width * 60 // 100
+    token = _DESCRIPTION_MAX_LENGTH.set(name_limit)
+
     def hook_factory(*args, **kwargs):
         return _new_rich_task(progress, *args, **kwargs)
 
-    with progress, set_progress_factory(hook_factory):
-        yield
+    try:
+        with progress, set_progress_factory(hook_factory):
+            yield
+    finally:
+        _DESCRIPTION_MAX_LENGTH.reset(token)
 
 
 def _truncate_desc(desc: str, length: int = 80, placeholder: str = "...") -> str:
@@ -114,7 +121,8 @@ def _new_rich_task(
     total: float,
     kind: Literal["UP", "DOWN"],
 ) -> Generator[ProgressHook]:
-    task_id = progress.add_task(_truncate_desc(description), total=total, kind=kind)
+    desc_limit = _DESCRIPTION_MAX_LENGTH.get()
+    task_id = progress.add_task(_truncate_desc(description, desc_limit), total=total, kind=kind)
 
     def progress_hook(advance: float) -> None:
         progress.advance(task_id, advance)

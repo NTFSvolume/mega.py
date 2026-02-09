@@ -15,7 +15,7 @@ from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeID, NodeType
 from mega.download import DownloadResults
 from mega.filesystem import FileSystem
-from mega.utils import Site, throttled_gather
+from mega.utils import Site, async_map
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -107,7 +107,7 @@ class TransferItClient(AbstractApiClient):
         base_path = Path(output_dir or ".") / f"transfer.it ({transfer_id})"
         folder_url = f"https://transfer.it/t/{transfer_id}"
 
-        async def worker(file: Node) -> tuple[NodeID, Path | Exception]:
+        async def download(file: Node) -> tuple[NodeID, Path | Exception]:
             web_url = folder_url + f"#{file.id}"
             output_path = base_path / fs.relative_path(file.id)
             dl_link = self.create_download_url(transfer_id, file)
@@ -123,7 +123,7 @@ class TransferItClient(AbstractApiClient):
 
             return file.id, result
 
-        results = await throttled_gather(worker, fs.files_from(root_id))
+        results = await async_map(download, fs.files_from(root_id))
         return DownloadResults.split(dict(results))
 
     async def _download_file(self, dl_link: str, output_path: str | PathLike[str]) -> Path:

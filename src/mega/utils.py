@@ -77,7 +77,7 @@ def transform_v1_url(url: yarl.URL) -> yarl.URL:
 
 
 @overload
-async def throttled_gather(
+async def async_map(
     coro_factory: Callable[[_T1], Awaitable[_T2]],
     values: Iterable[_T1],
     *,
@@ -87,7 +87,7 @@ async def throttled_gather(
 
 
 @overload
-async def throttled_gather(
+async def async_map(
     coro_factory: Callable[[_T1], Awaitable[_T2]],
     values: Iterable[_T1],
     *,
@@ -96,7 +96,7 @@ async def throttled_gather(
 ) -> list[_T2]: ...
 
 
-async def throttled_gather(
+async def async_map(
     coro_factory: Callable[[_T1], Awaitable[_T2]],
     values: Iterable[_T1],
     *,

@@ -22,7 +22,7 @@ from mega.crypto import (
 from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.download import DownloadResults
 from mega.filesystem import FileSystem
-from mega.utils import Site, throttled_gather
+from mega.utils import Site, async_map
 
 from .errors import MegaNzError, RequestError, ValidationError
 
@@ -207,7 +207,7 @@ class MegaNzClient(MegaCore):
         base_path = Path(output_dir or ".")
         folder_url = f"{_DOMAIN}/folder/{public_handle}#{public_key}"
 
-        async def worker(file: Node) -> tuple[NodeID, Path | Exception]:
+        async def download(file: Node) -> tuple[NodeID, Path | Exception]:
             web_url = folder_url + f"/file/{file.id}"
             output_path = base_path / fs.relative_path(file.id)
             try:
@@ -224,7 +224,7 @@ class MegaNzClient(MegaCore):
 
             return file.id, result
 
-        results = await throttled_gather(worker, fs.files_from(root_id))
+        results = await async_map(download, fs.files_from(root_id))
         return DownloadResults.split(dict(results))
 
     async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> Node:
