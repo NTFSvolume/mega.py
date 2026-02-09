@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import errno
 import logging
 import shutil
 import tempfile
+from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import IO, TYPE_CHECKING
+from types import MappingProxyType
+from typing import IO, TYPE_CHECKING, Self
 
 from mega import progress
 from mega.chunker import MegaChunker
 from mega.crypto import get_chunks
+from mega.data_structures import NodeID
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -88,18 +90,38 @@ async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
         await asyncio.to_thread(delete)
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class DownloadResult:
-    success: tuple[Path, ...]
-    fails: tuple[Exception, ...]
+class DownloadResults(Mapping[NodeID, Path | Exception]):
+    success: MappingProxyType[NodeID, Path]
+    fails: MappingProxyType[NodeID, Exception]
 
-    def __iter__(self) -> tuple[tuple[Path, ...], tuple[Exception, ...]]:
-        return self.success, self.fails
+    def __init__(self, success: Mapping[NodeID, Path], fails: Mapping[NodeID, Exception]) -> None:
+        if not success.keys().isdisjoint(fails.keys()):
+            raise ValueError("A NodeID cannot be in both success and fails")
+        self.success = MappingProxyType(success)
+        self.fails = MappingProxyType(fails)
+
+    def __getitem__(self, value: NodeID) -> Path | Exception:
+        try:
+            return self.success[value]
+        except KeyError:
+            return self.fails[value]
+
+    def __iter__(self) -> Iterator[NodeID]:
+        yield from self.success
+        yield from self.fails
+
+    def __len__(self) -> int:
+        return len(self.success) + len(self.fails)
 
     @classmethod
-    def build(cls, results: list[Path | Exception]):
-        success: list[Path] = []
-        fails: list[Exception] = [
-            result for result in results if isinstance(result, Exception) or (success.append(result) and False)
-        ]
-        return cls(tuple(success), tuple(fails))
+    def split(cls, results: Mapping[NodeID, Path | Exception]) -> Self:
+        success: dict[NodeID, Path] = {}
+        fails: dict[NodeID, Exception] = {}
+
+        for node_id, result in results.items():
+            if isinstance(result, Exception):
+                fails[node_id] = result
+            else:
+                success[node_id] = result
+
+        return cls(success, fails)

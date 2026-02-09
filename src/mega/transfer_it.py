@@ -12,6 +12,7 @@ from mega import download, progress
 from mega.api import AbstractApiClient, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeID, NodeType
+from mega.download import DownloadResults
 from mega.filesystem import FileSystem
 from mega.utils import Site, throttled_gather
 
@@ -95,7 +96,7 @@ class TransferItClient(AbstractApiClient):
         transfer_id: TransferID,
         output_dir: str | PathLike[str] | None = None,
         root_id: NodeID | None = None,
-    ) -> download.DownloadResult:
+    ) -> DownloadResults:
         """Recursively download all files from a transfer, preserving its internal directory structure.
 
         Returns:
@@ -107,22 +108,20 @@ class TransferItClient(AbstractApiClient):
         base_path = Path(output_dir or ".") / f"transfer.it ({transfer_id})"
         folder_url = f"https://transfer.it/t/{transfer_id}"
 
-        async def worker(file: Node) -> Path:
+        async def worker(file: Node) -> tuple[NodeID, Path | Exception]:
             web_url = folder_url + f"#{file.id}"
             output_path = base_path / fs.relative_path(file.id)
             dl_link = self.create_download_url(transfer_id, file)
             try:
-                return await self._download_file(dl_link, output_path)
+                result = await self._download_file(dl_link, output_path)
             except Exception as exc:
                 logger.error(f'Unable to download {web_url} to "{output_path}" ({type(exc).__name__})')
-                raise
+                result = exc
 
-        results = await throttled_gather(
-            worker,
-            fs.files_from(root_id),
-            return_exceptions=True,
-        )
-        return download.DownloadResult.build(results)
+            return file.id, result
+
+        results = await throttled_gather(worker, fs.files_from(root_id))
+        return DownloadResults.split(dict(results))
 
     async def _download_file(self, dl_link: str, output_path: str | PathLike[str]) -> Path:
         output_path = Path(output_path)

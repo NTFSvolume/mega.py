@@ -94,11 +94,11 @@ class MegaCore(AbstractApiClient):
         return result.public_handle, result.public_key
 
     @classmethod
-    def parse_folder_url(cls, url: str | yarl.URL) -> tuple[str, str]:
+    def parse_folder_url(cls, url: str | yarl.URL) -> tuple[str, str, str | None]:
         result = cls.parse_url(url)
         if not result.is_folder:
             raise ValueError("This is a file URL: {url}")
-        return result.public_handle, result.public_key
+        return result.public_handle, result.public_key, (result.inner_folder_id or result.inner_file_id)
 
     @staticmethod
     def parse_url(url: str | yarl.URL) -> ParsedPublicURL:

@@ -81,7 +81,7 @@ async def throttled_gather(
     coro_factory: Callable[[_T1], Awaitable[_T2]],
     values: Iterable[_T1],
     *,
-    return_exceptions: bool = True,
+    return_exceptions: Literal[True],
     task_limit: int = 10,
 ) -> list[_T2 | Exception]: ...
 
@@ -91,7 +91,7 @@ async def throttled_gather(
     coro_factory: Callable[[_T1], Awaitable[_T2]],
     values: Iterable[_T1],
     *,
-    return_exceptions: Literal[False],
+    return_exceptions: Literal[False] = False,
     task_limit: int = 10,
 ) -> list[_T2]: ...
 
@@ -100,16 +100,12 @@ async def throttled_gather(
     coro_factory: Callable[[_T1], Awaitable[_T2]],
     values: Iterable[_T1],
     *,
-    return_exceptions: bool = True,
+    return_exceptions: bool = False,
     task_limit: int = 10,
 ) -> Sequence[_T2 | Exception]:
     """Creates tasks lazily to minimize event loop overhead.
 
     This function ensures there are never more than `task_limit` tasks are created at any given time.
-
-    If `return_exceptions` is `False`, any exceptions other than `asyncio.CancelledError` raised within
-    a task will cancel all remaining tasks and wait for them to exit.
-    The exceptions are then combined and raised as an `ExceptionGroup`.
     """
     semaphore = asyncio.BoundedSemaphore(task_limit)
     tasks: list[asyncio.Task[_T2 | Exception]] = []

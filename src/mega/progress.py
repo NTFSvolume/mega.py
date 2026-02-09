@@ -48,7 +48,7 @@ def new_task(description: str, total: float, kind: Literal["UP", "DOWN"]) -> Gen
         yield
         return
 
-    with factory(_truncate_desc(description), total, kind) as progress_hook:
+    with factory(description, total, kind) as progress_hook:
         token = current_hook.set(progress_hook)
         try:
             yield
@@ -70,8 +70,8 @@ def new_progress() -> Generator[None]:
         yield
 
 
-def _truncate_desc(desc: str, length: int = 30, placeholder: str = "...") -> str:
-    if len(desc) < length:
+def _truncate_desc(desc: str, length: int = 80, placeholder: str = "...") -> str:
+    if len(desc) <= length:
         return desc
 
     return f"{desc[: length - len(placeholder)]}{placeholder}"
@@ -114,7 +114,7 @@ def _new_rich_task(
     total: float,
     kind: Literal["UP", "DOWN"],
 ) -> Generator[ProgressHook]:
-    task_id = progress.add_task(description, total=total, kind=kind)
+    task_id = progress.add_task(_truncate_desc(description), total=total, kind=kind)
 
     def progress_hook(advance: float) -> None:
         progress.advance(task_id, advance)

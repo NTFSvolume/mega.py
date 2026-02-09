@@ -285,11 +285,19 @@ def test_parse_file_url_raise_value_error_for_file_urls(url: str) -> None:
     [
         (
             "https://mega.nz/#F!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
-            ("Ue5VRSIQ", "kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k"),
+            ("Ue5VRSIQ", "kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k", None),
         ),
         (
             "https://mega.nz/folder/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30",
-            ("cH51DYDR", "qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30"),
+            ("cH51DYDR", "qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30", None),
+        ),
+        (
+            "https://mega.nz/folder/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30/file/Ue5VRSIQ",
+            ("cH51DYDR", "qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30", "Ue5VRSIQ"),
+        ),
+        (
+            "https://mega.nz/folder/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30/folder/Ue5VRSIQ",
+            ("cH51DYDR", "qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30", "Ue5VRSIQ"),
         ),
     ],
 )

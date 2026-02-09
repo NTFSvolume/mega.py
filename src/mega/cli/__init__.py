@@ -68,7 +68,7 @@ async def transfer_it(url: str, output_dir: Path) -> None:
             logger.info(f"Downloading '{url}'")
             results = await client.download_transfer(transfer_id, output_dir)
             logger.info(
-                f"Download of '{url}' finished. Successful downloads {len(results.success)}, failed {len(results.fails)}"
+                f"Download of '{url}' finished. Successful = {len(results.success)}, failed = {len(results.fails)}"
             )
 
 
@@ -129,12 +129,10 @@ async def download_file(mega: MegaNzClient, url: str, output: Path) -> None:
 
 
 async def download_folder(mega: MegaNzClient, url: str, output: Path) -> None:
-    public_handle, public_key = mega.parse_folder_url(url)
+    public_handle, public_key, root_node = mega.parse_folder_url(url)
     logger.info(f"Downloading {url}")
-    results = await mega.download_public_folder(public_handle, public_key, output)
-    logger.info(
-        f"Download of '{url}' finished. Successful downloads {len(results.success)}, failed {len(results.fails)}"
-    )
+    results = await mega.download_public_folder(public_handle, public_key, output, root_node)
+    logger.info(f"Download of '{url}' finished. Successful = {len(results.success)}, failed = {len(results.fails)}")
 
 
 def main() -> None:

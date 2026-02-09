@@ -18,7 +18,7 @@ from mega.crypto import (
     encrypt_key,
 )
 from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
-from mega.download import DownloadResult
+from mega.download import DownloadResults
 from mega.filesystem import FileSystem
 from mega.utils import throttled_gather
 
@@ -189,7 +189,7 @@ class MegaNzClient(MegaCore):
         public_key: str,
         output_dir: str | PathLike[str] | None = None,
         root_id: NodeID | None = None,
-    ) -> DownloadResult:
+    ) -> DownloadResults:
         """Recursively download all files from a public folder, preserving its internal directory structure.
 
         Returns:
@@ -201,18 +201,20 @@ class MegaNzClient(MegaCore):
         base_path = Path(output_dir or ".")
         folder_url = f"{self._primary_url}/folder/{public_handle}#{public_key}"
 
-        async def worker(file: Node) -> Path:
+        async def worker(file: Node) -> tuple[NodeID, Path | Exception]:
             web_url = folder_url + f"/file/{file.id}"
             output_path = base_path / fs.relative_path(file.id)
             try:
                 file_info = await self._request_file_info(file.id, public_handle)
-                return await self._download_file(file_info, file._crypto, output_path)
+                result = await self._download_file(file_info, file._crypto, output_path)
             except Exception as exc:
                 logger.error(f'Unable to download {web_url} to "{output_path}" ({type(exc).__name__})')
-                raise
+                result = exc
 
-        results = await throttled_gather(worker, fs.files_from(root_id), return_exceptions=True)
-        return DownloadResult.build(results)
+            return file.id, result
+
+        results = await throttled_gather(worker, fs.files_from(root_id))
+        return DownloadResults.split(dict(results))
 
     async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID | None = None) -> Node:
         if not dest_node_id:
