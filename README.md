@@ -6,7 +6,7 @@
 [![GitHub License](https://img.shields.io/github/license/NTFSvolume/mega.py)](https://github.com/NTFSvolume/mega.py/blob/master/LICENSE)
 [![CI](https://github.com/NTFSvolume/mega.py/actions/workflows/ci.yml/badge.svg)](https://github.com/NTFSvolume/mega.py/actions/workflows/ci.yml)
 
-Python library for the [Mega.nz](https://mega.nz/) and [Transfer.it](https://transfer.it/) API
+Python library and CLI app for the [Mega.nz](https://mega.nz/) and [Transfer.it](https://transfer.it/) API
 
 Supports:
 
@@ -22,7 +22,7 @@ Supports:
 - Add/remove contacts
 - Get account stats (storage quota, transfer quota, balance (PRO accounts only))
 
-# TODO:
+## TODO:
 
 - [ ] Support multifactor authentication (MFA) login
 
@@ -35,9 +35,7 @@ Please check [`src/mega/data_structures.py`](src/mega/data_structures.py) for de
 > [!TIP]
 > You can run the commands bellow in an interactive python (the asyncio REPL). Try them in real time as is, using `async/await` keywords!
 >
-> ```uv run -p3.12 python -m asyncio```
-
-To interact with Mega, import the client and call the `login`. Login should always be the first thing you do. Almost all operations require login into a valid account.
+> ```uv run -p3.12 --with async-mega-py python -m asyncio```
 
 ```python
 from mega.client import MegaNzClient
@@ -49,7 +47,7 @@ async with MegaNzClient() as mega:
 
 ```
 
-You can call `login` without params to create a temporary account:
+Login should always be the first thing you do. Almost all operations require a valid account. You can call `login` without params to create a temporary account:
 
 ```python
 from mega.client import MegaNzClient
@@ -57,16 +55,22 @@ from mega.client import MegaNzClient
 async with MegaNzClient() as mega:
     await mega.login() # login using a temporary anonymous account
 
+# Also works without using it as a context manager, but you have the responsability to close the session
+
+mega = MegaNzClient()
+await mega.login()
+mega.close()
+
 ```
 
 ## Methods
 
 Check [`src/mega/client.py`](src/mega/client.py) and [`src/mega/data_structures.py`](src/mega/data_structures.py)to view the details of all public methods and which objects each one return.
 
-The client deserializes the raw responses from the API and always returns `dataclasses`, `bool` or `Paths` (except for `get_user` which returns a normal `dict`)
+The client deserializes the raw responses from the API and always returns `dataclasses` for objects (except for `get_user` which returns a normal `dict`)
 
 > [!TIP]
-> All dataclasses returned by the client have a `dump` method to convert them to a normal `dict` if required
+> All dataclasses returned by the client have a `dump` method to convert them to a `dict` if required
 
 ```python
 # Get user details
@@ -92,20 +96,20 @@ await mega.rename(folder, new_name='my_new_name')
 
 # Delete or destroy folder
 
-await mega.delete(folder.id) # This sends it to the trash bin (still counts towards your quota)
-await mega.destroy(folder.id) # This removes it completely
+await mega.delete(folder.id) # Send this node to the trash bin (still counts towards your quota)
+await mega.destroy(folder.id) # This removes it completely from your account
 
 ```
 
-### Upload / downloads
+### Upload / Downloads
 
 ```python
 # Upload a file, and get its public link
 my_real_file = '/home/user/myfile.doc' # Change this to a real file path!
-uploaded_file = await mega.upload(my_real_file)
+uploaded_file = await mega.upload(my_real_file) # Upload returns the Node that represents the file you just uploaded
 await mega.export(uploaded_file)
 
-# Download a file
+# Download a file from your account
 output_dir = "my downloads"
 await mega.download(uploaded_file, output_dir)
 
@@ -265,3 +269,50 @@ fs.find("/tests/logo.png") # This will fail
 # You will have to call search and choose which one you actually want
 dict(fs.search("/tests/logo.png"))
 ```
+
+## Transfer.it
+
+> [!NOTE]
+> The `transfer.it` client does not support uploads (yet!)
+
+```python
+from mega.transfer_it import TransferItClient
+
+async with TransferItClient() as client:
+    transfer_id = client.parse_url(url)
+    fs = await client.get_filesystem(transfer_id) # This is the same filesystem object as mega's, but it does not have root, inbox or trash_bin nodes
+    output_dir = "My downloads"
+    success, fails = await client.download_transfer(transfer_id, output_dir)
+    logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+```
+
+## CLI
+
+You can use `async-mega-py` as a stand alone CLI app! Just install it with the optional `[cli]` dependencies. The CLI offers 2 commands: `mega-py` and `async-mega-py`. Both are just aliases for the same app.
+
+```bash
+# Install it with:
+uv tool install async-mega-py[cli]
+
+#Run it
+mega-py --help
+```
+
+```bash
+ Usage: mega-py [OPTIONS] COMMAND [ARGS]...  
+
+╭─ Options ──────────────────────────────────────────────────────────────────────╮
+│ --help          Show this message and exit.                                    │
+╰────────────────────────────────────────────────────────────────────────────────╯
+╭─ Commands ─────────────────────────────────────────────────────────────────────╮
+│ download   Download a public file or folder by its URL (transfer.it / mega.nz) │
+│ dump       Dump a copy of your filesystem to disk                              │
+│ stats      Show account stats                                                  │
+│ upload     Upload a file to your account                                       │
+╰────────────────────────────────────────────
+```
+
+> [!TIP]
+> The CLI app does not accept login credentials, but you can still use your account by setting up the `MEGA_NZ_EMAIL` and `MEGA_NZ_PASSWORD` enviroment variables
+>
+> It will also read them from an `.env` file (if found)
