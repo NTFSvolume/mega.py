@@ -22,8 +22,7 @@ if TYPE_CHECKING:
 
     import aiohttp
 
-    _T = TypeVar("_T")
-
+_T = TypeVar("_T")
 logger = logging.getLogger(__name__)
 
 

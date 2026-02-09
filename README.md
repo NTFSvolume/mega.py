@@ -316,7 +316,7 @@ mega-py --help
 ```
 
 ```powershell
-Usage: async-mega-py [OPTIONS] COMMAND [ARGS]...  
+Usage: mega-py [OPTIONS] COMMAND [ARGS]...  
 
  CLI app for the Mega.nz and Transfer.it. Set MEGA_NZ_EMAIL and MEGA_NZ_PASSWORD  
  enviroment variables to use them as credentials for Mega  
@@ -324,7 +324,6 @@ Usage: async-mega-py [OPTIONS] COMMAND [ARGS]...
 ╭─ Options ──────────────────────────────────────────────────────────────────────╮
 │ --verbose  -v               Increase verbosity (-v shows debug logs,  -vv      │
 │                             shows HTTP traffic)                                │
-│                             [default: 0]                                       │
 │ --help                      Show this message and exit.                        │
 ╰────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ─────────────────────────────────────────────────────────────────────╮
