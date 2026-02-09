@@ -131,8 +131,8 @@ await mega.download_public_file(public_handle, public_key, output_dir)
 
 # Download a public folder
 url = "https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc"
-public_handle, public_key = mega.parse_folder_url(url)
-success, fails = await mega.download_public_folder(public_handle, public_key, output_dir)
+public_handle, public_key, selected_node = mega.parse_folder_url(url)
+success, fails = await mega.download_public_folder(public_handle, public_key, output_dir, selected_node)
 print(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
 
 # Import a file from URL
@@ -315,21 +315,27 @@ uv tool install async-mega-py[cli]
 mega-py --help
 ```
 
-```sh
- Usage: mega-py [OPTIONS] COMMAND [ARGS]...  
+```powershell
+Usage: async-mega-py [OPTIONS] COMMAND [ARGS]...  
+
+ CLI app for the Mega.nz and Transfer.it. Set MEGA_NZ_EMAIL and MEGA_NZ_PASSWORD  
+ enviroment variables to use them as credentials for Mega  
 
 ╭─ Options ──────────────────────────────────────────────────────────────────────╮
-│ --help          Show this message and exit.                                    │
+│ --verbose  -v               Increase verbosity (-v shows debug logs,  -vv      │
+│                             shows HTTP traffic)                                │
+│                             [default: 0]                                       │
+│ --help                      Show this message and exit.                        │
 ╰────────────────────────────────────────────────────────────────────────────────╯
 ╭─ Commands ─────────────────────────────────────────────────────────────────────╮
 │ download   Download a public file or folder by its URL (transfer.it / mega.nz) │
 │ dump       Dump a copy of your filesystem to disk                              │
 │ stats      Show account stats                                                  │
 │ upload     Upload a file to your account                                       │
-╰────────────────────────────────────────────
+╰────────────────────────────────────────────────────────────────────────────────╯
 ```
 
 > [!TIP]
-> The CLI app does _not_ accept login credentials, but you can still use your account by setting up the `MEGA_NZ_EMAIL` and `MEGA_NZ_PASSWORD` enviroment variables
+> The CLI app does *not* accept login credentials, but you can still use your account by setting up the `MEGA_NZ_EMAIL` and `MEGA_NZ_PASSWORD` enviroment variables
 >
 > It will also read them from an `.env` file (if found)

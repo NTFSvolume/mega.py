@@ -5,7 +5,7 @@ import logging
 import random
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import yarl
 from Crypto.Cipher import AES
@@ -38,15 +38,18 @@ logger = logging.getLogger(__name__)
 
 class ParsedPublicURL(NamedTuple):
     is_folder: bool
-    public_handle: str
+    public_handle: NodeID
     public_key: str
-    inner_folder_id: str | None = None
-    inner_file_id: str | None = None
+    selected_folder: NodeID | None = None
+    selected_file: NodeID | None = None
+
+    @property
+    def selected_node(self) -> NodeID | None:
+        return self.selected_folder or self.selected_file
 
 
 class MegaCore(AbstractApiClient):
     __slots__ = ("_filesystem", "_lock", "_vault")
-    _primary_url: ClassVar[str] = "https://mega.nz"
 
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         super().__init__(session)
@@ -87,18 +90,18 @@ class MegaCore(AbstractApiClient):
         logger.info("Login complete!")
 
     @classmethod
-    def parse_file_url(cls, url: str | yarl.URL) -> tuple[str, str]:
+    def parse_file_url(cls, url: str | yarl.URL) -> tuple[NodeID, str]:
         result = cls.parse_url(url)
         if result.is_folder:
             raise ValueError("This is a folder URL: {url}")
         return result.public_handle, result.public_key
 
     @classmethod
-    def parse_folder_url(cls, url: str | yarl.URL) -> tuple[str, str, str | None]:
+    def parse_folder_url(cls, url: str | yarl.URL) -> tuple[NodeID, str, NodeID | None]:
         result = cls.parse_url(url)
         if not result.is_folder:
             raise ValueError("This is a file URL: {url}")
-        return result.public_handle, result.public_key, (result.inner_folder_id or result.inner_file_id)
+        return result.public_handle, result.public_key, result.selected_node
 
     @staticmethod
     def parse_url(url: str | yarl.URL) -> ParsedPublicURL:

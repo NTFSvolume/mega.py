@@ -22,7 +22,7 @@ from mega.crypto import (
 from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.download import DownloadResults
 from mega.filesystem import FileSystem
-from mega.utils import throttled_gather
+from mega.utils import Site, throttled_gather
 
 from .errors import MegaNzError, RequestError, ValidationError
 
@@ -34,6 +34,9 @@ if TYPE_CHECKING:
 __all__ = ["MegaNzClient"]
 
 logger = logging.getLogger(__name__)
+
+
+_DOMAIN = Site.MEGA.value
 
 
 class MegaNzClient(MegaCore):
@@ -98,7 +101,7 @@ class MegaNzClient(MegaCore):
 
         public_handle = await self._get_public_handle(file.id)
         public_key = a32_to_base64(file._crypto.full_key)
-        return f"{self._primary_url}/file/{public_handle}#{public_key}"
+        return f"{_DOMAIN}/file/{public_handle}#{public_key}"
 
     async def get_folder_link(self, folder: Node) -> str:
         if folder.type is not NodeType.FOLDER:
@@ -108,7 +111,7 @@ class MegaNzClient(MegaCore):
             raise RequestError("")
         public_handle = await self._get_public_handle(folder.id)
         public_key = a32_to_base64(folder._crypto.share_key)
-        return f"{self._primary_url}/#F!{public_handle}!{public_key}"
+        return f"{_DOMAIN}/folder/{public_handle}#{public_key}"
 
     async def get_id_from_public_handle(self, public_handle: NodeID) -> str:
         resp: GetNodesResponse = await self._api.post(
@@ -202,7 +205,7 @@ class MegaNzClient(MegaCore):
         fs = await self.get_public_filesystem(public_handle, public_key)
 
         base_path = Path(output_dir or ".")
-        folder_url = f"{self._primary_url}/folder/{public_handle}#{public_key}"
+        folder_url = f"{_DOMAIN}/folder/{public_handle}#{public_key}"
 
         async def worker(file: Node) -> tuple[NodeID, Path | Exception]:
             web_url = folder_url + f"/file/{file.id}"
