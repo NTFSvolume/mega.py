@@ -1,6 +1,12 @@
 import os
 
-from dotenv import dotenv_values
+try:
+    from dotenv import dotenv_values
+except ImportError:
+
+    def dotenv_values() -> dict[str, str | None]:
+        return {}
+
 
 _DOT_ENV = dotenv_values()
 _ENV_NAMES: set[str] = set()
