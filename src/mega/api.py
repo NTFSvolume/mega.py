@@ -24,7 +24,6 @@ if TYPE_CHECKING:
     _R = TypeVar("_R")
 
 
-_RATE_LIMIT = AsyncLimiter(100, 60)
 _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0"
 _DEFAULT_HEADERS: MappingProxyType[str, str] = MappingProxyType({"User-Agent": _UA})
 
@@ -74,6 +73,7 @@ class MegaAPI:
 
     __session: aiohttp.ClientSession | None
     _auto_close_session: bool
+    _rate_limiter: AsyncLimiter
 
     _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
 
@@ -83,6 +83,7 @@ class MegaAPI:
         self._client_id = random_id(10)
         self.__session = session
         self._auto_close_session = session is None
+        self._rate_limiter = AsyncLimiter(100, 60)
 
     @property
     def entrypoint(self) -> yarl.URL:
@@ -174,7 +175,7 @@ class MegaAPI:
         kwargs["headers"] = _DEFAULT_HEADERS | (headers or {})
         params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
         logger.debug(f"Making {method} request to {url!s} with {params}")
-        async with _RATE_LIMIT, self._session.request(method, url, **kwargs) as resp:
+        async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
             yield resp
 
     @staticmethod

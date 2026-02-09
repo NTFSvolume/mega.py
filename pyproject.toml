@@ -23,6 +23,10 @@ default = [
     "rich>=14.0.0"
 ]
 
+[project.scripts]
+async-mega-py = "mega.cli:main"
+mega-py = "mega.cli:main"
+
 [project.urls]
 Homepage = "https://github.com/NTFSvolume/mega.py"
 
