@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import asyncio
 import dataclasses
 import logging
@@ -14,7 +13,7 @@ from mega.api import AbstractApiClient, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeType
 from mega.filesystem import FileSystem
-from mega.utils import setup_logger, throttled_gather
+from mega.utils import Site, throttled_gather
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -60,15 +59,15 @@ class TransferItClient(AbstractApiClient):
         return await asyncio.to_thread(self._deserialize_nodes, folder["f"])
 
     @staticmethod
-    def parse_url(url: str) -> TransferID:
-        if not url.startswith("https://transfer.it/"):
-            raise ValueError
+    def parse_url(url: str | yarl.URL) -> TransferID:
+        url = yarl.URL(url)
+        Site.TRANSFER_IT.check_host(url)
 
-        match yarl.URL(url).parts[1:]:
+        match url.parts[1:]:
             case ["t", transfer_id]:
                 return transfer_id
             case _:
-                raise ValueError
+                raise ValueError(f"Unknown URL format {url}")
 
     def create_download_url(self, transfer_id: TransferID, file: Node, password: str | None = None) -> str:
         """Get a direct download URL to the node
@@ -143,42 +142,3 @@ class TransferItClient(AbstractApiClient):
             size = int(response.headers["Content-Length"])
             with progress.new_task(name, size, "DOWN"):
                 return await download.stream(response.content, output_path)
-
-
-async def run() -> None:
-    setup_logger()
-
-    parser = argparse.ArgumentParser(description="Download files from a transfer.it URL.")
-    parser.add_argument(
-        "url",
-        help="The Mega.nz URL to download from.",
-        metavar="URL",
-    )
-    parser.add_argument(
-        "--output-dir",
-        "-o",
-        default=Path("transfer.it"),
-        help="The directory to save the downloaded file. Defaults to the current directory.",
-        metavar="DIR",
-    )
-    args = parser.parse_args()
-    output: Path = args.output_dir.resolve()
-    link: str = args.url
-    async with TransferItClient() as client:
-        with progress.new_progress():
-            await download_transfer(client, link, output)
-
-
-async def download_transfer(client: TransferItClient, url: str, output: Path) -> None:
-    transfer_id = client.parse_url(url)
-    logger.info(f"Downloading '{url!s}'")
-    success, fails = await client.download_transfer(transfer_id, output / transfer_id)
-    logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
-
-
-def main() -> None:
-    asyncio.run(run())
-
-
-if __name__ == "__main__":
-    main()

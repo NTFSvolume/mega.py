@@ -4,16 +4,33 @@ import asyncio
 import datetime
 import logging
 import random
-import re
 import string
+from enum import Enum
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
-from mega.errors import ValidationError
+import yarl
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Iterable, Sequence
 
     _T = TypeVar("_T")
+
+
+logger = logging.getLogger(__name__)
+
+
+class Site(Enum):
+    MEGA = yarl.URL("https://mega.nz")
+    TRANSFER_IT = yarl.URL("https://transfer.it")
+
+    if TYPE_CHECKING:
+
+        @property
+        def value(self) -> yarl.URL: ...
+
+    def check_host(self, url: yarl.URL) -> None:
+        if url.host != self.value.host:
+            raise ValueError(f"Not a {self.value.host} URL: {url}")
 
 
 def setup_logger(level: int = logging.INFO) -> None:
@@ -46,36 +63,16 @@ def str_utc_now() -> str:
     return utc_now().strftime("%Y%m%d_%H%M%S_%f")
 
 
-def parse_file_url(url: str) -> tuple[str, str]:
-    """Parse file id and key from url."""
-    if "/file/" in url:
-        # V2 URL structure
-        # ex: https://mega.nz/file/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq
-        url = url.replace(" ", "")
-        file_id = re.findall(r"\W\w\w\w\w\w\w\w\w\W", url)[0][1:-1]
-        match = re.search(file_id, url)
-        assert match
-        id_index = match.end()
-        key = url[id_index + 1 :]
-        return file_id, key
-    if "!" in url:
-        # V1 URL structure
-        # ex: https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8F
-        match = re.findall(r"/#!(.*)", url)
-        path = match[0]
-        return tuple(path.split("!"))
-    raise ValueError(f"URL key missing from {url}")
-
-
-def parse_folder_url(url: str) -> tuple[str, str]:
-    if "/folder/" in url:
-        _, parts = url.split("/folder/", 1)
-    elif "#F!" in url:
-        _, parts = url.split("#F!", 1)
-    else:
-        raise ValidationError("Not a valid folder URL")
-    root_folder_id, shared_key = parts.split("#")
-    return root_folder_id, shared_key
+def transform_v1_url(url: yarl.URL) -> yarl.URL:
+    frag = url.fragment
+    if url.path == "/" and frag.count("!") == 2:
+        if frag.startswith("F!"):
+            folder_id, shared_key = frag.removeprefix("F!").split("!")
+            return (url.origin() / "folder" / folder_id).with_fragment(shared_key)
+        if frag.startswith("!"):
+            file_id, shared_key = frag.removeprefix("!").split("!")
+            return (url.origin() / "file" / file_id).with_fragment(shared_key)
+    return url
 
 
 @overload

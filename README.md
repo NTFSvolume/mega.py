@@ -82,6 +82,24 @@ contact = "test@mega.nz"
 await mega.add_contact(contact)
 await mega.remove_contact(contact)
 
+# Create a folder
+await mega.create_folder('new_folder')
+await mega.create_folder('new_folder/sub_folder/subsub_folder')
+
+# Rename a file or a folder
+folder = await mega.find('new_folder/sub_folder/subsub_folder')
+await mega.rename(folder, new_name='my_new_name')
+
+# Delete or destroy folder
+
+await mega.delete(folder.id) # This sends it to the trash bin (still counts towards your quota)
+await mega.destroy(folder.id) # This removes it completely
+
+```
+
+### Upload / downloads
+
+```python
 # Upload a file, and get its public link
 my_real_file = '/home/user/myfile.doc' # Change this to a real file path!
 uploaded_file = await mega.upload(my_real_file)
@@ -102,19 +120,6 @@ public_handle, public_key = mega.parse_folder_url(url)
 success, fails = await mega.download_public_folder(public_handle, public_key, output_dir)
 print(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
 
-# Create a folder
-await mega.create_folder('new_folder')
-await mega.create_folder('new_folder/sub_folder/subsub_folder')
-
-# Rename a file or a folder
-folder = await mega.find('new_folder/sub_folder/subsub_folder')
-await mega.rename(folder, new_name='my_new_name')
-
-# Delete or destroy folder
-
-await mega.delete(folder.id) # This sends it to the trash bin (still counts towards your quota)
-await mega.destoy(folder.id) # This removes it completely
-
 # Import a file from URL
 url = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
 public_handle, public_key = mega.parse_file_url(url)
@@ -122,13 +127,12 @@ await mega.import_public_file(public_handle, public_key, dest_node_id=folder.id)
 ```
 
 > [!TIP]
-> You can show a progress bar on the terminal for each download/upload by calling them within the `show_progress_bar()` context manager:
-
+> You can show a progress bar on the terminal for each download/upload by calling them within the `progress_bar` context manager (needs optional dependency `rich` to be installed):
 
 ```python
 url = "https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc"
 public_handle, public_key = mega.parse_folder_url(url)
-with mega.show_progress_bar():  
+with mega.progress_bar:  
     success, fails = await mega.download_public_folder(public_handle, public_key, output_dir)
 ```
 

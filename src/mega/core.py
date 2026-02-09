@@ -5,11 +5,12 @@ import logging
 import random
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, NamedTuple
 
+import yarl
 from Crypto.Cipher import AES
 
-from mega import auth, download, progress, upload, utils
+from mega import auth, download, progress, upload
 from mega.api import AbstractApiClient
 from mega.crypto import (
     a32_to_base64,
@@ -23,6 +24,7 @@ from mega.crypto import (
 from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
 from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.filesystem import UserFileSystem
+from mega.utils import Site, random_u32int_array, transform_v1_url
 from mega.vault import MegaVault
 
 if TYPE_CHECKING:
@@ -34,6 +36,14 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+class ParsedPublicURL(NamedTuple):
+    is_folder: bool
+    public_handle: str
+    public_key: str
+    inner_folder_id: str | None = None
+    inner_file_id: str | None = None
 
 
 class MegaCore(AbstractApiClient):
@@ -76,10 +86,55 @@ class MegaCore(AbstractApiClient):
         logger.info("Getting all nodes and decryption keys of the account...")
         self._filesystem = await self._prepare_filesystem()
         logger.debug(f"File system: {self._filesystem}")
-        logger.info("Login complete")
+        logger.info("Login complete!")
 
-    parse_file_url = staticmethod(utils.parse_file_url)
-    parse_folder_url = staticmethod(utils.parse_folder_url)
+    @classmethod
+    def parse_file_url(cls, url: str | yarl.URL) -> tuple[str, str]:
+        result = cls.parse_url(url)
+        if result.is_folder:
+            raise ValueError("This is a folder URL: {url}")
+        return result.public_handle, result.public_key
+
+    @classmethod
+    def parse_folder_url(cls, url: str | yarl.URL) -> tuple[str, str]:
+        result = cls.parse_url(url)
+        if not result.is_folder:
+            raise ValueError("This is a file URL: {url}")
+        return result.public_handle, result.public_key
+
+    @staticmethod
+    def parse_url(url: str | yarl.URL) -> ParsedPublicURL:
+        """Parse a public URL"""
+        url = yarl.URL(url)
+        Site.MEGA.check_host(url)
+        new_url = transform_v1_url(url)
+        if new_url != url:
+            logger.info(f"Transformed v1 URL from {url} to {new_url}")
+
+        url = new_url
+        if not url.fragment:
+            raise ValueError(f"Public key missing from {url}")
+
+        match url.parts[1:]:
+            case ["file", public_handle]:
+                return ParsedPublicURL(False, public_handle, url.fragment)
+            case ["folder", public_handle]:
+                root_id = file_id = None
+                public_key, *rest = url.fragment.split("/")
+                match rest:
+                    case ["folder", inner_id]:
+                        root_id = inner_id
+                    case ["file", id_]:
+                        file_id = id_
+                    case []:
+                        pass
+                    case _:
+                        raise ValueError(f"Unknown URL format {url}")
+
+                return ParsedPublicURL(True, public_handle, public_key, root_id, file_id)
+
+            case _:
+                raise ValueError(f"Unknown URL format {url}")
 
     async def _get_public_handle(self, file_id: str) -> str:
         try:
@@ -125,10 +180,6 @@ class MegaCore(AbstractApiClient):
         nodes = await self._vault.deserialize_nodes(nodes_resp["f"])
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 
-    async def _request_upload(self, file_size: int) -> str:
-        resp = await self._api.post({"a": "u", "s": file_size})
-        return resp["p"]
-
     async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
         file_path = Path(file_path)
         file_size = file_path.stat().st_size
@@ -158,11 +209,14 @@ class MegaCore(AbstractApiClient):
         if not file_info.url:
             raise RequestError("File not accessible anymore")
 
-        name = output_name or Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), crypto.key)).name
-        output_path = Path(output_folder or Path()) / name
+        if not output_name:
+            attrs = decrypt_attr(b64_url_decode(file_info._at), crypto.key)
+            output_name = Attributes.parse(attrs).name
 
-        with progress.new_task(output_path.name, file_info.size, "DOWN"):
-            async with self._api.get(file_info.url) as response:
+        output_path = Path(output_folder or Path()) / output_name
+
+        async with self._api.get(file_info.url) as response:
+            with progress.new_task(output_path.name, file_info.size, "DOWN"):
                 return await download.encrypted_stream(
                     response.content,
                     output_path,
@@ -218,7 +272,7 @@ class MegaCore(AbstractApiClient):
 
     async def _mkdir(self, path: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
-        new_key = utils.random_u32int_array(4)
+        new_key = random_u32int_array(4)
         encrypt_attribs = b64_url_encode(encrypt_attr({"n": path}, new_key))
         encrypted_key = a32_to_base64(encrypt_key(new_key, self._vault.master_key))
 

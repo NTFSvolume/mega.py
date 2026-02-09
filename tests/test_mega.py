@@ -251,7 +251,7 @@ async def test_remove_contact(mega: MegaNzClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "url, expected_file_id_and_key",
+    "url, expected",
     [
         (
             "https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
@@ -263,8 +263,51 @@ async def test_remove_contact(mega: MegaNzClient) -> None:
         ),
     ],
 )
-def test_parse_url(url: str, expected_file_id_and_key: str) -> None:
-    assert MegaNzClient.parse_file_url(url) == expected_file_id_and_key
+def test_parse_url(url: str, expected: tuple[str, str]) -> None:
+    assert MegaNzClient.parse_file_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://mega.nz/#F!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
+    ],
+)
+def test_parse_file_url_raise_value_error_for_file_urls(url: str) -> None:
+    with pytest.raises(ValueError) as e:
+        MegaNzClient.parse_file_url(url)
+
+    assert "This is a folder URL" in str(e)
+
+
+@pytest.mark.parametrize(
+    "url, expected",
+    [
+        (
+            "https://mega.nz/#F!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
+            ("Ue5VRSIQ", "kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k"),
+        ),
+        (
+            "https://mega.nz/folder/cH51DYDR#qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30",
+            ("cH51DYDR", "qH7QOfRcM-7N9riZWdSjsRq5VDTLfIhThx1capgVA30"),
+        ),
+    ],
+)
+def test_parse_folder_url(url: str, expected: tuple[str, str]) -> None:
+    assert MegaNzClient.parse_folder_url(url) == expected
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
+    ],
+)
+def test_parse_folder_url_raise_value_error_for_file_urls(url: str) -> None:
+    with pytest.raises(ValueError) as e:
+        MegaNzClient.parse_folder_url(url)
+
+    assert "This is a file URL" in str(e)
 
 
 class TestAPIRequest:

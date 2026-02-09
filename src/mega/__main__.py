@@ -6,10 +6,13 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from mega import env
+import yarl
+
+from mega import env, progress
 from mega.cli import CLIApp
 from mega.client import MegaNzClient
-from mega.utils import setup_logger
+from mega.transfer_it import TransferItClient
+from mega.utils import Site, setup_logger
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -30,12 +33,27 @@ async def connect() -> AsyncGenerator[MegaNzClient]:
             yield mega
 
 
+async def transfer_it(url: str, output_dir: Path) -> None:
+    async with TransferItClient() as client:
+        with progress.new_progress():
+            transfer_id = client.parse_url(url)
+            logger.info(f"Downloading '{url!s}'")
+            success, fails = await client.download_transfer(transfer_id, output_dir / transfer_id)
+            logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+
+
 @app.command()
 async def download(url: str, output_dir: Path = CWD) -> None:
-    """Download a public file or folder by its URL"""
+    """Download a public file or folder by its URL (transfer.it / mega.nz)"""
+    site = Site(yarl.URL(url).origin())
+    if site is Site.TRANSFER_IT:
+        return await transfer_it(url, output_dir)
+
     async with connect() as mega:
-        await download_folder(mega, url, output_dir)
-        # await download_file(mega, link, output)
+        parsed_url = mega.parse_url(url)
+        if parsed_url.is_folder:
+            return await download_folder(mega, url, output_dir)
+        await download_file(mega, url, output_dir)
 
 
 @app.command()
