@@ -6,6 +6,8 @@ import logging
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
+import aiohttp
+
 from mega import progress
 from mega.core import MegaCore
 from mega.crypto import (
@@ -150,6 +152,7 @@ class MegaNzClient(MegaCore):
             return await self.get_folder_link(fs[node.id])
 
     async def get_public_filesystem(self, public_handle: NodeID, public_key: str) -> FileSystem:
+        logger.info(f"Getting filesystem for {public_handle}...")
         folder: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
@@ -207,8 +210,13 @@ class MegaNzClient(MegaCore):
             try:
                 file_info = await self._request_file_info(file.id, public_handle)
                 result = await self._download_file(file_info, file._crypto, output_path)
+
             except Exception as exc:
-                logger.error(f'Unable to download {web_url} to "{output_path}" ({type(exc).__name__})')
+                if isinstance(exc, aiohttp.ClientResponseError):
+                    msg = f"[{exc.status}] {exc.message}"
+                else:
+                    msg = f"({type(exc).__name__})"
+                logger.error(f'Unable to download {web_url} to "{output_path}" {msg}')
                 result = exc
 
             return file.id, result

@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
+import aiohttp
 import yarl
 
 from mega import download, progress
@@ -19,8 +20,6 @@ from mega.utils import Site, throttled_gather
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from os import PathLike
-
-    import aiohttp
 
     from mega.data_structures import GetNodesResponse, NodeSerialized
 
@@ -115,7 +114,11 @@ class TransferItClient(AbstractApiClient):
             try:
                 result = await self._download_file(dl_link, output_path)
             except Exception as exc:
-                logger.error(f'Unable to download {web_url} to "{output_path}" ({type(exc).__name__})')
+                if isinstance(exc, aiohttp.ClientResponseError):
+                    msg = f"[{exc.status}] {exc.message}"
+                else:
+                    msg = f"({type(exc).__name__})"
+                logger.error(f'Unable to download {web_url} to "{output_path}" {msg}')
                 result = exc
 
             return file.id, result
