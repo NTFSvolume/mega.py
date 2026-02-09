@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import IO, TYPE_CHECKING
 
@@ -24,7 +25,7 @@ async def _request_upload_url(api: MegaAPI, file_size: int) -> str:
 
 
 async def upload(api: MegaAPI, file_path: Path, file_size: int) -> tuple[str, Crypto]:
-    with file_path.open("rb") as input_file:
+    with await asyncio.to_thread(file_path.open, "rb") as input_file:
         random_array = random_u32int_array(6)
         key, iv = random_array[:4], random_array[4:]
 
@@ -50,7 +51,7 @@ async def _upload_chunks(
     progress_hook = progress.current_hook.get()
 
     for offset, size in get_chunks(file_size):
-        chunk = chunker.read(input_file.read(size))
+        chunk = chunker.read(await asyncio.to_thread(input_file.read, size))
         file_handle = await api.upload_chunk(upload_url, offset, chunk)
         logger.info(f"{upload_progress} of {file_size} uploaded ({upload_progress / file_size:0.1f}%)")
         real_size = len(chunk)

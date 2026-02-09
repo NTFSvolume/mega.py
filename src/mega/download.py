@@ -63,11 +63,11 @@ async def encrypted_stream(
 
         chunker = MegaChunker(iv, key, meta_mac)
         progress_hook = progress.current_hook.get()
-        async with _new_temp_download(output_path) as output:
+        async with _new_temp_download(output_path) as file_io:
             for _, chunk_size in get_chunks(file_size):
                 encrypted_chunk = await stream.readexactly(chunk_size)
                 chunk = chunker.read(encrypted_chunk)
-                output.write(chunk)
+                await asyncio.to_thread(file_io.write, chunk)
                 progress_hook(len(chunk))
 
             chunker.check_integrity()
@@ -81,9 +81,9 @@ async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
             raise FileExistsError(errno.EEXIST, output_path)
 
         progress_hook = progress.current_hook.get()
-        async with _new_temp_download(output_path) as output:
+        async with _new_temp_download(output_path) as file_io:
             async for chunk in stream.iter_chunked(_CHUNK_SIZE):
-                output.write(chunk)
+                await asyncio.to_thread(file_io.write, chunk)
                 progress_hook(len(chunk))
 
         return output_path
@@ -92,7 +92,7 @@ async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
 @contextlib.asynccontextmanager
 async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
     # We need NamedTemporaryFile to not delete on file.close() but on context exit, which is not supported until python 3.12
-    temp_file = tempfile.NamedTemporaryFile(prefix="mega_py_", delete=False)
+    temp_file = await asyncio.to_thread(tempfile.NamedTemporaryFile, prefix="mega_py_", delete=False)
     logger.debug(f'Created temp file "{temp_file.name!s}" for "{output_path!s}"')
     try:
         yield temp_file
