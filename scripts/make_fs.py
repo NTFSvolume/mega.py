@@ -158,7 +158,7 @@ if __name__ == "__main__":
     fs = generate_random_fs()
     pprint(fs)  # noqa: T203
     out = Path(__file__).parent.parent / "tests" / f"fake_fs_{str_utc_now()}.json"
-    print(f"Writing filesystem to '{out!s}'")  # noqa: T201
+    print(f'Writing filesystem to "{out!s}"')  # noqa: T201
     dump = fs.dump()
 
     del dump["inv_paths"]

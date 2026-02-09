@@ -112,8 +112,8 @@ class TransferItClient(AbstractApiClient):
             dl_link = self.create_download_url(transfer_id, file)
             try:
                 return await self._download_file(dl_link, output_folder, path.name)
-            except Exception:
-                logger.error(f"Unable to download {web_url} to {output_folder}")
+            except Exception as exc:
+                logger.error(f'Unable to download {web_url} to "{output_folder}" ({exc})')
                 raise
 
         def make_coros():

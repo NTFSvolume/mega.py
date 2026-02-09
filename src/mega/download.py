@@ -51,7 +51,7 @@ async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
     if await asyncio.to_thread(output_path.exists):
         raise FileExistsError(errno.EEXIST, output_path)
 
-    chunk_size = 1024 * 1024 * 10  # 10MB
+    chunk_size = 1024 * 1024 * 5  # 5MB
     progress_hook = progress.current_hook.get()
     async with _new_temp_download(output_path) as output:
         async for chunk in stream.iter_chunked(chunk_size):
@@ -64,8 +64,8 @@ async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
 @contextlib.asynccontextmanager
 async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
     # We need NamedTemporaryFile to not delete on file.close() but on context exit, which is not supported until python 3.12
-    temp_file = tempfile.NamedTemporaryFile(prefix="megapy_", delete=False)
-    logger.info(f"Created temp file '{temp_file.name!r}' for '{output_path!s}'")
+    temp_file = tempfile.NamedTemporaryFile(prefix="mega_py_", delete=False)
+    logger.info(f'Created temp file "{temp_file.name!s}" for "{output_path!s}"')
     try:
         yield temp_file
 
@@ -73,7 +73,7 @@ async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
             temp_file.close()
             output_path.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(temp_file.name, output_path)
-            logger.info(f"Moved temp file '{temp_file.name}' to '{output_path!s}'")
+            logger.info(f'Moved temp file "{temp_file.name!s}" to "{output_path!s}"')
 
         await asyncio.to_thread(move)
 

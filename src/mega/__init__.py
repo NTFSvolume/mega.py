@@ -1,3 +1,4 @@
 import importlib.metadata
 
-__version__ = importlib.metadata.version("async-mega-py")
+_package_name_ = "async-mega-py"
+__version__ = importlib.metadata.version(_package_name_)

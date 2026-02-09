@@ -36,7 +36,7 @@ class Site(Enum):
 def setup_logger(level: int = logging.INFO) -> None:
     from rich.logging import RichHandler
 
-    handler = RichHandler(show_time=False, rich_tracebacks=True)
+    handler = RichHandler(show_time=False, rich_tracebacks=True, show_path=False)
     logger = logging.getLogger("mega")
     logger.setLevel(level)
     logger.addHandler(handler)

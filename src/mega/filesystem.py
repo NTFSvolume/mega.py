@@ -295,11 +295,11 @@ class FileSystem(SimpleFileSystem):
         try:
             nodes = self._inv_paths[path]
         except LookupError:
-            msg = f"A node with '{path = !s}' does not exists"
+            msg = f'A node with path "{path!s}" does not exists'
             raise FileNotFoundError(errno.ENOENT, msg) from None
         else:
             if len(nodes) > 1:
-                msg = f"There is more that one node with '{path = !s}'"
+                msg = f'There is more that one node with path = "{path!s}"'
                 raise MultipleNodesFoundError(msg, nodes)
 
             assert nodes

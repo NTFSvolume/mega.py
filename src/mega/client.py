@@ -209,8 +209,8 @@ class MegaNzClient(MegaCore):
             try:
                 file_info = await self._request_file_info(file.id, public_handle)
                 return await self._download_file(file_info, file._crypto, output_folder, path.name)
-            except Exception:
-                logger.error(f"Unable to download {web_url} to {output_folder}")
+            except Exception as exc:
+                logger.error(f'Unable to download {web_url} to "{output_folder}" ({exc})')
                 raise
 
         def make_coros():
@@ -250,7 +250,7 @@ class MegaNzClient(MegaCore):
             node = fs.find(path)
 
             if node.type is not NodeType.FOLDER:
-                msg = f"Can't create a folder at '{path!s}'. Node {node.id} already has this path"
+                msg = f'Can not create a folder at "{path!s}". Node {node.id} already has this path'
                 raise MegaNzError(msg)
             return node
         except FileNotFoundError:

@@ -34,7 +34,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "2.0.0.dev"
+version = "2.0.1.dev"
 
 [project.optional-dependencies]
 cli = [

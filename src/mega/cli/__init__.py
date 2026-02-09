@@ -4,11 +4,12 @@ import contextlib
 import json
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
+import typer
 import yarl
 
-from mega import env, progress
+from mega import __version__, env, progress
 from mega.cli.app import CLIApp
 from mega.client import MegaNzClient
 from mega.transfer_it import TransferItClient
@@ -21,7 +22,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mega")
 
 
-app = CLIApp(add_completion=False)
+def verbose(verbose: Annotated[bool, typer.Option("--verbose")] = False) -> None:
+    setup_logger(logging.DEBUG if verbose else logging.INFO)
+
+
+app = CLIApp(
+    add_completion=False,
+    callback=verbose,
+    help=(
+        "CLI app for the [bold black]Mega.nz[/bold black] and [bold black]Transfer.it[/bold black].\n"
+        f"Set [bold green]{env.NAMES.EMAIL}[/bold green] and [bold green]{env.NAMES.PASSWORD}[/bold green] enviroment variables to use them as credentials for Mega"
+    ),
+    epilog=f"v{__version__}",
+)
 CWD = Path.cwd()
 
 
@@ -37,9 +50,9 @@ async def transfer_it(url: str, output_dir: Path) -> None:
     async with TransferItClient() as client:
         with progress.new_progress():
             transfer_id = client.parse_url(url)
-            logger.info(f"Downloading '{url!s}'")
+            logger.info(f"Downloading '{url}'")
             success, fails = await client.download_transfer(transfer_id, output_dir / transfer_id)
-            logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+            logger.info(f"Download of '{url}' finished. Successful downloads {len(success)}, failed {len(fails)}")
 
 
 @app.command()
@@ -85,26 +98,25 @@ async def upload(file_path: Path) -> None:
     """Upload a file to your account"""
     async with connect() as mega:
         folder = await mega.create_folder("uploaded by mega.py")
-        logger.info(f"Uploading '{file_path!s}'")
+        logger.info(f'Uploading "{file_path!s}"')
         file = await mega.upload(file_path, folder.id)
         link = await mega.export(file)
-        logger.info(f"Public link for {file_path!s}': {link}")
+        logger.info(f'Public link for "{file_path!s}": {link}')
 
 
 async def download_file(mega: MegaNzClient, url: str, output: Path) -> None:
     public_handle, public_key = mega.parse_file_url(url)
-    logger.info(f"Downloading '{url!s}'")
+    logger.info(f"Downloading {url}")
     path = await mega.download_public_file(public_handle, public_key, output)
-    logger.info(f"Download of '{url!s}' finished. File save at '{path!s}'")
+    logger.info(f'Download of {url} finished. File save at "{path!s}"')
 
 
 async def download_folder(mega: MegaNzClient, url: str, output: Path) -> None:
     public_handle, public_key = mega.parse_folder_url(url)
-    logger.info(f"Downloading '{url!s}'")
+    logger.info(f"Downloading {url}")
     success, fails = await mega.download_public_folder(public_handle, public_key, output)
-    logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+    logger.info(f"Download of {url} finished. Successful downloads {len(success)}, failed {len(fails)}")
 
 
 def main() -> None:
-    setup_logger(logging.INFO)
     app()

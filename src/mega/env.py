@@ -8,13 +8,18 @@ except ImportError:
         return {}
 
 
+class EnvVarNames(dict[str, str]):
+    def __getattr__(self, value: str) -> str:
+        return self[value]
+
+
+NAMES = EnvVarNames()
 _DOT_ENV = dotenv_values()
 _ENV_NAMES: set[str] = set()
 
 
 def env(name: str) -> str | None:
-    env_name = f"MEGA_NZ_{name}"
-    _ENV_NAMES.add(env_name)
+    NAMES[name] = env_name = f"MEGA_NZ_{name}"
     return os.getenv(env_name) or _DOT_ENV.get(env_name)
 
 
