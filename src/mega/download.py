@@ -6,10 +6,11 @@ import errno
 import logging
 import shutil
 import tempfile
+import weakref
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import IO, TYPE_CHECKING, Self
+from typing import IO, TYPE_CHECKING, Final, Generic, Self, TypeVar
 
 from mega import progress
 from mega.chunker import MegaChunker
@@ -21,8 +22,32 @@ if TYPE_CHECKING:
 
     import aiohttp
 
+    _T = TypeVar("_T")
 
 logger = logging.getLogger(__name__)
+
+
+class WeakAsyncLocks(Generic[_T]):
+    """A WeakValueDictionary wrapper for asyncio.Locks.
+
+    Unused locks are automatically garbage collected. When trying to retrieve a
+    lock that does not exists, a new lock will be created.
+    """
+
+    __slots__ = ("__locks",)
+
+    def __init__(self) -> None:
+        self.__locks: Final = weakref.WeakValueDictionary[_T, asyncio.Lock]()
+
+    def __getitem__(self, key: _T, /) -> asyncio.Lock:
+        lock = self.__locks.get(key)
+        if lock is None:
+            self.__locks[key] = lock = asyncio.Lock()
+        return lock
+
+
+_LOCKS: WeakAsyncLocks[Path] = WeakAsyncLocks()
+_CHUNK_SIZE = 1024 * 1024 * 5  # 5MB
 
 
 async def encrypted_stream(
@@ -33,35 +58,36 @@ async def encrypted_stream(
     meta_mac: tuple[int, int],
     key: tuple[int, int, int, int],
 ) -> Path:
-    if await asyncio.to_thread(output_path.exists):
-        raise FileExistsError(errno.EEXIST, output_path)
+    async with _LOCKS[output_path]:
+        if await asyncio.to_thread(output_path.exists):
+            raise FileExistsError(errno.EEXIST, output_path)
 
-    chunker = MegaChunker(iv, key, meta_mac)
-    progress_hook = progress.current_hook.get()
-    async with _new_temp_download(output_path) as output:
-        for _, chunk_size in get_chunks(file_size):
-            encrypted_chunk = await stream.readexactly(chunk_size)
-            chunk = chunker.read(encrypted_chunk)
-            output.write(chunk)
-            progress_hook(len(chunk))
+        chunker = MegaChunker(iv, key, meta_mac)
+        progress_hook = progress.current_hook.get()
+        async with _new_temp_download(output_path) as output:
+            for _, chunk_size in get_chunks(file_size):
+                encrypted_chunk = await stream.readexactly(chunk_size)
+                chunk = chunker.read(encrypted_chunk)
+                output.write(chunk)
+                progress_hook(len(chunk))
 
-        chunker.check_integrity()
+            chunker.check_integrity()
 
-    return output_path
+        return output_path
 
 
 async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
-    if await asyncio.to_thread(output_path.exists):
-        raise FileExistsError(errno.EEXIST, output_path)
+    async with _LOCKS[output_path]:
+        if await asyncio.to_thread(output_path.exists):
+            raise FileExistsError(errno.EEXIST, output_path)
 
-    chunk_size = 1024 * 1024 * 5  # 5MB
-    progress_hook = progress.current_hook.get()
-    async with _new_temp_download(output_path) as output:
-        async for chunk in stream.iter_chunked(chunk_size):
-            output.write(chunk)
-            progress_hook(len(chunk))
+        progress_hook = progress.current_hook.get()
+        async with _new_temp_download(output_path) as output:
+            async for chunk in stream.iter_chunked(_CHUNK_SIZE):
+                output.write(chunk)
+                progress_hook(len(chunk))
 
-    return output_path
+        return output_path
 
 
 @contextlib.asynccontextmanager
