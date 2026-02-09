@@ -314,7 +314,8 @@ class FileSystem(SimpleFileSystem):
 
         """
         if not node_id:
-            return self.files
+            yield from self.files
+            return
 
         root = self[node_id]
         if root.is_file:

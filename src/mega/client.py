@@ -165,11 +165,8 @@ class MegaNzClient(MegaCore):
     async def download(self, node: Node, output_dir: str | PathLike[str] | None = None) -> Path:
         """Download a file by it's file object."""
         file_info = await self._request_file_info(node.id)
-        return await self._download_file(
-            file_info,
-            node._crypto,
-            output_folder=output_dir,
-        )
+        output_path = Path(output_dir or ".") / node.attributes.name
+        return await self._download_file(file_info, node._crypto, output_path)
 
     async def download_public_file(
         self,
@@ -180,17 +177,17 @@ class MegaNzClient(MegaCore):
         full_key = b64_to_a32(public_key)
         crypto = Crypto.decompose(full_key)
         file_info = await self._request_file_info(public_handle, is_public=True)
-        return await self._download_file(
-            file_info,
-            crypto,
-            output_dir,
-        )
+        attrs = decrypt_attr(b64_url_decode(file_info._at), crypto.key)
+        output_name = Attributes.parse(attrs).name
+        output_path = Path(output_dir or ".") / output_name
+        return await self._download_file(file_info, crypto, output_path)
 
     async def download_public_folder(
         self,
         public_handle: NodeID,
         public_key: str,
         output_dir: str | PathLike[str] | None = None,
+        root_id: NodeID | None = None,
     ) -> tuple[list[Path], list[Exception]]:
         """Recursively download all files from a public folder, preserving its internal directory structure.
 
@@ -203,22 +200,17 @@ class MegaNzClient(MegaCore):
         base_path = Path(output_dir or ".")
         folder_url = f"{self._primary_url}/folder/{public_handle}#{public_key}"
 
-        async def worker(file: Node, path: PurePosixPath) -> Path:
+        async def worker(file: Node) -> Path:
             web_url = folder_url + f"/file/{file.id}"
-            output_folder = base_path / path.parent
+            output_path = base_path / fs.relative_path(file.id)
             try:
                 file_info = await self._request_file_info(file.id, public_handle)
-                return await self._download_file(file_info, file._crypto, output_folder, path.name)
+                return await self._download_file(file_info, file._crypto, output_path)
             except Exception as exc:
-                logger.error(f'Unable to download {web_url} to "{output_folder}" ({type(exc).__name__})')
+                logger.error(f'Unable to download {web_url} to "{output_path}" ({type(exc).__name__})')
                 raise
 
-        def make_coros():
-            for file in fs.files:
-                path = fs.relative_path(file.id)
-                yield (worker(file, path))
-
-        results = await throttled_gather(make_coros(), return_exceptions=True)
+        results = await throttled_gather(worker, fs.files_from(root_id), return_exceptions=True)
         success: list[Path] = []
         fails: list[Exception] = [
             result for result in results if isinstance(result, Exception) or (success.append(result) and False)

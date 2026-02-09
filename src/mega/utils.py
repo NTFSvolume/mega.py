@@ -11,9 +11,10 @@ from typing import TYPE_CHECKING, Literal, TypeVar, overload
 import yarl
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Iterable, Sequence
+    from collections.abc import Awaitable, Callable, Iterable, Sequence
 
-    _T = TypeVar("_T")
+    _T1 = TypeVar("_T1")
+    _T2 = TypeVar("_T2")
 
 
 logger = logging.getLogger(__name__)
@@ -77,59 +78,62 @@ def transform_v1_url(url: yarl.URL) -> yarl.URL:
 
 @overload
 async def throttled_gather(
-    coros: Iterable[Awaitable[_T]],
-    batch_size: int = 10,
+    coro_factory: Callable[[_T1], Awaitable[_T2]],
+    values: Iterable[_T1],
     *,
-    return_exceptions: Literal[False],
-) -> list[_T]: ...
+    return_exceptions: bool = True,
+    task_limit: int = 10,
+) -> list[_T2 | Exception]: ...
 
 
 @overload
 async def throttled_gather(
-    coros: Iterable[Awaitable[_T]],
-    batch_size: int = 10,
+    coro_factory: Callable[[_T1], Awaitable[_T2]],
+    values: Iterable[_T1],
     *,
-    return_exceptions: bool = True,
-) -> list[_T | Exception]: ...
+    return_exceptions: Literal[False],
+    task_limit: int = 10,
+) -> list[_T2]: ...
 
 
 async def throttled_gather(
-    coros: Iterable[Awaitable[_T]],
-    batch_size: int = 10,
+    coro_factory: Callable[[_T1], Awaitable[_T2]],
+    values: Iterable[_T1],
     *,
     return_exceptions: bool = True,
-) -> Sequence[_T | Exception]:
-    """Like `asyncio.gather`, but creates tasks lazily to minimize event loop overhead.
+    task_limit: int = 10,
+) -> Sequence[_T2 | Exception]:
+    """Creates tasks lazily to minimize event loop overhead.
 
-    This function ensures there are never more than `batch_size` tasks created at any given time.
+    This function ensures there are never more than `task_limit` tasks are created at any given time.
 
     If `return_exceptions` is `False`, any exceptions other than `asyncio.CancelledError` raised within
     a task will cancel all remaining tasks and wait for them to exit.
     The exceptions are then combined and raised as an `ExceptionGroup`.
     """
-    semaphore = asyncio.BoundedSemaphore(batch_size)
-    tasks: list[asyncio.Task[_T | Exception]] = []
+    semaphore = asyncio.BoundedSemaphore(task_limit)
+    tasks: list[asyncio.Task[_T2 | Exception]] = []
+    abort = asyncio.Event()
 
-    abort = False
-
-    async def worker(coro: Awaitable[_T]) -> _T | Exception:
+    async def worker(coro: Awaitable[_T2]) -> _T2 | Exception:
         try:
             return await coro
         except Exception as e:
             if return_exceptions:
                 return e
-            nonlocal abort
-            abort = True
+            abort.set()
             raise
 
         finally:
             semaphore.release()
 
     async with asyncio.TaskGroup() as tg:
-        for coro in coros:
-            if abort:
+        for value in values:
+            if abort.is_set():
                 break
+
             await semaphore.acquire()
+            coro = coro_factory(value)
             tasks.append(tg.create_task(worker(coro)))
 
     return [t.result() for t in tasks]

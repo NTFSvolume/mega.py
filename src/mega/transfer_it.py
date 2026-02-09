@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
 import yarl
@@ -107,22 +107,21 @@ class TransferItClient(AbstractApiClient):
         base_path = Path(output_dir or ".") / f"transfer.it ({transfer_id})"
         folder_url = f"https://transfer.it/t/{transfer_id}"
 
-        async def worker(file: Node, path: PurePosixPath) -> Path:
+        async def worker(file: Node) -> Path:
             web_url = folder_url + f"#{file.id}"
-            output_folder = base_path / path.parent
+            output_path = base_path / fs.relative_path(file.id)
             dl_link = self.create_download_url(transfer_id, file)
             try:
-                return await self._download_file(dl_link, output_folder, path.name)
+                return await self._download_file(dl_link, output_path)
             except Exception as exc:
-                logger.error(f'Unable to download {web_url} to "{output_folder}" ({type(exc).__name__})')
+                logger.error(f'Unable to download {web_url} to "{output_path}" ({type(exc).__name__})')
                 raise
 
-        def make_coros():
-            for file in fs.files_from(root_id):
-                path = fs.relative_path(file.id)
-                yield (worker(file, path))
-
-        results = await throttled_gather(make_coros(), return_exceptions=True)
+        results = await throttled_gather(
+            worker,
+            fs.files_from(root_id),
+            return_exceptions=True,
+        )
         success: list[Path] = []
         fails: list[Exception] = [
             result for result in results if isinstance(result, Exception) or (success.append(result) and False)
@@ -130,16 +129,9 @@ class TransferItClient(AbstractApiClient):
 
         return success, fails
 
-    async def _download_file(
-        self,
-        dl_link: str,
-        output_folder: str | PathLike[str] | None = None,
-        output_name: str | None = None,
-    ) -> Path:
-        name = output_name or yarl.URL(dl_link).query["fn"]
-        output_path = Path(output_folder or Path()) / name
-
+    async def _download_file(self, dl_link: str, output_path: str | PathLike[str]) -> Path:
+        output_path = Path(output_path)
         async with self._api.get(dl_link, headers={"Referer": "https://transfer.it/"}) as response:
             size = int(response.headers["Content-Length"])
-            with progress.new_task(name, size, "DOWN"):
+            with progress.new_task(output_path.name, size, "DOWN"):
                 return await download.stream(response.content, output_path)

@@ -15,13 +15,11 @@ from mega.api import AbstractApiClient
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
-    b64_url_decode,
     b64_url_encode,
-    decrypt_attr,
     encrypt_attr,
     encrypt_key,
 )
-from mega.data_structures import Attributes, Crypto, FileInfo, FileInfoSerialized, Node, NodeID
+from mega.data_structures import Crypto, FileInfo, FileInfoSerialized, Node, NodeID
 from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.filesystem import UserFileSystem
 from mega.utils import Site, random_u32int_array, transform_v1_url
@@ -200,8 +198,7 @@ class MegaCore(AbstractApiClient):
         self,
         file_info: FileInfo,
         crypto: Crypto,
-        output_folder: str | PathLike[str] | None = None,
-        output_name: str | None = None,
+        output_folder: str | PathLike[str],
     ) -> Path:
         # Seems to happens sometime... When this occurs, files are
         # inaccessible also in the official web app.
@@ -209,12 +206,7 @@ class MegaCore(AbstractApiClient):
         if not file_info.url:
             raise RequestError("File not accessible anymore")
 
-        if not output_name:
-            attrs = decrypt_attr(b64_url_decode(file_info._at), crypto.key)
-            output_name = Attributes.parse(attrs).name
-
-        output_path = Path(output_folder or Path()) / output_name
-
+        output_path = Path(output_folder)
         async with self._api.get(file_info.url) as response:
             with progress.new_task(output_path.name, file_info.size, "DOWN"):
                 return await download.encrypted_stream(
