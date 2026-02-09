@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import dataclasses
 import errno
-from collections.abc import Generator
 from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, NamedTuple, Self
@@ -34,7 +33,7 @@ def _resolve_paths(walker: _NodeWalker, *roots: Node) -> Generator[_NodeLookup]:
             node_path = current_path / node.attributes.name
             yield node.id, node_path
 
-            if node.type is not NodeType.FILE:
+            if not node.is_file:
                 yield from walk(node.id, node_path)
 
     for root in roots:
@@ -136,7 +135,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
                 case NodeType.TRASH:
                     trash_bin = node
                 case _:
-                    raise RuntimeError
+                    raise RuntimeError  # pyright: ignore[reportUnreachable]
 
         return cls(
             root=root,
@@ -234,14 +233,14 @@ class FileSystem(SimpleFileSystem):
     def files(self) -> Iterable[Node]:
         """All files that are NOT deleted (recursive)"""
         for node in self:
-            if node.type is NodeType.FILE and not self._deleted:
+            if node.is_file and node.id not in self._deleted:
                 yield node
 
     @property
     def folders(self) -> Iterable[Node]:
         """All folders that are NOT deleted (recursive)"""
         for node in self:
-            if node.type is NodeType.FOLDER and node.id not in self._deleted:
+            if node.is_folder and node.id not in self._deleted:
                 yield node
 
     def dirmap(self, node_id: str, *, recursive: bool = False) -> dict[NodeID, PurePosixPath]:
@@ -304,6 +303,26 @@ class FileSystem(SimpleFileSystem):
 
             assert nodes
             return self[nodes[0]]
+
+    def files_from(self, node_id: NodeID | None) -> Iterable[Node]:
+        """
+        Yield every file that is reachable from `node_id`.
+
+        - If `node_id` is `None`: yield all non deleted files on the file system.
+        - If `node_id` points to a file: yield only that file.
+        - Any other case: yield all files within that node (recursively).
+
+        """
+        if not node_id:
+            return self.files
+
+        root = self[node_id]
+        if root.is_file:
+            yield root
+        else:
+            for child in self.iterdir(root.id, recursive=True):
+                if child.is_file:
+                    yield child
 
     def dump(self, *, simple: bool = False) -> dict[str, Any]:
         """Get a JSONable dict representation of this object"""

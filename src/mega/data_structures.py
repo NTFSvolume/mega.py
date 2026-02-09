@@ -222,6 +222,14 @@ class Node(_DictDumper):
     _a: str
     _crypto: Crypto
 
+    @property
+    def is_file(self) -> bool:
+        return self.type is NodeType.FILE
+
+    @property
+    def is_folder(self) -> bool:
+        return self.type is NodeType.FOLDER
+
     @classmethod
     def parse(cls, node: NodeSerialized) -> Node:
         owner = node.get("u", "")

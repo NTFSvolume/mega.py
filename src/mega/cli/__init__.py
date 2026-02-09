@@ -66,7 +66,7 @@ async def transfer_it(url: str, output_dir: Path) -> None:
         with progress.new_progress():
             transfer_id = client.parse_url(url)
             logger.info(f"Downloading '{url}'")
-            success, fails = await client.download_transfer(transfer_id, output_dir / f"transfer.it ({transfer_id})")
+            success, fails = await client.download_transfer(transfer_id, output_dir)
             logger.info(f"Download of '{url}' finished. Successful downloads {len(success)}, failed {len(fails)}")
 
 

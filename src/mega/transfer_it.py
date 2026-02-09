@@ -11,7 +11,7 @@ import yarl
 from mega import download, progress
 from mega.api import AbstractApiClient, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
-from mega.data_structures import Attributes, Crypto, Node, NodeType
+from mega.data_structures import Attributes, Crypto, Node, NodeID, NodeType
 from mega.filesystem import FileSystem
 from mega.utils import Site, throttled_gather
 
@@ -94,6 +94,7 @@ class TransferItClient(AbstractApiClient):
         self,
         transfer_id: TransferID,
         output_dir: str | PathLike[str] | None = None,
+        root_id: NodeID | None = None,
     ) -> tuple[list[Path], list[Exception]]:
         """Recursively download all files from a transfer, preserving its internal directory structure.
 
@@ -103,7 +104,7 @@ class TransferItClient(AbstractApiClient):
         """
         fs = await self.get_filesystem(transfer_id)
 
-        base_path = Path(output_dir or ".")
+        base_path = Path(output_dir or ".") / f"transfer.it ({transfer_id})"
         folder_url = f"https://transfer.it/t/{transfer_id}"
 
         async def worker(file: Node, path: PurePosixPath) -> Path:
@@ -117,7 +118,7 @@ class TransferItClient(AbstractApiClient):
                 raise
 
         def make_coros():
-            for file in fs.files:
+            for file in fs.files_from(root_id):
                 path = fs.relative_path(file.id)
                 yield (worker(file, path))
 
