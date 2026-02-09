@@ -3,14 +3,16 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypeVar
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from types import TracebackType
 
-    from rich.progress import Progress
+    from rich.progress import Progress, Task
+    from rich.text import Text
 
+    _T = TypeVar("_T")
     ProgressHook: TypeAlias = Callable[[float], None]
 
     class ProgressHookContext(Protocol):
@@ -29,17 +31,17 @@ if TYPE_CHECKING:
 
 
 _PROGRESS_HOOK_FACTORY: ContextVar[ProgressHookFactory | None] = ContextVar("_PROGRESS_HOOK_FACTORY", default=None)
-_DESCRIPTION_MAX_LENGTH: ContextVar[int] = ContextVar("_DESCRIPTION_MAX_LENGTH", default=80)
 current_hook: ContextVar[ProgressHook] = ContextVar("current_hook", default=lambda _: None)
 
 
 @contextlib.contextmanager
-def set_progress_factory(hook_factory: ProgressHookFactory) -> Generator[None]:
-    token = _PROGRESS_HOOK_FACTORY.set(hook_factory)
+def _enter_context(context_var: ContextVar[_T], value: _T) -> Generator[None]:
+    """Context manager for context vars"""
+    token = context_var.set(value)
     try:
         yield
     finally:
-        _PROGRESS_HOOK_FACTORY.reset(token)
+        context_var.reset(token)
 
 
 @contextlib.contextmanager
@@ -49,12 +51,8 @@ def new_task(description: str, total: float, kind: Literal["UP", "DOWN"]) -> Gen
         yield
         return
 
-    with factory(description, total, kind) as progress_hook:
-        token = current_hook.set(progress_hook)
-        try:
-            yield
-        finally:
-            current_hook.reset(token)
+    with factory(description, total, kind) as new_hook, _enter_context(current_hook, new_hook):
+        yield
 
 
 @contextlib.contextmanager
@@ -64,54 +62,67 @@ def new_progress() -> Generator[None]:
         yield
         return
 
-    name_limit = progress.live.console.width * 60 // 100
-    token = _DESCRIPTION_MAX_LENGTH.set(name_limit)
-
     def hook_factory(*args, **kwargs):
         return _new_rich_task(progress, *args, **kwargs)
 
-    try:
-        with progress, set_progress_factory(hook_factory):
-            yield
-    finally:
-        _DESCRIPTION_MAX_LENGTH.reset(token)
-
-
-def _truncate_desc(desc: str, length: int = 80, placeholder: str = "...") -> str:
-    if len(desc) <= length:
-        return desc
-
-    return f"{desc[: length - len(placeholder)]}{placeholder}"
+    with (
+        progress,
+        _enter_context(_PROGRESS_HOOK_FACTORY, hook_factory),
+    ):
+        yield
 
 
 def _new_rich_progress() -> Progress | None:
     try:
+        from rich import get_console
         from rich.progress import (
             BarColumn,
             DownloadColumn,
             Progress,
             SpinnerColumn,
+            TextColumn,
             TimeRemainingColumn,
             TransferSpeedColumn,
         )
+        from rich.table import Column
     except ImportError:
         return None
 
-    else:
-        return Progress(
-            "[{task.fields[kind]}]",
-            SpinnerColumn(),
-            "{task.description}",
-            BarColumn(bar_width=None),
-            "[progress.percentage]{task.percentage:>6.2f}%",
-            "-",
-            DownloadColumn(),
-            "-",
-            TransferSpeedColumn(),
-            "-",
-            TimeRemainingColumn(compact=True, elapsed_when_finished=True),
-            transient=True,
-        )
+    console = get_console()
+
+    class AutoTruncatedTextColumn(TextColumn):
+        def render(self, task: Task) -> Text:
+            text = super().render(task)
+            width = console.width
+            available_witdh = min((width * 60 // 100), (width - 65))
+            desc_limit = max(available_witdh, 8)
+            text.truncate(desc_limit, overflow="ellipsis")
+            return text
+
+    return Progress(
+        "[{task.fields[kind]}]",
+        SpinnerColumn(),
+        AutoTruncatedTextColumn("{task.description}"),
+        BarColumn(
+            bar_width=None,
+        ),
+        "[progress.percentage]{task.percentage:>6.1f}%",
+        "•",
+        DownloadColumn(
+            table_column=Column(justify="right", no_wrap=True),
+        ),
+        "•",
+        TransferSpeedColumn(table_column=Column(justify="right", no_wrap=True)),
+        "•",
+        TimeRemainingColumn(
+            compact=True,
+            elapsed_when_finished=True,
+            table_column=Column(justify="right", no_wrap=True),
+        ),
+        transient=True,
+        console=console,
+        expand=True,
+    )
 
 
 @contextlib.contextmanager
@@ -121,8 +132,7 @@ def _new_rich_task(
     total: float,
     kind: Literal["UP", "DOWN"],
 ) -> Generator[ProgressHook]:
-    desc_limit = _DESCRIPTION_MAX_LENGTH.get()
-    task_id = progress.add_task(_truncate_desc(description, desc_limit), total=total, kind=kind)
+    task_id = progress.add_task(description, total=total, kind=kind)
 
     def progress_hook(advance: float) -> None:
         progress.advance(task_id, advance)
