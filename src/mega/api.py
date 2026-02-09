@@ -5,6 +5,7 @@ import contextlib
 import dataclasses
 import logging
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from functools import wraps
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, ParamSpec, Self, TypeVar
@@ -28,6 +29,7 @@ _UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefo
 _DEFAULT_HEADERS: MappingProxyType[str, str] = MappingProxyType({"User-Agent": _UA})
 
 
+LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=False)
 logger = logging.getLogger(__name__)
 
 
@@ -84,6 +86,7 @@ class MegaAPI:
         self.__session = session
         self._auto_close_session = session is None
         self._rate_limiter = AsyncLimiter(100, 60)
+        logger.disabled = not LOG_HTTP_TRAFFIC.get()
 
     @property
     def entrypoint(self) -> yarl.URL:

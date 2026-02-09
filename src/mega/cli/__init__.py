@@ -10,6 +10,7 @@ import typer
 import yarl
 
 from mega import __version__, env, progress
+from mega.api import LOG_HTTP_TRAFFIC
 from mega.cli.app import CLIApp
 from mega.client import MegaNzClient
 from mega.transfer_it import TransferItClient
@@ -22,8 +23,22 @@ if TYPE_CHECKING:
 logger = logging.getLogger("mega")
 
 
-def verbose(verbose: Annotated[bool, typer.Option("--verbose")] = False) -> None:
-    setup_logger(logging.DEBUG if verbose else logging.INFO)
+def verbose(
+    verbose: Annotated[
+        int,
+        typer.Option(
+            "-v",
+            "--verbose",
+            count=True,
+            help="Increase verbosity (-v shows debug logs,  -vv shows HTTP traffic)",
+        ),
+    ] = 0,
+) -> None:
+    if verbose > 1:
+        LOG_HTTP_TRAFFIC.set(True)
+
+    level = logging.DEBUG if verbose else logging.INFO
+    setup_logger(level)
 
 
 app = CLIApp(
@@ -51,7 +66,7 @@ async def transfer_it(url: str, output_dir: Path) -> None:
         with progress.new_progress():
             transfer_id = client.parse_url(url)
             logger.info(f"Downloading '{url}'")
-            success, fails = await client.download_transfer(transfer_id, output_dir / transfer_id)
+            success, fails = await client.download_transfer(transfer_id, output_dir / f"transfer.it ({transfer_id})")
             logger.info(f"Download of '{url}' finished. Successful downloads {len(success)}, failed {len(fails)}")
 
 

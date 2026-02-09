@@ -210,7 +210,7 @@ class MegaNzClient(MegaCore):
                 file_info = await self._request_file_info(file.id, public_handle)
                 return await self._download_file(file_info, file._crypto, output_folder, path.name)
             except Exception as exc:
-                logger.error(f'Unable to download {web_url} to "{output_folder}" ({exc})')
+                logger.error(f'Unable to download {web_url} to "{output_folder}" ({type(exc).__name__})')
                 raise
 
         def make_coros():
