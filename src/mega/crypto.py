@@ -122,7 +122,7 @@ def mpi_to_int(data: bytes) -> int:
     order. The first two bytes are a header which tell the number of bits in
     the integer. The rest of the bytes are the integer.
     """
-    return int(data[2:].hex(), CHUNK_BLOCK_LEN)
+    return int.from_bytes(data[2:], "big")
 
 
 def b64_url_decode(data: str) -> bytes:
@@ -169,7 +169,7 @@ def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:
     )
 
 
-def generate_hashcash_token(challenge: str) -> str:
+def generate_hashcash(challenge: str) -> str:
     logger.info("Solving xhashcash login challenge, this could take a few seconds...")
     start = time.monotonic()
     version, easiness, _date, token = challenge.split(":")
@@ -192,7 +192,7 @@ def generate_hashcash_token(challenge: str) -> str:
         if result <= threshold:
             result = f"{version}:{token}:{b64_url_encode(buffer[:4])}"
             took = time.monotonic() - start
-            logger.info(f"Solved xhashcash: {challenge = !r}, {result = !r}, iterations = {nonce}, {took = :.2f}s")
+            logger.info(f"Solved xhashcash: {challenge = !r}, {result = !r}, iterations = {nonce + 1}, {took = :.2f}s")
             return result
 
         nonce += 1

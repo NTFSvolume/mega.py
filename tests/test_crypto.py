@@ -49,4 +49,4 @@ def test_mpi(blob: bytes, expected: int) -> None:
     ],
 )
 def test_hashcash(input: str, expected: str) -> None:
-    assert crypto.generate_hashcash_token(input) == expected
+    assert crypto.generate_hashcash(input) == expected

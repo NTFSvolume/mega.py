@@ -14,7 +14,7 @@ import aiohttp
 import yarl
 from aiolimiter import AsyncLimiter
 
-from mega.crypto import generate_hashcash_token
+from mega.crypto import generate_hashcash
 from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
 
@@ -148,7 +148,7 @@ class MegaAPI:
                         msg = f"Login failed. Mega requested a proof of work with xhashcash: {xhashcash_challenge}"
                         raise RequestError(msg)
 
-                    headers["X-Hashcash"] = await asyncio.to_thread(generate_hashcash_token, xhashcash_challenge)
+                    headers["X-Hashcash"] = await asyncio.to_thread(generate_hashcash, xhashcash_challenge)
                     continue
 
                 return await self._parse_response(resp)

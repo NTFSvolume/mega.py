@@ -60,7 +60,7 @@ class NodeSerialized(TypedDict):
     a: str  # Serialized attributes
     ts: TimeStamp  # creation date
 
-    k: NotRequired[str]  # Node keys
+    k: NotRequired[str]  # Serialized node keys
     su: NotRequired[str]  # Share owner (user ID), only present present in shared (public) files / folder
     sk: NotRequired[str]  # Share key, only present present in shared (public) files / folder
 
@@ -84,10 +84,10 @@ class GetNodesResponse(TypedDict):
     s: list[ShareKeySerialized2]
 
 
-class AttributesSerialized(TypedDict, total=False):
-    n: ReadOnly[str]  # Name
-    lbl: int  # label
-    fav: bool  # favorited
+class AttributesSerialized(TypedDict):
+    n: NotRequired[ReadOnly[str]]  # Name
+    lbl: NotRequired[int]  # label
+    fav: NotRequired[bool]  # favorited
 
 
 class FileInfoSerialized(TypedDict):
@@ -130,7 +130,7 @@ class _DictParser:
         return cls(**cls._filter_dict(data))
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class FileInfo(_DictDumper):
     name: str
     size: ByteSize
@@ -148,7 +148,7 @@ class FileInfo(_DictDumper):
         )
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class Crypto(_DictDumper):
     key: tuple[int, int, int, int]
     iv: tuple[int, int]
@@ -166,7 +166,7 @@ class Crypto(_DictDumper):
         node_type: NodeType = NodeType.FILE,
     ) -> Crypto:
         if node_type is NodeType.FILE:
-            full_key: tuple[int, ...] = (
+            full_key = (
                 key[0] ^ iv[0],
                 key[1] ^ iv[1],
                 key[2] ^ meta_mac[0],
@@ -207,7 +207,7 @@ class Crypto(_DictDumper):
 
 
 # We populate attrs and crypto after instance creation
-@dataclasses.dataclass(slots=True, frozen=True, order=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True, order=True)
 class Node(_DictDumper):
     id: NodeID
     parent_id: NodeID
@@ -235,12 +235,12 @@ class Node(_DictDumper):
         owner = node.get("u", "")
         if k := node.get("k"):
             if owner:
-                keys: dict[str, str] = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
+                keys = dict(key_pair.split(":", 1) for key_pair in k.split("/") if ":" in key_pair)
 
             else:
                 keys = {owner: k}
         else:
-            keys = {}
+            keys: dict[str, str] = {}
 
         return Node(
             id=node["h"],
@@ -261,6 +261,7 @@ class Node(_DictDumper):
         dump = dump | dict(  # noqa: C408
             type=NodeType[str(dump["type"]).upper()],
             attributes=Attributes(**dump["attributes"]) if dump["attributes"] else None,
+            keys=MappingProxyType(dump["keys"]),
             _crypto=Crypto.from_dump(dump["_crypto"]) if dump["_crypto"] else None,
         )
 
@@ -269,17 +270,17 @@ class Node(_DictDumper):
     def dump(self) -> dict[str, Any]:
         """Get a JSONable dict representation of this object"""
         me = self._shallow_dump()
-        me["_crypto"] = self._crypto.dump() if self._crypto else None
+        me["type"] = self.type.name.lower()
         me["attributes"] = self.attributes.dump() if self.attributes else {}
         me["keys"] = dict(self.keys)
-        me["type"] = self.type.name.lower()
+        me["_crypto"] = self._crypto.dump() if self._crypto else None
         return me
 
 
 _LABELS: Final = "", "red", "orange", "yellow", "green", "blue", "purple", "grey"
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class Attributes(_DictDumper):
     name: str
     label: str = ""
@@ -305,7 +306,7 @@ class Attributes(_DictDumper):
         }
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class AccountBalance(_DictDumper):
     amount: float
     currency: str
@@ -316,7 +317,7 @@ class AccountBalance(_DictDumper):
         return cls(float(amount), str(currency))
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class AccountStats(_DictParser, _DictDumper):
     storage: StorageQuota
     balance: AccountBalance
@@ -327,18 +328,18 @@ class AccountStats(_DictParser, _DictDumper):
 
     @classmethod
     def parse(cls, data: dict[str, Any]) -> Self:
-        clean_data = cls._filter_dict(data)
-        clean_data.update(
-            {
-                "storage": StorageQuota.parse(data),
-                "balance": AccountBalance.parse(data.get("balance")),
-                "metrics": {node_id: StorageMetrics.parse(stats) for node_id, stats in data["cstrgn"].items()},
-            },
-        )
+        metrics: dict[NodeID, list[int]] = data["cstrgn"]
+
+        clean_data = cls._filter_dict(data) | {
+            "storage": StorageQuota.parse(data),
+            "balance": AccountBalance.parse(data.get("balance")),
+            "metrics": {node_id: StorageMetrics.parse(stats) for node_id, stats in metrics.items()},
+        }
+
         return cls(**clean_data)
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class StorageMetrics(_DictDumper):
     bytes_used: ByteSize
     files: int
@@ -350,7 +351,7 @@ class StorageMetrics(_DictDumper):
         return cls(ByteSize(bytes_used), files, folders)
 
 
-@dataclasses.dataclass(slots=True, frozen=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True)
 class StorageQuota(_DictDumper):
     used: ByteSize
     total: ByteSize
