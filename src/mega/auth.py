@@ -36,7 +36,6 @@ class AuthInfo:
     email: str
     aes_key: tuple[int, int, int, int]
     hash: str
-    _mfa_key: str | None = None
 
 
 class Credentials(NamedTuple):
@@ -45,7 +44,7 @@ class Credentials(NamedTuple):
 
 
 async def login_anonymous(api: MegaAPI) -> Credentials:
-    logger.info("Logging as an anonymous temporary user...")
+    logger.info("Creating as an anonymous temporary user...")
 
     master_key = random_u32int_array(4)
     aes_key = random_u32int_array(4)
@@ -66,11 +65,22 @@ async def login_anonymous(api: MegaAPI) -> Credentials:
     return Credentials(master_key, temp_session_id)
 
 
-async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None) -> Credentials:
+def _verify_anon_login(b64_temp_session_id: str, master_key: tuple[int, ...]) -> None:
+    tsid = b64_url_decode(b64_temp_session_id)
+    user_hash = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), master_key))
+    if user_hash != tsid[-16:]:
+        raise RuntimeError
+
+
+async def login(api: MegaAPI, email: str, password: str) -> Credentials:
     email = email.lower()
     logger.info(f"Login in as {email}...")
-    auth = await _get_auth_info(api, email, password)
-    resp = await api.post(
+    account: dict[str, Any] = await api.post({"a": "us0", "user": email})
+    version: int = account["v"]
+    salt: str | None = account.get("s")
+    auth = await asyncio.to_thread(_decrypt_auth, email, password, version, salt)
+
+    credentials = await api.post(
         {
             "a": "us",
             "user": auth.email,
@@ -78,15 +88,31 @@ async def login(api: MegaAPI, email: str, password: str, _mfa: str | None = None
         },
     )
 
-    return await asyncio.to_thread(_decrypt_credentials, resp["csid"], resp["k"], resp["privk"], auth.aes_key)
+    return await asyncio.to_thread(
+        _decrypt_credentials, credentials["csid"], credentials["k"], credentials["privk"], auth.aes_key
+    )
 
 
-async def _get_auth_info(api: MegaAPI, email: str, password: str, mfa_key: str | None = None) -> AuthInfo:
-    email = email.lower()
-    resp: dict[str, Any] = await api.post({"a": "us0", "user": email})
-    version: int = resp["v"]
-    salt: str | None = resp.get("s")
-    return await asyncio.to_thread(_decrypt_auth, email, version, password, salt, mfa_key)
+def _decrypt_auth(email: str, password: str, version: int, salt: str | None) -> AuthInfo:
+    if version == 2 and salt:
+        derived_key = hashlib.pbkdf2_hmac(
+            hash_name="sha512",
+            password=password.encode(),
+            salt=b64_url_decode(salt),
+            iterations=100_000,
+            dklen=32,
+        )
+        aes_key = str_to_a32(derived_key[:16])
+        user_hash = b64_url_encode(derived_key[-16:])
+
+    elif version == 1:
+        aes_key = prepare_v1_key(password)
+        user_hash = generate_v1_hash(email, aes_key)
+
+    else:
+        raise RuntimeError(f"Account version not supported: {version = }")
+
+    return AuthInfo(email, aes_key, user_hash)  # pyright: ignore[reportArgumentType]
 
 
 def _decrypt_credentials(
@@ -112,32 +138,3 @@ def _decrypt_session_id(rsa_key: RsaKey, b64_session_id: str) -> str:
     sid_bytes = decrypted_sid.to_bytes((decrypted_sid.bit_length() + 7) // 8 or 1, "big")
     session_id = b64_url_encode(sid_bytes[:43])
     return session_id
-
-
-def _decrypt_auth(email: str, version: int, password: str, salt: str | None, mfa_key: str | None = None) -> AuthInfo:
-    if version == 2 and salt:
-        derived_key = hashlib.pbkdf2_hmac(
-            hash_name="sha512",
-            password=password.encode(),
-            salt=b64_url_decode(salt),
-            iterations=100_000,
-            dklen=32,
-        )
-        aes_key = str_to_a32(derived_key[:16])
-        user_hash = b64_url_encode(derived_key[-16:])
-
-    elif version == 1:
-        aes_key = prepare_v1_key(password)
-        user_hash = generate_v1_hash(email, aes_key)
-
-    else:
-        raise RuntimeError(f"Account version not supported: {version = }")
-
-    return AuthInfo(email, aes_key, user_hash, mfa_key)  # pyright: ignore[reportArgumentType]
-
-
-def _verify_anon_login(b64_temp_session_id: str, master_key: tuple[int, ...]) -> None:
-    tsid = b64_url_decode(b64_temp_session_id)
-    user_hash = a32_to_bytes(encrypt_key(str_to_a32(tsid[:16]), master_key))
-    if user_hash != tsid[-16:]:
-        raise RuntimeError
