@@ -47,6 +47,7 @@ class TransferItClient(AbstractApiClient):
         self._api = TransferItAPI(session)
 
     async def get_filesystem(self, transfer_id: TransferID) -> FileSystem:
+        logger.info(f"Fetching filesystem information for {transfer_id = }...")
         folder: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
@@ -56,7 +57,9 @@ class TransferItClient(AbstractApiClient):
             },
             {"x": transfer_id},
         )
-        return await asyncio.to_thread(self._deserialize_nodes, folder["f"])
+        nodes = folder["f"]
+        logger.info(f"Decrypting and building filesystem for {transfer_id = } ({len(nodes)} nodes)...")
+        return await asyncio.to_thread(self._deserialize_nodes, nodes)
 
     @staticmethod
     def parse_url(url: str | yarl.URL) -> TransferID:

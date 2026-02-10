@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import IO, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from mega import progress
 from mega.chunker import MegaChunker
 from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key, get_chunks
-from mega.data_structures import Crypto
+from mega.data_structures import ByteSize, Crypto
 from mega.utils import random_u32int_array
 
 if TYPE_CHECKING:
@@ -25,24 +25,23 @@ async def _request_upload_url(api: MegaAPI, file_size: int) -> str:
 
 
 async def upload(api: MegaAPI, file_path: Path, file_size: int) -> tuple[str, Crypto]:
-    with await asyncio.to_thread(file_path.open, "rb") as input_file:
-        random_array = random_u32int_array(6)
-        key, iv = random_array[:4], random_array[4:]
+    random_array = random_u32int_array(6)
+    key, iv = random_array[:4], random_array[4:]
 
-        if file_size == 0:
-            upload_url = await _request_upload_url(api, file_size)
-            file_handle = await api.upload_chunk(upload_url, 0, b"")
-            meta_mac = 0, 0
-            return file_handle, Crypto.compose(key, iv, meta_mac)
+    if file_size == 0:
+        upload_url = await _request_upload_url(api, file_size)
+        file_handle = await api.upload_chunk(upload_url, 0, b"")
+        meta_mac = 0, 0
+        return file_handle, Crypto.compose(key, iv, meta_mac)
 
-        chunker = MegaChunker(iv, key)  # pyright: ignore[reportArgumentType]
-        return await _upload_chunks(api, chunker, input_file, file_size)
+    chunker = MegaChunker(iv, key)  # pyright: ignore[reportArgumentType]
+    return await _upload_chunks(api, chunker, file_path, file_size)
 
 
 async def _upload_chunks(
     api: MegaAPI,
     chunker: MegaChunker,
-    input_file: IO[bytes],
+    file_path: Path,
     file_size: int,
 ) -> tuple[str, Crypto]:
     upload_progress = 0
@@ -50,13 +49,18 @@ async def _upload_chunks(
     upload_url = await _request_upload_url(api, file_size)
     progress_hook = progress.current_hook.get()
 
-    for offset, size in get_chunks(file_size):
-        chunk = chunker.read(await asyncio.to_thread(input_file.read, size))
-        file_handle = await api.upload_chunk(upload_url, offset, chunk)
-        logger.info(f"{upload_progress} of {file_size} uploaded ({upload_progress / file_size:0.1f}%)")
-        real_size = len(chunk)
-        upload_progress += real_size
-        progress_hook(real_size)
+    file_size = ByteSize(file_size)
+    total = file_size.human_readable()
+    with await asyncio.to_thread(file_path.open, "rb") as input_file:
+        for offset, size in get_chunks(file_size):
+            chunk = chunker.read(await asyncio.to_thread(input_file.read, size))
+            file_handle = await api.upload_chunk(upload_url, offset, chunk)
+            human_progress = ByteSize(upload_progress).human_readable()
+            ratio = (upload_progress / file_size) * 100
+            logger.debug(f'{human_progress}/{total} uploaded ({ratio:0.1f}%) for "{file_path!s}"')
+            real_size = len(chunk)
+            upload_progress += real_size
+            progress_hook(real_size)
 
     assert file_handle
     return file_handle, Crypto.compose(chunker.key, chunker.iv, chunker.compute_meta_mac())

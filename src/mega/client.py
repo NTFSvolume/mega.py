@@ -155,7 +155,7 @@ class MegaNzClient(MegaCore):
             return await self.get_folder_link(fs[node.id])
 
     async def get_public_filesystem(self, public_handle: NodeID, public_key: str) -> FileSystem:
-        logger.info(f"Getting filesystem for {public_handle}...")
+        logger.info(f"Fetching filesystem information for {public_handle = }...")
         folder: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
@@ -165,7 +165,8 @@ class MegaNzClient(MegaCore):
             },
             {"n": public_handle},
         )
-
+        nodes = folder["f"]
+        logger.info(f"Decrypting and building filesystem for {public_handle =} ({len(nodes)} nodes)...")
         nodes = await self._vault.deserialize_nodes(folder["f"], public_key)
         return await asyncio.to_thread(FileSystem.build, nodes)
 

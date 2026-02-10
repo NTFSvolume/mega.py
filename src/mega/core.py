@@ -169,6 +169,7 @@ class MegaCore(AbstractApiClient):
         return FileInfo.parse(resp)
 
     async def _prepare_filesystem(self) -> UserFileSystem:
+        logger.info("Fetching users's filesystem information...")
         nodes_resp: GetNodesResponse = await self._api.post(
             {
                 "a": "f",
@@ -177,13 +178,15 @@ class MegaCore(AbstractApiClient):
             },
         )
 
+        nodes = nodes_resp["f"]
+        logger.info(f"Decrypting and building users's filesystem ({len(nodes)} nodes)...")
         self._vault.init_shared_keys(nodes_resp)
-        nodes = await self._vault.deserialize_nodes(nodes_resp["f"])
+        nodes = await self._vault.deserialize_nodes(nodes)
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 
     async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
         file_path = Path(file_path)
-        file_size = file_path.stat().st_size
+        file_size = (await asyncio.to_thread(file_path.stat)).st_size
 
         with progress.new_task(file_path.name, file_size, "UP"):
             file_id, crypto = await upload.upload(self._api, file_path, file_size)
