@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import errno
 import logging
 import random
 import string
 from enum import Enum
+from stat import S_ISREG
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
 import yarl
 
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Iterable, Sequence
+    from pathlib import Path
 
     _T1 = TypeVar("_T1")
     _T2 = TypeVar("_T2")
@@ -74,6 +77,18 @@ def transform_v1_url(url: yarl.URL) -> yarl.URL:
             file_id, shared_key = frag.removeprefix("!").split("!")
             return (url.origin() / "file" / file_id).with_fragment(shared_key)
     return url
+
+
+def get_file_size(file_path: Path) -> int:
+    try:
+        stat = file_path.stat()
+    except (OSError, ValueError):
+        raise FileNotFoundError(errno.ENOENT, str(file_path)) from None
+
+    if not S_ISREG(stat.st_mode):
+        raise IsADirectoryError(errno.EISDIR, str(file_path))
+
+    return stat.st_size
 
 
 @overload

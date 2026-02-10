@@ -22,7 +22,7 @@ from mega.crypto import (
 from mega.data_structures import Crypto, FileInfo, FileInfoSerialized, Node, NodeID
 from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.filesystem import UserFileSystem
-from mega.utils import Site, random_u32int_array, transform_v1_url
+from mega.utils import Site, get_file_size, random_u32int_array, transform_v1_url
 from mega.vault import MegaVault
 
 if TYPE_CHECKING:
@@ -186,7 +186,7 @@ class MegaCore(AbstractApiClient):
 
     async def _upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
         file_path = Path(file_path)
-        file_size = (await asyncio.to_thread(file_path.stat)).st_size
+        file_size = await asyncio.to_thread(get_file_size, file_path)
 
         with progress.new_task(file_path.name, file_size, "UP"):
             file_id, crypto = await upload.upload(self._api, file_path, file_size)
