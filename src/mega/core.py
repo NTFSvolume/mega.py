@@ -15,11 +15,22 @@ from mega import auth, download, progress, upload
 from mega.crypto import (
     a32_to_base64,
     a32_to_bytes,
+    b64_to_a32,
+    b64_url_decode,
     b64_url_encode,
+    decrypt_attr,
     encrypt_attr,
     encrypt_key,
 )
-from mega.data_structures import Crypto, FileInfo, FileInfoSerialized, Node, NodeID, UserResponse
+from mega.data_structures import (
+    Attributes,
+    Crypto,
+    FileInfo,
+    FileInfoSerialized,
+    Node,
+    NodeID,
+    UserResponse,
+)
 from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.filesystem import FileSystem, UserFileSystem
 from mega.utils import Site, get_file_size, random_u32int_array, transform_v1_url
@@ -35,7 +46,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class ParsedPublicURL(NamedTuple):
+class PublicURLInfo(NamedTuple):
     is_folder: bool
     public_handle: NodeID
     public_key: str
@@ -89,7 +100,7 @@ class MegaCore:
         return result.public_handle, result.public_key, result.selected_node
 
     @staticmethod
-    def parse_url(url: str | yarl.URL) -> ParsedPublicURL:
+    def parse_url(url: str | yarl.URL) -> PublicURLInfo:
         """Parse a public URL"""
         url = yarl.URL(url)
         Site.MEGA.check_host(url)
@@ -103,7 +114,7 @@ class MegaCore:
 
         match url.parts[1:]:
             case ["file", public_handle]:
-                return ParsedPublicURL(False, public_handle, url.fragment)
+                return PublicURLInfo(False, public_handle, url.fragment)
             case ["folder", public_handle]:
                 selected_folder = selected_file = None
                 public_key, *rest = url.fragment.split("/")
@@ -117,7 +128,7 @@ class MegaCore:
                     case _:
                         raise ValueError(f"Unknown URL format {url}")
 
-                return ParsedPublicURL(True, public_handle, public_key, selected_folder, selected_file)
+                return PublicURLInfo(True, public_handle, public_key, selected_folder, selected_file)
 
             case _:
                 raise ValueError(f"Unknown URL format {url}")
@@ -338,9 +349,8 @@ class MegaCore:
             ],
         )
 
-    async def move(self, node_id: NodeID, target_id: NodeID) -> int:
-        self.filesystem = None
-        return await self.api.post(
+    async def move(self, node_id: NodeID, target_id: NodeID) -> None:
+        _ = await self.api.post(
             {
                 "a": "m",
                 "n": node_id,
@@ -348,3 +358,41 @@ class MegaCore:
                 "i": self.api.client_id,
             },
         )
+        self.clear_cache()
+
+    @staticmethod
+    def decrypt_attrs(attrs: str, key: tuple[int, ...]) -> Attributes:
+        return Attributes.parse(decrypt_attr(b64_url_decode(attrs), key))
+
+    async def import_file(
+        self,
+        public_handle: NodeID,
+        public_key: str,
+        dest_node_id: NodeID,
+    ) -> Node:
+        """Import the public file into user account"""
+
+        full_key = b64_to_a32(public_key)
+        key = Crypto.decompose(full_key).key
+        file_info = await self.request_file_info(public_handle, is_public=True)
+        name = self.decrypt_attrs(file_info._at, key).name
+        encrypted_key = a32_to_base64(encrypt_key(full_key, self.vault.master_key))
+        attributes = b64_url_encode(encrypt_attr({"n": name}, key))
+
+        resp: GetNodesResponse = await self.api.post(
+            {
+                "a": "p",
+                "t": dest_node_id,
+                "n": [
+                    {
+                        "ph": public_handle,
+                        "t": 0,
+                        "a": attributes,
+                        "k": encrypted_key,
+                    },
+                ],
+            },
+        )
+
+        self.clear_cache()
+        return self.vault.deserialize_node(resp["f"][0])

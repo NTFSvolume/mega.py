@@ -10,20 +10,11 @@ import aiohttp
 from mega import progress
 from mega.api import APIContextManager
 from mega.core import MegaCore
-from mega.crypto import (
-    a32_to_base64,
-    b64_to_a32,
-    b64_url_decode,
-    b64_url_encode,
-    decrypt_attr,
-    encrypt_attr,
-    encrypt_key,
-)
-from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
+from mega.crypto import a32_to_base64, b64_to_a32, b64_url_encode, encrypt_attr, encrypt_key
+from mega.data_structures import AccountStats, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.download import DownloadResults
+from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.utils import Site, async_map
-
-from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
     from contextlib import _GeneratorContextManager  # pyright: ignore[reportPrivateUsage]
@@ -31,7 +22,6 @@ if TYPE_CHECKING:
 
     import yarl
 
-    from mega.data_structures import GetNodesResponse
     from mega.filesystem import FileSystem, UserFileSystem
 
 __all__ = ["MegaNzClient"]
@@ -50,7 +40,7 @@ class MegaNzClient(APIContextManager):
         self._core: MegaCore = MegaCore(self._api)
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}>(fs={self.cached_filesystem!r}, vault={self._core.vault!r}, logged_in={self.logged_in!r})"
+        return f"<{type(self).__name__}>(filesystem={self.cached_filesystem!r}, vault={self._core.vault!r}, logged_in={self.logged_in!r})"
 
     @property
     def cached_filesystem(self) -> UserFileSystem | None:
@@ -69,6 +59,8 @@ class MegaNzClient(APIContextManager):
     parse_folder_url = staticmethod(MegaCore.parse_folder_url)
 
     async def login(self, email: str | None = None, password: str | None = None) -> None:
+        if self.logged_in:
+            raise ValidationError("This client instance has already logged into an account")
         return await self._core.login(email, password)
 
     async def get_user(self) -> UserResponse:
@@ -95,15 +87,14 @@ class MegaNzClient(APIContextManager):
         fs = await self.get_filesystem()
         return fs.find(query)
 
-    async def delete(self, node_id: NodeID) -> bool:
+    async def delete(self, node_id: NodeID) -> None:
         """Delete a file or folder by its private id (moves it to the trash bin)"""
         fs = await self.get_filesystem()
-        return await self.move(node_id, fs.trash_bin.id)
+        await self.move(node_id, fs.trash_bin.id)
 
-    async def destroy(self, node_id: NodeID) -> bool:
+    async def destroy(self, node_id: NodeID) -> None:
         """Destroy a file or folder by its private id (bypasses trash bin)"""
-        resp = await self._core.destroy(node_id)
-        return self._core.success(resp)
+        await self._core.destroy(node_id)
 
     async def empty_trash(self) -> bool | None:
         """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
@@ -115,13 +106,14 @@ class MegaNzClient(APIContextManager):
         resp = await self._core.destroy(*trashed_files)
         return self._core.success(resp)
 
-    async def move(self, node_id: NodeID, target_id: NodeID) -> bool:
-        resp = await self._core.move(node_id, target_id)
-        return self._core.success(resp)
+    async def move(self, node_id: NodeID, target_id: NodeID) -> None:
+        await self._core.move(node_id, target_id)
 
-    async def add_contact(self, email: str) -> bool:
-        resp = await self._core.edit_contact(email, add=True)
-        return self._core.success(resp, clear_cache=False)
+    async def add_contact(self, email: str) -> None:
+        await self._core.edit_contact(email, add=True)
+
+    async def remove_contact(self, email: str) -> None:
+        await self._core.edit_contact(email, add=False)
 
     async def get_public_link(self, node: Node) -> str:
         if node.type is NodeType.FILE:
@@ -196,8 +188,7 @@ class MegaNzClient(APIContextManager):
         full_key = b64_to_a32(public_key)
         crypto = Crypto.decompose(full_key)
         file_info = await self._core.request_file_info(public_handle, is_public=True)
-        attrs = decrypt_attr(b64_url_decode(file_info._at), crypto.key)
-        output_name = Attributes.parse(attrs).name
+        output_name = self._core.decrypt_attrs(file_info._at, crypto.key).name
         output_path = Path(output_dir or ".") / output_name
         return await self._core.download_file(file_info, crypto, output_path)
 
@@ -286,15 +277,11 @@ class MegaNzClient(APIContextManager):
         )
         return self._core.success(resp)
 
-    async def remove_contact(self, email: str) -> bool:
-        resp = await self._core.edit_contact(email, add=False)
-        return self._core.success(resp, clear_cache=False)
-
     async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
         full_key = b64_to_a32(public_key)
         key = Crypto.decompose(full_key).key
         file_info = await self._core.request_file_info(public_handle, is_public=True)
-        name = Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), key)).name
+        name = self._core.decrypt_attrs(file_info._at, key).name
         return dataclasses.replace(file_info, name=name)
 
     async def import_public_file(
@@ -307,26 +294,4 @@ class MegaNzClient(APIContextManager):
         if not dest_node_id:
             dest_node_id = (await self.get_filesystem()).root.id
 
-        file_info = await self.get_public_file_info(public_handle, public_key)
-        full_key = b64_to_a32(public_key)
-        key = Crypto.decompose(full_key).key
-        encrypted_key = a32_to_base64(encrypt_key(full_key, self._core.vault.master_key))
-        attributes = b64_url_encode(encrypt_attr({"n": file_info.name}, key))
-
-        resp: GetNodesResponse = await self._core.api.post(
-            {
-                "a": "p",
-                "t": dest_node_id,
-                "n": [
-                    {
-                        "ph": public_handle,
-                        "t": 0,
-                        "a": attributes,
-                        "k": encrypted_key,
-                    },
-                ],
-            },
-        )
-
-        self._core.clear_cache()
-        return self._core.vault.deserialize_node(resp["f"][0])
+        return await self._core.import_file(public_handle, public_key, dest_node_id)
