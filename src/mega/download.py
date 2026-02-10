@@ -13,8 +13,7 @@ from types import MappingProxyType
 from typing import IO, TYPE_CHECKING, Final, Generic, Self, TypeVar
 
 from mega import progress
-from mega.chunker import MegaChunker
-from mega.crypto import get_chunks
+from mega.chunker import MegaChunker, get_chunks
 from mega.data_structures import NodeID
 
 if TYPE_CHECKING:

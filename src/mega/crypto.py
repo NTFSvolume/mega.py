@@ -7,14 +7,14 @@ import logging
 import math
 import struct
 import time
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any
 
 from Crypto.Cipher import AES
 from Crypto.Math.Numbers import Integer
 from Crypto.PublicKey import RSA
 
 if TYPE_CHECKING:
-    from collections.abc import Generator, Mapping, Sequence
+    from collections.abc import Mapping, Sequence
 
     from mega.data_structures import AttributesSerialized
 
@@ -22,11 +22,6 @@ logger = logging.getLogger(__name__)
 
 CHUNK_BLOCK_LEN = 16  # Hexadecimal
 EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
-
-
-class ChunkBoundary(NamedTuple):
-    offset: int
-    size: int
 
 
 def pad_bytes(data: bytes | memoryview[int], length: int = CHUNK_BLOCK_LEN) -> bytes:
@@ -145,18 +140,6 @@ def b64_url_encode(data: bytes | bytearray) -> str:
 
 def a32_to_base64(array: Sequence[int]) -> str:
     return b64_url_encode(a32_to_bytes(array))
-
-
-def get_chunks(size: int) -> Generator[ChunkBoundary]:
-    # generates a list of chunks (offset, chunk_size), where offset refers to the file initial position
-    offset = 0
-    current_size = init_size = 0x20000
-    while offset + current_size < size:
-        yield ChunkBoundary(offset, current_size)
-        offset += current_size
-        if current_size < 0x100000:
-            current_size += init_size
-    yield ChunkBoundary(offset, size - offset)
 
 
 def decrypt_rsa_key(private_key: bytes) -> RSA.RsaKey:

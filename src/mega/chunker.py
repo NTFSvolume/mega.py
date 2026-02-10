@@ -3,7 +3,7 @@ from __future__ import annotations
 import dataclasses
 import logging
 from collections.abc import Generator
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NamedTuple
 
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
@@ -17,9 +17,32 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ChunkBoundary(NamedTuple):
+    offset: int
+    size: int
+
+
+def get_chunks(size: int) -> Generator[ChunkBoundary]:
+    """
+    Yield chunk boundaries for Mega's MAC computation.
+
+    Chunk sizes double from 128 KiB (0x20000) up to 1 MiB (0x100000).
+    The last chunk may be smaller
+    """
+
+    offset = 0
+    current_size = init_size = 0x20000
+    while offset + current_size < size:
+        yield ChunkBoundary(offset, current_size)
+        offset += current_size
+        if current_size < 0x100000:
+            current_size += init_size
+    yield ChunkBoundary(offset, size - offset)
+
+
 @dataclasses.dataclass(slots=True)
 class MegaChunker:
-    """Decrypts/encrypts a flow of chunks using Mega's CBC algorithm"""
+    """Decrypts/encrypts a flow of chunks using Mega's custom CBC-MAC algorithm"""
 
     iv: tuple[int, int]
     key: tuple[int, int, int, int]

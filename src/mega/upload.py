@@ -5,8 +5,8 @@ import logging
 from typing import TYPE_CHECKING
 
 from mega import progress
-from mega.chunker import MegaChunker
-from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key, get_chunks
+from mega.chunker import MegaChunker, get_chunks
+from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key
 from mega.data_structures import ByteSize, Crypto
 from mega.utils import random_u32int_array
 
