@@ -13,7 +13,7 @@ from mega import env
 from mega.api import MegaAPI
 from mega.client import MegaNzClient
 from mega.data_structures import AccountBalance, AccountStats, Node, NodeType, StorageQuota
-from mega.errors import RequestError, RetryRequestError
+from mega.errors import MultipleNodesFoundError, RequestError, RetryRequestError
 from mega.filesystem import UserFileSystem
 from mega.utils import setup_logger, str_utc_now
 
@@ -42,11 +42,11 @@ def folder_name() -> str:
 @pytest.fixture(name="mega")
 async def connect_to_mega(folder_name: str, http_client: aiohttp.ClientSession) -> AsyncGenerator[MegaNzClient]:
     async with MegaNzClient(http_client) as mega:
+        mega._core.api._auto_close_session = True
         await mega.login(email=env.EMAIL, password=env.PASSWORD)
         folder = await mega.create_folder(folder_name)
         yield mega
-        deleted = await mega.delete(folder.id)
-        assert deleted
+        await mega.delete(folder.id)
 
 
 @pytest.fixture
@@ -153,8 +153,11 @@ class TestExport:
 async def test_import_public_url(mega: MegaNzClient) -> None:
     public_handle, public_key = mega.parse_file_url(TEST_PUBLIC_URL)
     file = await mega.import_public_file(public_handle, public_key)
-    resp = await mega.destroy(file.id)
-    assert resp
+    fs = await mega.get_filesystem()
+    assert file.id in fs
+    await mega.destroy(file.id)
+    fs = await mega.get_filesystem()
+    assert file.id not in fs
 
 
 async def test_create_single_folder(mega: MegaNzClient, folder_name: str) -> None:
@@ -173,23 +176,28 @@ async def test_create_folder_with_sub_folders(mega: MegaNzClient, folder_name: s
 
 
 class TestFind:
-    async def test_find_file(self, mega: MegaNzClient, folder_name: str, folder: Node) -> None:
-        _ = await mega.upload(TEST_FILE, folder.id)
-        path1 = f"{folder_name}/{TEST_FILE.name}"
-        file1 = await mega.find(path1)
-
-        new_folder = await mega.create_folder("new_folder")
-        _ = await mega.upload(TEST_FILE, new_folder.id)
-
-        path2 = f"new_folder/{TEST_FILE.name}"
-        file2 = await mega.find(path2)
-        assert file1.id != file2.id
+    async def test_find_file(self, mega: MegaNzClient) -> None:
+        node = await mega.find("/")
         fs = await mega.get_filesystem()
-        assert fs.absolute_path(file1.id) != fs.absolute_path(file2.id)
-        assert str(fs.relative_path(file1.id)) == path1
-        assert str(fs.relative_path(file2.id)) == path2
-        assert str(fs.absolute_path(file1.id)) == "/" + path1
-        assert str(fs.absolute_path(file2.id)) == "/" + path2
+        assert node is fs.root
+
+    async def test_find_raise_error_if_multiple_files_have_the_same_path(
+        self, mega: MegaNzClient, uploaded_file: Node
+    ) -> None:
+        fs = await mega.get_filesystem()
+        path_1 = fs.absolute_path(uploaded_file.id)
+
+        folder = await mega.find(path_1.parent)
+        new_file = await mega.upload(TEST_FILE, folder.id)
+
+        fs = await mega.get_filesystem()
+        path_2 = fs.absolute_path(new_file.id)
+
+        assert new_file.id != uploaded_file.id
+        assert path_1 == path_2
+
+        with pytest.raises(MultipleNodesFoundError):
+            fs.find(path_2)
 
     async def test_path_not_found_raise_file_not_found_error(self, mega: MegaNzClient) -> None:
         with pytest.raises(FileNotFoundError):
@@ -207,18 +215,32 @@ async def test_rename(mega: MegaNzClient, folder_name: str, folder: Node) -> Non
 
 
 async def test_delete_folder(mega: MegaNzClient, folder: Node) -> None:
-    resp = await mega.delete(folder.id)
-    assert isinstance(resp, int)
+    fs = await mega.get_filesystem()
+    assert folder.id in fs
+    await mega.delete(folder.id)
+    fs = await mega.get_filesystem()
+    assert folder.id in fs
+    updated_folder = fs[folder.id]
+    assert folder.parent_id != updated_folder.parent_id
+    assert updated_folder.parent_id == fs.trash_bin.id
 
 
-async def test_delete(mega: MegaNzClient, uploaded_file: Node) -> None:
-    resp = await mega.delete(uploaded_file.id)
-    assert isinstance(resp, int)
+async def test_delete_file(mega: MegaNzClient, uploaded_file: Node) -> None:
+    fs = await mega.get_filesystem()
+    assert uploaded_file.id in fs
+    await mega.delete(uploaded_file.id)
+    fs = await mega.get_filesystem()
+    assert uploaded_file.id in fs
+    updated_file = fs[uploaded_file.id]
+    assert updated_file in set(fs.deleted)
 
 
 async def test_destroy(mega: MegaNzClient, uploaded_file: Node) -> None:
-    resp = await mega.destroy(uploaded_file.id)
-    assert isinstance(resp, int)
+    fs = await mega.get_filesystem()
+    assert uploaded_file.id in fs
+    await mega.destroy(uploaded_file.id)
+    fs = await mega.get_filesystem()
+    assert uploaded_file.id not in fs
 
 
 async def test_upload_and_download(mega: MegaNzClient, tmp_path: Path, folder_name: str, folder: Node) -> None:
@@ -241,13 +263,11 @@ async def test_empty_trash(mega: MegaNzClient) -> None:
 
 
 async def test_add_contact(mega: MegaNzClient) -> None:
-    resp = await mega.add_contact(TEST_CONTACT)
-    assert isinstance(resp, int)
+    await mega.add_contact(TEST_CONTACT)
 
 
 async def test_remove_contact(mega: MegaNzClient) -> None:
-    resp = await mega.remove_contact(TEST_CONTACT)
-    assert isinstance(resp, int)
+    await mega.remove_contact(TEST_CONTACT)
 
 
 @pytest.mark.parametrize(
