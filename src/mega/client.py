@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import logging
 from pathlib import Path, PurePosixPath
@@ -9,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 import aiohttp
 
 from mega import progress
+from mega.api import APIContextManager
 from mega.core import MegaCore
 from mega.crypto import (
     a32_to_base64,
@@ -21,33 +21,61 @@ from mega.crypto import (
 )
 from mega.data_structures import AccountStats, Attributes, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.download import DownloadResults
-from mega.filesystem import FileSystem
 from mega.utils import Site, async_map
 
 from .errors import MegaNzError, RequestError, ValidationError
 
 if TYPE_CHECKING:
+    from contextlib import _GeneratorContextManager  # pyright: ignore[reportPrivateUsage]
     from os import PathLike
 
+    import yarl
+
     from mega.data_structures import GetNodesResponse
+    from mega.filesystem import FileSystem, UserFileSystem
 
 __all__ = ["MegaNzClient"]
 
 logger = logging.getLogger(__name__)
-
-
 _DOMAIN = Site.MEGA.value
 
 
-class MegaNzClient(MegaCore):
+class MegaNzClient(APIContextManager):
     """Interface with all the public methods of the API"""
 
+    __slots__ = ("_core",)
+
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        super().__init__(session)
+        self._core: MegaCore = MegaCore(self._api)
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}>(fs={self.cached_filesystem!r}, vault={self._core.vault!r}, logged_in={self.logged_in!r})"
+
     @property
-    def progress_bar(self):
+    def cached_filesystem(self) -> UserFileSystem | None:
+        return self._core.filesystem
+
+    @property
+    def logged_in(self) -> bool:
+        return bool(self._core.vault.master_key)
+
+    @property
+    def progress_bar(self) -> _GeneratorContextManager[None]:
         return progress.new_progress()
 
+    parse_url = staticmethod(MegaCore.parse_url)
+    parse_file_url = staticmethod(MegaCore.parse_file_url)
+    parse_folder_url = staticmethod(MegaCore.parse_folder_url)
+
+    async def login(self, email: str | None = None, password: str | None = None) -> None:
+        return await self._core.login(email, password)
+
     async def get_user(self) -> UserResponse:
-        return await self._api.post({"a": "ug"})
+        return await self._core.get_user()
+
+    async def get_filesystem(self, *, force: bool = False) -> UserFileSystem:
+        return await self._core.get_filesystem(force=force)
 
     async def search(self, query: str | PathLike[str], *, exclude_deleted: bool = True) -> dict[NodeID, PurePosixPath]:
         """Return nodes that have "query" as a substring on their path"""
@@ -74,8 +102,8 @@ class MegaNzClient(MegaCore):
 
     async def destroy(self, node_id: NodeID) -> bool:
         """Destroy a file or folder by its private id (bypasses trash bin)"""
-        resp = await self._destroy(node_id)
-        return self._success(resp)
+        resp = await self._core.destroy(node_id)
+        return self._core.success(resp)
 
     async def empty_trash(self) -> bool | None:
         """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
@@ -84,48 +112,32 @@ class MegaNzClient(MegaCore):
         if not trashed_files:
             return None
 
-        resp = await self._destroy(*trashed_files)
-        return self._success(resp)
+        resp = await self._core.destroy(*trashed_files)
+        return self._core.success(resp)
 
     async def move(self, node_id: NodeID, target_id: NodeID) -> bool:
-        resp = await self._move(node_id, target_id)
-        return self._success(resp)
+        resp = await self._core.move(node_id, target_id)
+        return self._core.success(resp)
 
     async def add_contact(self, email: str) -> bool:
-        resp = await self._edit_contact(email, add=True)
-        return self._success(resp, clear_cache=False)
+        resp = await self._core.edit_contact(email, add=True)
+        return self._core.success(resp, clear_cache=False)
 
-    async def get_public_link(self, file: Node) -> str:
-        if file.type is not NodeType.FILE:
+    async def get_public_link(self, node: Node) -> str:
+        if node.type is NodeType.FILE:
+            public_key = a32_to_base64(node._crypto.full_key)
+        elif node.type is NodeType.FOLDER:
+            assert node._crypto.share_key
+            public_key = a32_to_base64(node._crypto.share_key)
+
+        else:
             raise ValidationError
 
-        public_handle = await self._get_public_handle(file.id)
-        public_key = a32_to_base64(file._crypto.full_key)
-        return f"{_DOMAIN}/file/{public_handle}#{public_key}"
-
-    async def get_folder_link(self, folder: Node) -> str:
-        if folder.type is not NodeType.FOLDER:
-            raise ValidationError
-
-        if not folder._crypto.share_key:
-            raise RequestError("")
-        public_handle = await self._get_public_handle(folder.id)
-        public_key = a32_to_base64(folder._crypto.share_key)
-        return f"{_DOMAIN}/folder/{public_handle}#{public_key}"
-
-    async def get_id_from_public_handle(self, public_handle: NodeID) -> str:
-        resp: GetNodesResponse = await self._api.post(
-            {
-                "a": "f",
-                "f": 1,
-                "p": public_handle,
-            },
-        )
-
-        return resp["f"][0]["h"]
+        public_handle = await self._core.public_handle_from_id(node.id)
+        return f"{_DOMAIN}/{node.type.name.lower()}/{public_handle}#{public_key}"
 
     async def get_account_stats(self) -> AccountStats:
-        resp: dict[str, Any] = await self._api.post(
+        resp: dict[str, Any] = await self._core.api.post(
             {
                 "a": "uq",
                 "xfer": 1,  # transfer quota
@@ -139,7 +151,7 @@ class MegaNzClient(MegaCore):
 
     async def export(self, node: Node) -> str:
         if node.type is NodeType.FILE:
-            await self._export_file(node)
+            await self._core.export_file(node)
             return await self.get_public_link(node)
 
         if node.type is not NodeType.FOLDER:
@@ -148,33 +160,32 @@ class MegaNzClient(MegaCore):
 
         try:
             # If already exported
-            return await self.get_folder_link(node)
+            return await self.get_public_link(node)
         except (RequestError, KeyError):
-            await self._export_folder(node)
+            await self._core.export_folder(node)
             fs = await self.get_filesystem(force=True)
-            return await self.get_folder_link(fs[node.id])
+            return await self.get_public_link(fs[node.id])
 
     async def get_public_filesystem(self, public_handle: NodeID, public_key: str) -> FileSystem:
-        logger.info(f"Fetching filesystem information for {public_handle = }...")
-        folder: GetNodesResponse = await self._api.post(
-            {
-                "a": "f",
-                "c": 1,
-                "ca": 1,
-                "r": 1,
-            },
-            {"n": public_handle},
-        )
-        nodes = folder["f"]
-        logger.info(f"Decrypting and building filesystem for {public_handle =} ({len(nodes)} nodes)...")
-        nodes = await self._vault.deserialize_nodes(folder["f"], public_key)
-        return await asyncio.to_thread(FileSystem.build, nodes)
+        return await self._core.get_public_filesystem(public_handle, public_key)
 
     async def download(self, node: Node, output_dir: str | PathLike[str] | None = None) -> Path:
         """Download a file by it's file object."""
-        file_info = await self._request_file_info(node.id)
+        file_info = await self._core.request_file_info(node.id)
         output_path = Path(output_dir or ".") / node.attributes.name
-        return await self._download_file(file_info, node._crypto, output_path)
+        return await self._core.download_file(file_info, node._crypto, output_path)
+
+    async def download_url(self, url: str | yarl.URL, output_dir: str | PathLike[str] | None = None) -> DownloadResults:
+        """Download a public file or folder by it's URL."""
+        info = self.parse_url(url)
+        if not info.is_folder:
+            try:
+                result = await self.download_public_file(info.public_handle, info.public_key, output_dir)
+            except Exception as exc:
+                result = exc
+            return DownloadResults.split({info.public_handle: result})
+
+        return await self.download_public_folder(info.public_handle, info.public_key, output_dir, info.selected_node)
 
     async def download_public_file(
         self,
@@ -184,11 +195,11 @@ class MegaNzClient(MegaCore):
     ) -> Path:
         full_key = b64_to_a32(public_key)
         crypto = Crypto.decompose(full_key)
-        file_info = await self._request_file_info(public_handle, is_public=True)
+        file_info = await self._core.request_file_info(public_handle, is_public=True)
         attrs = decrypt_attr(b64_url_decode(file_info._at), crypto.key)
         output_name = Attributes.parse(attrs).name
         output_path = Path(output_dir or ".") / output_name
-        return await self._download_file(file_info, crypto, output_path)
+        return await self._core.download_file(file_info, crypto, output_path)
 
     async def download_public_folder(
         self,
@@ -212,8 +223,8 @@ class MegaNzClient(MegaCore):
             web_url = folder_url + f"/file/{file.id}"
             output_path = base_path / fs.relative_path(file.id)
             try:
-                file_info = await self._request_file_info(file.id, public_handle)
-                result = await self._download_file(file_info, file._crypto, output_path)
+                file_info = await self._core.request_file_info(file.id, public_handle)
+                result = await self._core.download_file(file_info, file._crypto, output_path)
 
             except Exception as exc:
                 if isinstance(exc, aiohttp.ClientResponseError):
@@ -232,9 +243,8 @@ class MegaNzClient(MegaCore):
         if not dest_node_id:
             dest_node_id = (await self.get_filesystem()).root.id
 
-        resp = await self._upload(file_path, dest_node_id)
-        self._filesystem = None
-        return self._vault.deserialize_node(resp["f"][0])
+        resp = await self._core.upload(file_path, dest_node_id)
+        return self._core.vault.deserialize_node(resp["f"][0])
 
     async def create_folder(self, path: str | PathLike[str]) -> Node:
         """Create a folder at the given path.
@@ -257,32 +267,33 @@ class MegaNzClient(MegaCore):
             return node
         except FileNotFoundError:
             pass
-        return await self._mkdir(path=path, parent_node_id=fs.root.id)
+
+        return await self._core.mkdir(path, fs.root.id)
 
     async def rename(self, node: Node, new_name: str) -> bool:
         new_attrs = dataclasses.replace(node.attributes, name=new_name)
         attribs = b64_url_encode(encrypt_attr(new_attrs.serialize(), node._crypto.key))
-        encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._vault.master_key))
+        encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._core.vault.master_key))
 
-        resp = await self._api.post(
+        resp = await self._core.api.post(
             {
                 "a": "a",
                 "attr": attribs,
                 "key": encrypted_key,
                 "n": node.id,
-                "i": self._api.client_id,
+                "i": self._core.api.client_id,
             },
         )
-        return self._success(resp)
+        return self._core.success(resp)
 
     async def remove_contact(self, email: str) -> bool:
-        resp = await self._edit_contact(email, add=False)
-        return self._success(resp, clear_cache=False)
+        resp = await self._core.edit_contact(email, add=False)
+        return self._core.success(resp, clear_cache=False)
 
     async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
         full_key = b64_to_a32(public_key)
         key = Crypto.decompose(full_key).key
-        file_info = await self._request_file_info(public_handle, is_public=True)
+        file_info = await self._core.request_file_info(public_handle, is_public=True)
         name = Attributes.parse(decrypt_attr(b64_url_decode(file_info._at), key)).name
         return dataclasses.replace(file_info, name=name)
 
@@ -299,10 +310,10 @@ class MegaNzClient(MegaCore):
         file_info = await self.get_public_file_info(public_handle, public_key)
         full_key = b64_to_a32(public_key)
         key = Crypto.decompose(full_key).key
-        encrypted_key = a32_to_base64(encrypt_key(full_key, self._vault.master_key))
+        encrypted_key = a32_to_base64(encrypt_key(full_key, self._core.vault.master_key))
         attributes = b64_url_encode(encrypt_attr({"n": file_info.name}, key))
 
-        resp: GetNodesResponse = await self._api.post(
+        resp: GetNodesResponse = await self._core.api.post(
             {
                 "a": "p",
                 "t": dest_node_id,
@@ -317,5 +328,5 @@ class MegaNzClient(MegaCore):
             },
         )
 
-        self._filesystem = None
-        return self._vault.deserialize_node(resp["f"][0])
+        self._core.clear_cache()
+        return self._core.vault.deserialize_node(resp["f"][0])

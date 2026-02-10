@@ -203,7 +203,7 @@ class MegaAPI:
         return resp
 
 
-class AbstractApiClient:
+class APIContextManager:
     __slots__ = ("_api",)
 
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
@@ -215,5 +215,7 @@ class AbstractApiClient:
     async def __aexit__(self, *_) -> None:
         await self.close()
 
-    async def close(self) -> None:
+    async def aclose(self) -> None:
         await self._api.close()
+
+    close = aclose

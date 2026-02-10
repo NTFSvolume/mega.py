@@ -10,7 +10,7 @@ import aiohttp
 import yarl
 
 from mega import download, progress
-from mega.api import AbstractApiClient, MegaAPI
+from mega.api import APIContextManager, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeID, NodeType
 from mega.download import DownloadResults
@@ -42,7 +42,7 @@ class TransferItAPI(MegaAPI):
         return await super().post(json, params)
 
 
-class TransferItClient(AbstractApiClient):
+class TransferItClient(APIContextManager):
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:  # pyright: ignore[reportMissingSuperCall]
         self._api = TransferItAPI(session)
 

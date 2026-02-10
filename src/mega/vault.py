@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class MegaVault:
-    master_key: tuple[int, ...]
+    master_key: tuple[int, ...] = ()
 
     # This is a mapping of owner (user_id) to shared keys. An special owner "EXP" is used for exported (AKA public) file/folders
     shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)

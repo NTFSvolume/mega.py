@@ -52,9 +52,10 @@ async def encrypted_stream(
     stream: aiohttp.StreamReader,
     output_path: Path,
     file_size: int,
+    /,
+    key: tuple[int, int, int, int],
     iv: tuple[int, int],
     meta_mac: tuple[int, int],
-    key: tuple[int, int, int, int],
 ) -> Path:
     async with _LOCKS[output_path]:
         if await asyncio.to_thread(output_path.exists):
