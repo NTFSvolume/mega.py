@@ -29,6 +29,8 @@ from mega.data_structures import (
     FileInfoSerialized,
     Node,
     NodeID,
+    NodeSerialized,
+    NodeType,
     UserResponse,
 )
 from mega.errors import MegaNzError, RequestError, ValidationError
@@ -37,6 +39,7 @@ from mega.utils import Site, get_file_size, random_u32int_array, transform_v1_ur
 from mega.vault import MegaVault
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from os import PathLike
 
     from mega.api import MegaAPI
@@ -146,8 +149,10 @@ class MegaCore:
             )
         except RequestError as e:
             if e.code == -11:
-                msg = "Can't get a public link from that file (is this a shared file?) You may need to export it first"
-                raise MegaNzError(msg) from e
+                msg = "Can't get a public link from that file"
+                error = MegaNzError(msg)
+                error.add_note("Is this a shared file?) You may need to export it first")
+                raise error from e
             raise
 
     async def id_from_public_handle(self, public_handle: NodeID) -> str:
@@ -190,8 +195,47 @@ class MegaCore:
         nodes = nodes_resp["f"]
         logger.info(f"Decrypting and building users's filesystem ({len(nodes)} nodes)...")
         self.vault.init_shared_keys(nodes_resp)
-        nodes = await self.vault.deserialize_nodes(nodes)
+        nodes = await self.deserialize_nodes(nodes)
         return await asyncio.to_thread(UserFileSystem.build, nodes)
+
+    async def deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
+        """Processes multiple nodes at once, decrypting their keys and attributes"""
+        # We can't run this loop in another thread because we modify the vault in place
+
+        share_key = b64_to_a32(public_key) if public_key else None
+        resolved_nodes: list[Node] = []
+
+        for idx, node in enumerate(nodes):
+            node_id = node["h"]
+            if share_key:
+                self.vault.save_public_key(node_id, share_key)
+
+            resolved_nodes.append(self._deserialize_node(node))
+
+            if idx % 500 == 0:
+                await asyncio.sleep(0)
+
+        return resolved_nodes
+
+    def _deserialize_node(self, node: NodeSerialized) -> Node:
+        return self.decrypt(Node.parse(node))
+
+    def decrypt(self, node: Node) -> Node:
+        crypto = attributes = None
+        if node.type in (NodeType.FILE, NodeType.FOLDER):
+            full_key, share_key = self.vault[node]
+            crypto = Crypto.decompose(full_key, node.type, share_key)
+            attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
+
+        else:
+            name = {
+                NodeType.ROOT_FOLDER: "Cloud Drive",
+                NodeType.INBOX: "Inbox",
+                NodeType.TRASH: "Trash Bin",
+            }[node.type]
+            attributes = Attributes(name)
+
+        return dataclasses.replace(node, _crypto=crypto, attributes=attributes)
 
     def clear_cache(self) -> None:
         self.filesystem = None
@@ -287,8 +331,8 @@ class MegaCore:
             {"n": public_handle},
         )
         nodes = folder["f"]
-        logger.info(f"Decrypting and building filesystem for {public_handle =} ({len(nodes)} nodes)...")
-        nodes = await self.vault.deserialize_nodes(folder["f"], public_key)
+        logger.info(f"Decrypting and building filesystem for {public_handle = } ({len(nodes)} nodes)...")
+        nodes = await self.deserialize_nodes(nodes, public_key)
         return await asyncio.to_thread(FileSystem.build, nodes)
 
     def success(self, resp: int, clear_cache: bool = True) -> bool:
@@ -320,13 +364,13 @@ class MegaCore:
             },
         )
         self.clear_cache()
-        return self.vault.deserialize_node(folders["f"][0])
+        return self._deserialize_node(folders["f"][0])
 
-    async def edit_contact(self, email: str, *, add: bool) -> int:
+    async def edit_contact(self, email: str, *, add: bool) -> None:
         if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
             raise ValidationError("add_contact requires a valid email address")
 
-        return await self.api.post(
+        _ = await self.api.post(
             {
                 "a": "ur",
                 "u": email,
@@ -335,10 +379,9 @@ class MegaCore:
             },
         )
 
-    async def destroy(self, *node_ids: NodeID) -> int:
+    async def destroy(self, *node_ids: NodeID) -> None:
         """Destroy a file or folder by its private id (bypass trash bin)"""
-        self.filesystem = None
-        return await self.api.post(
+        _ = await self.api.post(
             [
                 {
                     "a": "d",
@@ -348,6 +391,7 @@ class MegaCore:
                 for node_id in node_ids
             ],
         )
+        self.clear_cache()
 
     async def move(self, node_id: NodeID, target_id: NodeID) -> None:
         _ = await self.api.post(
@@ -395,4 +439,4 @@ class MegaCore:
         )
 
         self.clear_cache()
-        return self.vault.deserialize_node(resp["f"][0])
+        return self._deserialize_node(resp["f"][0])

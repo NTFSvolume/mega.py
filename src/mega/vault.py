@@ -1,17 +1,13 @@
 from __future__ import annotations
 
-import asyncio
 import dataclasses
 import logging
 from typing import TYPE_CHECKING
 
-from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr, decrypt_key
-from mega.data_structures import Attributes, Crypto, Node, NodeSerialized, NodeType, UserID
+from mega.crypto import b64_to_a32, decrypt_key
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from mega.data_structures import GetNodesResponse, SharedKeys
+    from mega.data_structures import GetNodesResponse, Node, NodeID, SharedKeys, UserID
 
 
 logger = logging.getLogger(__name__)
@@ -23,6 +19,9 @@ class MegaVault:
 
     # This is a mapping of owner (user_id) to shared keys. An special owner "EXP" is used for exported (AKA public) file/folders
     shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
+
+    def __getitem__(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
+        return self.get_keys(node)
 
     def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
         """Init shared key not associated with a user.
@@ -70,41 +69,5 @@ class MegaVault:
 
         return full_key, share_key
 
-    def deserialize_node(self, node: NodeSerialized) -> Node:
-        return self.decrypt(Node.parse(node))
-
-    async def deserialize_nodes(self, nodes: Iterable[NodeSerialized], public_key: str | None = None) -> list[Node]:
-        """Processes multiple nodes at once, decrypting their keys and attributes"""
-        # We can't run this loop in another thread because we modify the vault in place
-
-        share_key = b64_to_a32(public_key) if public_key else None
-        resolved_nodes: list[Node] = []
-
-        for idx, node in enumerate(nodes):
-            node_id = node["h"]
-            if share_key:
-                self.shared_keys["EXP"][node_id] = share_key
-
-            resolved_nodes.append(self.deserialize_node(node))
-
-            if idx % 500 == 0:
-                await asyncio.sleep(0)
-
-        return resolved_nodes
-
-    def decrypt(self, node: Node) -> Node:
-        crypto = attributes = None
-        if node.type in (NodeType.FILE, NodeType.FOLDER):
-            full_key, share_key = self.get_keys(node)
-            crypto = Crypto.decompose(full_key, node.type, share_key)
-            attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
-
-        else:
-            name = {
-                NodeType.ROOT_FOLDER: "Cloud Drive",
-                NodeType.INBOX: "Inbox",
-                NodeType.TRASH: "Trash Bin",
-            }[node.type]
-            attributes = Attributes(name)
-
-        return dataclasses.replace(node, _crypto=crypto, attributes=attributes)
+    def save_public_key(self, node_id: NodeID, share_key: tuple[int, ...]) -> None:
+        self.shared_keys["EXP"][node_id] = share_key

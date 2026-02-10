@@ -96,15 +96,14 @@ class MegaNzClient(APIContextManager):
         """Destroy a file or folder by its private id (bypasses trash bin)"""
         await self._core.destroy(node_id)
 
-    async def empty_trash(self) -> bool | None:
-        """Deletes all file in the trash bin. Returns `None` if the trash was already empty"""
+    async def empty_trash(self) -> None:
+        """Deletes all file in the trash bin. Does nothing if the trash was already empty"""
         fs = await self.get_filesystem()
         trashed_files = [f.id for f in fs.deleted]
         if not trashed_files:
             return None
 
-        resp = await self._core.destroy(*trashed_files)
-        return self._core.success(resp)
+        await self._core.destroy(*trashed_files)
 
     async def move(self, node_id: NodeID, target_id: NodeID) -> None:
         await self._core.move(node_id, target_id)
@@ -123,7 +122,8 @@ class MegaNzClient(APIContextManager):
             public_key = a32_to_base64(node._crypto.share_key)
 
         else:
-            raise ValidationError
+            msg = f"Can not get a public link for {node.type}"
+            raise ValidationError(msg)
 
         public_handle = await self._core.public_handle_from_id(node.id)
         return f"{_DOMAIN}/{node.type.name.lower()}/{public_handle}#{public_key}"
@@ -235,7 +235,7 @@ class MegaNzClient(APIContextManager):
             dest_node_id = (await self.get_filesystem()).root.id
 
         resp = await self._core.upload(file_path, dest_node_id)
-        return self._core.vault.deserialize_node(resp["f"][0])
+        return self._core._deserialize_node(resp["f"][0])
 
     async def create_folder(self, path: str | PathLike[str]) -> Node:
         """Create a folder at the given path.
