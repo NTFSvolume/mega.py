@@ -62,7 +62,7 @@ async def encrypted_stream(
         if await asyncio.to_thread(output_path.exists):
             raise FileExistsError(errno.EEXIST, output_path)
 
-        chunker = MegaChunker(iv, key, meta_mac)
+        chunker = MegaChunker(key, iv, meta_mac)
         progress_hook = progress.current_hook.get()
         log_progress = progress_logger(output_path, file_size, download=True)
 

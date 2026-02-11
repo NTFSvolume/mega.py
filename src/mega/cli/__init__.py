@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Annotated
 import typer
 import yarl
 
-from mega import __version__, env, progress
+from mega import __version__, env
 from mega.api import LOG_HTTP_TRAFFIC
 from mega.cli.app import CLIApp
 from mega.client import MegaNzClient
@@ -63,7 +63,7 @@ async def connect() -> AsyncGenerator[MegaNzClient]:
 
 async def transfer_it(url: str, output_dir: Path) -> None:
     async with TransferItClient() as client:
-        with progress.new_progress():
+        with client.progress_bar:
             transfer_id = client.parse_url(url)
             logger.info(f"Downloading '{url}'")
             results = await client.download_transfer(transfer_id, output_dir)
@@ -114,9 +114,17 @@ async def stats() -> None:
 async def upload(file_path: Path) -> None:
     """Upload a file to your account"""
     async with connect() as mega:
+        if not env.EMAIL:
+            logger.warning("Files uploaded by a temp account can not be exported")
+
         folder = await mega.create_folder("uploaded by mega.py")
         logger.info(f'Uploading "{file_path!s}"')
         file = await mega.upload(file_path, folder.id)
+        path = (await mega.get_filesystem()).absolute_path(file.id)
+        logger.info(f'File uploaded to your cloud. Path = "{path}"')
+        if not env.EMAIL:
+            return
+
         link = await mega.export(file)
         logger.info(f'Public link for "{file_path!s}": {link}')
 

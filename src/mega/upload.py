@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from mega import progress
 from mega.chunker import MegaChunker, get_chunks
 from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key
-from mega.data_structures import ByteSize, Crypto
+from mega.data_structures import Crypto
 from mega.utils import progress_logger, random_u32int_array
 
 if TYPE_CHECKING:
@@ -34,7 +34,7 @@ async def upload(api: MegaAPI, file_path: Path, file_size: int) -> tuple[str, Cr
         meta_mac = 0, 0
         return file_handle, Crypto.compose(key, iv, meta_mac)
 
-    chunker = MegaChunker(iv, key)  # pyright: ignore[reportArgumentType]
+    chunker = MegaChunker(key, iv)  # pyright: ignore[reportArgumentType]
     return await _upload_chunks(api, chunker, file_path, file_size)
 
 
@@ -49,7 +49,6 @@ async def _upload_chunks(
     progress_hook = progress.current_hook.get()
     log_progress = progress_logger(file_path, file_size, download=False)
 
-    file_size = ByteSize(file_size)
     with await asyncio.to_thread(file_path.open, "rb") as input_file:
         for offset, size in get_chunks(file_size):
             chunk = chunker.read(await asyncio.to_thread(input_file.read, size))

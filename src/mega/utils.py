@@ -59,7 +59,7 @@ def progress_logger(output_path: Path, file_size: int, *, download: bool) -> Cal
 
     def log() -> Generator[None, float]:
         bytes_uploaded: float = 0
-        threashold = 0
+        threshold = 0
         kind = "downloaded" if download else "uploaded"
         human_total = ByteSize(file_size).human_readable()
         last_log_size = 0
@@ -68,9 +68,9 @@ def progress_logger(output_path: Path, file_size: int, *, download: bool) -> Cal
             chunk_size: float = yield
             bytes_uploaded += chunk_size
             ratio: float = (bytes_uploaded / file_size) * 100
-            if ratio >= threashold or (bytes_uploaded - last_log_size) > _50MB:
+            if ratio >= threshold or (bytes_uploaded - last_log_size) > _50MB:
                 human_progress = ByteSize(bytes_uploaded).human_readable()
-                threashold = ((ratio // 10) + 1) * 10
+                threshold = ((ratio // 10) + 1) * 10
                 last_log_size = bytes_uploaded
                 logger.debug(f'{human_progress}/{human_total} {kind} ({ratio:0.1f}%) for "{output_path!s}"')
 

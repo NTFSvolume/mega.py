@@ -44,15 +44,15 @@ def get_chunks(size: int) -> Generator[ChunkBoundary]:
 class MegaChunker:
     """Decrypts/encrypts a flow of chunks using Mega's custom CBC-MAC algorithm"""
 
-    iv: tuple[int, int]
     key: tuple[int, int, int, int]
+    iv: tuple[int, int]
     expected_meta_mac: tuple[int, int] | None = None
 
     _gen: Generator[bytes, bytes | None, tuple[int, int]] = dataclasses.field(init=False, repr=False)
     _computed_meta_mac: tuple[int, int] | None = dataclasses.field(init=False, default=None)
 
     def __post_init__(self) -> None:
-        self._gen = _iter_chunks(self.iv, self.key, decrypt=bool(self.expected_meta_mac))
+        self._gen = _iter_chunks(self.key, self.iv, decrypt=bool(self.expected_meta_mac))
         _ = next(self._gen)
 
     def read(self, raw_chunk: bytes) -> bytes:
@@ -78,8 +78,8 @@ class MegaChunker:
 
 
 def _iter_chunks(
-    iv: tuple[int, int],
     key: tuple[int, int, int, int],
+    iv: tuple[int, int],
     *,
     decrypt: bool,
 ) -> Generator[bytes, bytes | None, tuple[int, int]]:

@@ -19,6 +19,7 @@ from mega.utils import Site, async_map
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
+    from contextlib import _GeneratorContextManager  # pyright: ignore[reportPrivateUsage]
     from os import PathLike
 
     from mega.data_structures import GetNodesResponse, NodeSerialized
@@ -45,6 +46,10 @@ class TransferItAPI(MegaAPI):
 class TransferItClient(APIContextManager):
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:  # pyright: ignore[reportMissingSuperCall]
         self._api = TransferItAPI(session)
+
+    @property
+    def progress_bar(self) -> _GeneratorContextManager[None, None, None]:
+        return progress.new_progress()
 
     async def get_filesystem(self, transfer_id: TransferID) -> FileSystem:
         logger.info(f"Fetching filesystem information for {transfer_id = }...")

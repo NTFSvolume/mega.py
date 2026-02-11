@@ -92,14 +92,14 @@ class MegaCore:
     def parse_file_url(cls, url: str | yarl.URL) -> tuple[NodeID, str]:
         result = cls.parse_url(url)
         if result.is_folder:
-            raise ValueError("This is a folder URL: {url}")
+            raise ValidationError(f"This is a folder URL: {url}")
         return result.public_handle, result.public_key
 
     @classmethod
     def parse_folder_url(cls, url: str | yarl.URL) -> tuple[NodeID, str, NodeID | None]:
         result = cls.parse_url(url)
         if not result.is_folder:
-            raise ValueError("This is a file URL: {url}")
+            raise ValidationError(f"This is a file URL: {url}")
         return result.public_handle, result.public_key, result.selected_node
 
     @staticmethod
@@ -113,7 +113,7 @@ class MegaCore:
 
         url = new_url
         if not url.fragment:
-            raise ValueError(f"Public key missing from {url}")
+            raise ValidationError(f"Public key missing from {url}")
 
         match url.parts[1:]:
             case ["file", public_handle]:
@@ -129,12 +129,12 @@ class MegaCore:
                     case []:
                         pass
                     case _:
-                        raise ValueError(f"Unknown URL format {url}")
+                        raise ValidationError(f"Unknown URL format {url}")
 
                 return PublicURLInfo(True, public_handle, public_key, selected_folder, selected_file)
 
             case _:
-                raise ValueError(f"Unknown URL format {url}")
+                raise ValidationError(f"Unknown URL format {url}")
 
     async def get_user(self) -> UserResponse:
         return await self.api.post({"a": "ug"})
@@ -151,7 +151,7 @@ class MegaCore:
             if e.code == -11:
                 msg = "Can't get a public link from that file"
                 error = MegaNzError(msg)
-                error.add_note("Is this a shared file?) You may need to export it first")
+                error.add_note("Is this a shared file? You may need to export it first")
                 raise error from e
             raise
 
@@ -225,7 +225,7 @@ class MegaCore:
         if node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self.vault[node]
             crypto = Crypto.decompose(full_key, node.type, share_key)
-            attributes = Attributes.parse(decrypt_attr(b64_url_decode(node._a), crypto.key))
+            attributes = self.decrypt_attrs(node._a, crypto.key)
 
         else:
             name = {
@@ -334,12 +334,6 @@ class MegaCore:
         logger.info(f"Decrypting and building filesystem for {public_handle = } ({len(nodes)} nodes)...")
         nodes = await self.deserialize_nodes(nodes, public_key)
         return await asyncio.to_thread(FileSystem.build, nodes)
-
-    def success(self, resp: int, clear_cache: bool = True) -> bool:
-        success = resp == 0
-        if success and clear_cache:
-            self.clear_cache()
-        return success
 
     async def mkdir(self, path: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
