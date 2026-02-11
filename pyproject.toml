@@ -34,7 +34,7 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "2.0.1.post1"
+version = "2.0.2"
 
 [project.optional-dependencies]
 cli = [
@@ -127,13 +127,10 @@ requires = ["uv_build>=0.8.17,<0.9.0"]
 
 [dependency-groups]
 dev = [
-    "coverage[toml]>=7.7.0",
     "pre-commit>=4.5.0",
     "pytest-asyncio>=0.25.0",
-    "pytest-cov>=6.0.0",
     "pytest>=8.3.5",
-    "requests-mock>=1.12.1",
     "rich>=14.0.0",
-    "ruff>=0.13.1",
-    "typing-extensions>=4.15.0"
+    "ruff>=0.15.0",
+    "typer-slim>=0.21.1"
 ]
