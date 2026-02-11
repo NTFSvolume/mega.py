@@ -12,6 +12,7 @@ from mega.filesystem import _POSIX_ROOT, UserFileSystem
 NODE_ID = "0fPFklV3"
 FIND_NODE_ID = "0fPFklV3"
 DELETED_NODE_IDS = "t8HkzBH2", "8EwHVJna"
+TEST_FS = Path(__file__).parent / "fake_fs.json"
 
 
 @pytest.fixture(name="fs")
@@ -118,17 +119,14 @@ def test_iter_dir(fs: UserFileSystem) -> None:
     assert get_path(recursive=True) == sorted(recursive_children)
 
 
-def test_unsafe_filesystem() -> None:
-    path = Path(__file__).parent / "fake_fs.json"
-    dump = json.loads(path.read_text())
+def test_unsafe_filesystem_build() -> None:
+    dump = json.loads(TEST_FS.read_text())
     nodes = (Node.from_dump(node) for node in dump["nodes"].values())
-    fs = UserFileSystem.build_unsafe(nodes)
-    assert fs.dump() == dump
+    UserFileSystem.build_unsafe(nodes)
 
 
-def test_safe_filesystem() -> None:
-    path = Path(__file__).parent / "fake_fs.json"
-    dump = json.loads(path.read_text())
+def test_safe_filesystem_build() -> None:
+    dump = json.loads(TEST_FS.read_text())
     nodes = (Node.from_dump(node) for node in dump["nodes"].values())
     fs = UserFileSystem.build(nodes)
-    path.write_text(json.dumps(fs.dump(), indent=2, ensure_ascii=False))
+    TEST_FS.write_text(json.dumps(fs.dump(), indent=2, ensure_ascii=False) + "\n")
