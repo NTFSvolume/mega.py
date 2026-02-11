@@ -63,14 +63,10 @@ Login should always be the first thing you do. Almost all operations require a v
 ```python
 from mega.client import MegaNzClient
 
-async with MegaNzClient() as mega:
-    await mega.login() # login using a temporary anonymous account
-
-# Also works without using it as a context manager,
+# Also works without using it as a context manager, but you have the responsability to close the session at the end
 mega = MegaNzClient()
-await mega.login()
-# but you have the responsability to close the session
-# mega.close()  
+await mega.login() # login using a temporary anonymous account
+# await mega.close()  
 
 ```
 
@@ -97,19 +93,27 @@ contact = "test@mega.nz"
 await mega.add_contact(contact)
 await mega.remove_contact(contact)
 
+async def view_paths():
+    fs = await mega.get_filesystem()
+    print (fs.paths.values())
+
 # Create a folder
 await mega.create_folder('new_folder')
 await mega.create_folder('new_folder/sub_folder/subsub_folder')
+await view_paths()
 
 # Rename a file or a folder
 folder = await mega.find('new_folder/sub_folder/subsub_folder')
 await mega.rename(folder, new_name='my_new_name')
+await view_paths()
 
-# Delete or destroy folder
+# Send this node to the trash bin (still counts towards your quota)
+await mega.delete(folder.id)
+await view_paths()
 
-await mega.delete(folder.id) # Send this node to the trash bin (still counts towards your quota)
-await mega.destroy(folder.id) # This removes it completely from your account
-
+# This removes it completely from your account
+await mega.destroy(folder.id)
+await view_paths()
 ```
 
 ### Upload / Downloads
@@ -118,29 +122,29 @@ await mega.destroy(folder.id) # This removes it completely from your account
 # Upload a file, and get its public link
 my_real_file = '/home/user/myfile.doc' # Change this to a real file path!
 uploaded_file = await mega.upload(my_real_file) # Upload returns the Node that represents the file you just uploaded
-await mega.export(uploaded_file)
+await mega.export(uploaded_file) # This only works with real accounts. Temp accounts can't create public links
 
 # Download a file from your account
 output_dir = "my downloads"
 await mega.download(uploaded_file, output_dir)
 
 # Download a public file
-url = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
-public_handle, public_key = mega.parse_file_url(url)  
+file_url = "https://mega.nz/file/vJ9EBJBC#vA1XpbngXcnN7lqXEWGQFPDc5ZlG6yltCHwGN-0O2LQ"
+public_handle, public_key = mega.parse_file_url(file_url)  
 await mega.download_public_file(public_handle, public_key, output_dir)
 
 # Download a public folder
-url = "https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc"
-public_handle, public_key, selected_node = mega.parse_folder_url(url)
-success, fails = await mega.download_public_folder(public_handle, public_key, output_dir, selected_node)
-print(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+folder_url = "https://mega.nz/folder/CJ8y1SDJ#KX8YfTd526P4o_hDH02jLQ"
+public_handle, public_key, selected_node = mega.parse_folder_url(folder_url)
+results = await mega.download_public_folder(public_handle, public_key, output_dir, selected_node)
+for node_id, result in results.items():
+    print ((node_id, result))
 
 # Import a file from URL
-url = "https://mega.nz/#!hYVmXKqL!r0d0-WRnFwulR_shhuEDwrY1Vo103-am1MyUy8oV6Ps"
-public_handle, public_key = mega.parse_file_url(url)
+public_handle, public_key = mega.parse_file_url(file_url)
 await mega.import_public_file(public_handle, public_key, dest_node_id=folder.id)
 
-# How do you know if an URL is a file or folder? call the more generic parse_url method
+# How do you know if an URL is a file or folder?
 result = mega.parse_url(url)
 print (result.is_folder)
 ```
@@ -149,10 +153,8 @@ print (result.is_folder)
 > You can show a progress bar on the terminal for each download/upload by calling them within the `progress_bar` context manager (needs optional dependency `rich` to be installed):
 
 ```python
-url = "https://mega.co.nz/#F!utYjgSTQ!OM4U3V5v_W4N5edSo0wolg1D5H0fwSrLD3oLnLuS9pc"
-public_handle, public_key = mega.parse_folder_url(url)
 with mega.progress_bar:  
-    success, fails = await mega.download_public_folder(public_handle, public_key, output_dir)
+    success, fails = await mega.download_public_folder(public_handle, public_key, output_dir / "with_bar")
 ```
 
 ## The filesystem object
@@ -241,12 +243,11 @@ The output will be:
 
 ```python
 # Get the path to a node
-path = fs.absolute_path("0fPFklV3")
-# Should be: /tests/scripts/notes.txt
+fs.absolute_path("0fPFklV3") # /tests/scripts/notes.txt
 
 # Find a node by its *exact* path
 result = fs.find("/tests/scripts/notes.txt")
-assert result.id == "0fPFklV3"
+print (result.id) # "0fPFklV3"
 
 ```
 
@@ -257,7 +258,7 @@ list(fs.deleted)
 # List all the children of a folder (resursive)
 folder = fs.find("/tests")
 for node in fs.iterdir(folder.id, recursive=True):
-    print(fs.absolute_path(node))
+    print(fs.absolute_path(node.id))
 
 ```
 Output will be:
@@ -270,7 +271,9 @@ Output will be:
     "/tests/scripts",
     "/tests/scripts/notes.txt",
     "/tests/scripts/script.js",
-    "/tests/scripts/styles.css"
+    "/tests/scripts/styles.css",
+    "/tests/setup.sh",
+    "/tests/utils.py",
 ]
 ```
 
@@ -299,8 +302,8 @@ async with TransferItClient() as client:
     # but it does not have root, inbox or trash_bin nodes
     fs = await client.get_filesystem(transfer_id)
     output_dir = "My downloads"
-    success, fails = await client.download_transfer(transfer_id, output_dir)
-    logger.info(f"Download of '{url!s}' finished. Successful downloads {len(success)}, failed {len(fails)}")
+    results = await client.download_transfer(transfer_id, output_dir)
+    print (results)
 ```
 
 ## CLI
@@ -335,6 +338,6 @@ Usage: mega-py [OPTIONS] COMMAND [ARGS]...
 ```
 
 > [!TIP]
-> The CLI app does *not* accept login credentials, but you can still use your account by setting up the `MEGA_NZ_EMAIL` and `MEGA_NZ_PASSWORD` enviroment variables
+> The CLI app does *not* accept login credentials, but you can still use your account by setting up the `MEGA_EMAIL` and `MEGA_PASSWORD` enviroment variables
 >
 > It will also read them from an `.env` file (if found)
