@@ -14,6 +14,7 @@ from mega.api import APIContextManager, MegaAPI
 from mega.crypto import b64_to_a32, b64_url_decode, decrypt_attr
 from mega.data_structures import Attributes, Crypto, Node, NodeID, NodeType
 from mega.download import DownloadResults
+from mega.errors import ValidationError
 from mega.filesystem import FileSystem
 from mega.utils import Site, async_map
 
@@ -75,7 +76,7 @@ class TransferItClient(APIContextManager):
             case ["t", transfer_id]:
                 return transfer_id
             case _:
-                raise ValueError(f"Unknown URL format {url}")
+                raise ValidationError(f"Unknown URL format {url}")
 
     def create_download_url(self, transfer_id: TransferID, file: Node, password: str | None = None) -> str:
         """Get a direct download URL to the node

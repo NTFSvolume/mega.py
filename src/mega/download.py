@@ -15,6 +15,7 @@ from typing import IO, TYPE_CHECKING, Final, Generic, Self, TypeVar
 from mega import progress
 from mega.chunker import MegaChunker, get_chunks
 from mega.data_structures import NodeID
+from mega.errors import ValidationError
 from mega.utils import progress_logger
 
 if TYPE_CHECKING:
@@ -131,7 +132,7 @@ class DownloadResults(Mapping[NodeID, Path | Exception]):
 
     def __init__(self, success: Mapping[NodeID, Path], fails: Mapping[NodeID, Exception]) -> None:
         if not success.keys().isdisjoint(fails.keys()):
-            raise ValueError("A NodeID cannot be in both success and fails")
+            raise ValidationError("A NodeID cannot be in both success and fails")
         self.success = MappingProxyType(success)
         self.fails = MappingProxyType(fails)
 

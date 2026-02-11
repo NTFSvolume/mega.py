@@ -13,6 +13,8 @@ from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
 import yarl
 
+from mega.errors import ValidationError
+
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
     from pathlib import Path
@@ -35,7 +37,7 @@ class Site(Enum):
 
     def check_host(self, url: yarl.URL) -> None:
         if url.host != self.value.host:
-            raise ValueError(f"Not a {self.value.host} URL: {url}")
+            raise ValidationError(f"Not a {self.value.host} URL: {url}")
 
 
 def setup_logger(level: int = logging.INFO) -> None:

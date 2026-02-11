@@ -13,6 +13,8 @@ from Crypto.Cipher import AES
 from Crypto.Math.Numbers import Integer
 from Crypto.PublicKey import RSA
 
+from mega.errors import ValidationError
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -175,7 +177,7 @@ def generate_hashcash(challenge: str) -> str:
     version, easiness, _date, token = challenge.split(":")
     version = int(version)
     if version != 1:
-        raise ValueError(f"Unsupported hashcash challenge {version = } {challenge = }")
+        raise ValidationError(f"Unsupported hashcash challenge {version = } {challenge = }")
 
     easiness = int(easiness)
     threshold = ((easiness & 63) << 1) + 1 << (easiness >> 6) * 7 + 3
