@@ -1,6 +1,6 @@
 # Release History
 
-## 2.0.0 (unreleased)
+## 2.0.0 (2026-02-10)
 
 - Refactor entire codebase to use an async design
 - Add logic to solve xhashcash to fix account login
