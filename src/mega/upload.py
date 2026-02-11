@@ -8,7 +8,7 @@ from mega import progress
 from mega.chunker import MegaChunker, get_chunks
 from mega.crypto import a32_to_base64, b64_url_encode, encrypt_attr, encrypt_key
 from mega.data_structures import ByteSize, Crypto
-from mega.utils import random_u32int_array
+from mega.utils import progress_logger, random_u32int_array
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,23 +44,18 @@ async def _upload_chunks(
     file_path: Path,
     file_size: int,
 ) -> tuple[str, Crypto]:
-    upload_progress = 0
     file_handle = ""
     upload_url = await _request_upload_url(api, file_size)
     progress_hook = progress.current_hook.get()
+    log_progress = progress_logger(file_path, file_size, download=False)
 
     file_size = ByteSize(file_size)
-    total = file_size.human_readable()
     with await asyncio.to_thread(file_path.open, "rb") as input_file:
         for offset, size in get_chunks(file_size):
             chunk = chunker.read(await asyncio.to_thread(input_file.read, size))
             file_handle = await api.upload_chunk(upload_url, offset, chunk)
-            human_progress = ByteSize(upload_progress).human_readable()
-            ratio = (upload_progress / file_size) * 100
-            logger.debug(f'{human_progress}/{total} uploaded ({ratio:0.1f}%) for "{file_path!s}"')
-            real_size = len(chunk)
-            upload_progress += real_size
-            progress_hook(real_size)
+            log_progress(len(chunk))
+            progress_hook(len(chunk))
 
     assert file_handle
     return file_handle, Crypto.compose(chunker.key, chunker.iv, chunker.compute_meta_mac())

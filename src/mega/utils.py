@@ -6,6 +6,7 @@ import errno
 import logging
 import random
 import string
+from collections.abc import Callable
 from enum import Enum
 from stat import S_ISREG
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
@@ -13,7 +14,7 @@ from typing import TYPE_CHECKING, Literal, TypeVar, overload
 import yarl
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable, Iterable, Sequence
+    from collections.abc import Awaitable, Callable, Generator, Iterable, Sequence
     from pathlib import Path
 
     _T1 = TypeVar("_T1")
@@ -38,12 +39,44 @@ class Site(Enum):
 
 
 def setup_logger(level: int = logging.INFO) -> None:
-    from rich.logging import RichHandler
+    try:
+        from rich.logging import RichHandler
+    except ImportError:
+        handler = logging.StreamHandler()
+    else:
+        handler = RichHandler(show_time=False, rich_tracebacks=True, show_path=False)
 
-    handler = RichHandler(show_time=False, rich_tracebacks=True, show_path=False)
     logger = logging.getLogger("mega")
     logger.setLevel(level)
     logger.addHandler(handler)
+
+
+def progress_logger(output_path: Path, file_size: int, *, download: bool) -> Callable[[float], None]:
+    if not logger.isEnabledFor(10):
+        return lambda _: None
+
+    from mega.data_structures import ByteSize
+
+    def log() -> Generator[None, float]:
+        bytes_uploaded: float = 0
+        threashold = 0
+        kind = "downloaded" if download else "uploaded"
+        human_total = ByteSize(file_size).human_readable()
+        last_log_size = 0
+        _50MB = 1024 * 1024 * 50
+        while True:
+            chunk_size: float = yield
+            bytes_uploaded += chunk_size
+            ratio: float = (bytes_uploaded / file_size) * 100
+            if ratio >= threashold or (bytes_uploaded - last_log_size) > _50MB:
+                human_progress = ByteSize(bytes_uploaded).human_readable()
+                threashold = ((ratio // 10) + 1) * 10
+                last_log_size = bytes_uploaded
+                logger.debug(f'{human_progress}/{human_total} {kind} ({ratio:0.1f}%) for "{output_path!s}"')
+
+    gen = log()
+    _ = next(gen)
+    return gen.send
 
 
 def random_u32int() -> int:

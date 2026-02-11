@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
+import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
@@ -14,7 +15,7 @@ from mega.crypto import a32_to_base64, b64_to_a32, b64_url_encode, encrypt_attr,
 from mega.data_structures import AccountStats, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.download import DownloadResults
 from mega.errors import MegaNzError, RequestError, ValidationError
-from mega.utils import Site, async_map
+from mega.utils import Site, async_map, setup_logger
 
 if TYPE_CHECKING:
     from contextlib import _GeneratorContextManager  # pyright: ignore[reportPrivateUsage]
@@ -38,6 +39,8 @@ class MegaNzClient(APIContextManager):
     def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
         super().__init__(session)
         self._core: MegaCore = MegaCore(self._api)
+        if hasattr(sys, "ps1"):
+            setup_logger(logging.DEBUG)
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(filesystem={self.cached_filesystem!r}, vault={self._core.vault!r}, logged_in={self.logged_in!r})"
@@ -261,12 +264,12 @@ class MegaNzClient(APIContextManager):
 
         return await self._core.mkdir(path, fs.root.id)
 
-    async def rename(self, node: Node, new_name: str) -> bool:
+    async def rename(self, node: Node, new_name: str) -> None:
         new_attrs = dataclasses.replace(node.attributes, name=new_name)
         attribs = b64_url_encode(encrypt_attr(new_attrs.serialize(), node._crypto.key))
         encrypted_key = a32_to_base64(encrypt_key(node._crypto.key, self._core.vault.master_key))
 
-        resp = await self._core.api.post(
+        _ = await self._core.api.post(
             {
                 "a": "a",
                 "attr": attribs,
@@ -275,7 +278,7 @@ class MegaNzClient(APIContextManager):
                 "i": self._core.api.client_id,
             },
         )
-        return self._core.success(resp)
+        self._core.clear_cache()
 
     async def get_public_file_info(self, public_handle: NodeID, public_key: str) -> FileInfo:
         full_key = b64_to_a32(public_key)

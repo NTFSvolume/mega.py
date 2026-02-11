@@ -15,6 +15,7 @@ from typing import IO, TYPE_CHECKING, Final, Generic, Self, TypeVar
 from mega import progress
 from mega.chunker import MegaChunker, get_chunks
 from mega.data_structures import NodeID
+from mega.utils import progress_logger
 
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator
@@ -63,11 +64,14 @@ async def encrypted_stream(
 
         chunker = MegaChunker(iv, key, meta_mac)
         progress_hook = progress.current_hook.get()
+        log_progress = progress_logger(output_path, file_size, download=True)
+
         async with _new_temp_download(output_path) as file_io:
             for _, chunk_size in get_chunks(file_size):
                 encrypted_chunk = await stream.readexactly(chunk_size)
                 chunk = chunker.read(encrypted_chunk)
                 await asyncio.to_thread(file_io.write, chunk)
+                log_progress(len(chunk))
                 progress_hook(len(chunk))
 
             chunker.check_integrity()
@@ -75,15 +79,18 @@ async def encrypted_stream(
         return output_path
 
 
-async def stream(stream: aiohttp.StreamReader, output_path: Path) -> Path:
+async def stream(stream: aiohttp.StreamReader, output_path: Path, file_size: int) -> Path:
     async with _LOCKS[output_path]:
         if await asyncio.to_thread(output_path.exists):
             raise FileExistsError(errno.EEXIST, output_path)
 
         progress_hook = progress.current_hook.get()
+        log_progress = progress_logger(output_path, file_size, download=True)
+
         async with _new_temp_download(output_path) as file_io:
             async for chunk in stream.iter_chunked(_CHUNK_SIZE):
                 await asyncio.to_thread(file_io.write, chunk)
+                log_progress(len(chunk))
                 progress_hook(len(chunk))
 
         return output_path
@@ -118,6 +125,9 @@ async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
 class DownloadResults(Mapping[NodeID, Path | Exception]):
     success: MappingProxyType[NodeID, Path]
     fails: MappingProxyType[NodeID, Exception]
+
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__}>(success={self.success!r}, fails={self.fails!r})"
 
     def __init__(self, success: Mapping[NodeID, Path], fails: Mapping[NodeID, Exception]) -> None:
         if not success.keys().isdisjoint(fails.keys()):

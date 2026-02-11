@@ -134,4 +134,4 @@ class TransferItClient(APIContextManager):
         async with self._api.get(dl_link, headers={"Referer": "https://transfer.it/"}) as response:
             size = int(response.headers["Content-Length"])
             with progress.new_task(output_path.name, size, "DOWN"):
-                return await download.stream(response.content, output_path)
+                return await download.stream(response.content, output_path, size)
