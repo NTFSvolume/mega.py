@@ -1,7 +1,7 @@
 # Async Mega.py
 
 [![PyPI - Version](https://img.shields.io/pypi/v/async-mega-py)](https://pypi.org/project/async-mega-py/)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/async-mega-py)](https://pypi.org/project/async-mega-py/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/async-mega-py?style=flat)](https://pypi.org/project/async-mega-py/)
 [![linting - Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/NTFSvolume/mega.py/actions/workflows/ruff.yml)
 [![GitHub License](https://img.shields.io/github/license/NTFSvolume/mega.py)](https://github.com/NTFSvolume/mega.py/blob/master/LICENSE)
 [![CI](https://github.com/NTFSvolume/mega.py/actions/workflows/ci.yml/badge.svg)](https://github.com/NTFSvolume/mega.py/actions/workflows/ci.yml)
