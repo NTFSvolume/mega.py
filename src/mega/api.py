@@ -86,7 +86,6 @@ class MegaAPI:
         self.__session = session
         self._auto_close_session = session is None
         self._rate_limiter = AsyncLimiter(100, 60)
-        logger.disabled = not LOG_HTTP_TRAFFIC.get()
 
     @property
     def entrypoint(self) -> yarl.URL:
@@ -176,8 +175,9 @@ class MegaAPI:
         **kwargs: Any,
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
         kwargs["headers"] = _DEFAULT_HEADERS | (headers or {})
-        params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
-        logger.debug(f"Making {method} request to {url!s} with {params}")
+        if LOG_HTTP_TRAFFIC.get():
+            params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
+            logger.debug(f"Making {method} request to {url!s} with {params}")
         async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
             yield resp
 
@@ -185,7 +185,8 @@ class MegaAPI:
     async def _parse_response(response: aiohttp.ClientResponse) -> Any:
         json_resp = await response.json()
         resp = json_resp
-        logger.debug(f"Got response [{response.status}] json={json_resp!r}")
+        if LOG_HTTP_TRAFFIC.get():
+            logger.debug(f"Got response [{response.status}] json={json_resp!r}")
 
         if isinstance(json_resp, list) and len(json_resp) == 1:
             resp = json_resp[0]
