@@ -409,7 +409,6 @@ class MegaCore:
         dest_node_id: NodeID,
     ) -> Node:
         """Import the public file into user account"""
-
         full_key = b64_to_a32(public_key)
         key = Crypto.decompose(full_key).key
         file_info = await self.request_file_info(public_handle, is_public=True)

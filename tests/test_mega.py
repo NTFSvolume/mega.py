@@ -34,7 +34,7 @@ async def http_client() -> aiohttp.ClientSession:
     return aiohttp.ClientSession(loop=asyncio.get_running_loop())
 
 
-@pytest.fixture()
+@pytest.fixture
 def folder_name() -> str:
     return f"mega.py_testfolder_{str_utc_now()}"
 
@@ -54,7 +54,7 @@ async def folder(mega: MegaNzClient, folder_name: str) -> AsyncGenerator[Node]:
     node = await mega.find(folder_name)
     assert node
     assert node.type is NodeType.FOLDER
-    yield node
+    return node
 
 
 @pytest.fixture
@@ -63,7 +63,7 @@ async def uploaded_file(mega: MegaNzClient, folder_name: str, folder: Node) -> A
     path = f"{folder_name}/{TEST_FILE.name}"
     node = await mega.find(path)
     assert node
-    yield node
+    return node
 
 
 def test_mega(mega: MegaNzClient) -> None:

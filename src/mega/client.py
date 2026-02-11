@@ -103,7 +103,7 @@ class MegaNzClient(APIContextManager):
         fs = await self.get_filesystem()
         trashed_files = [f.id for f in fs.deleted]
         if not trashed_files:
-            return None
+            return
 
         await self._core.destroy(*trashed_files)
 

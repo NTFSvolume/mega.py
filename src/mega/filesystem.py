@@ -305,8 +305,7 @@ class FileSystem(SimpleFileSystem):
             return self[nodes[0]]
 
     def files_from(self, node_id: NodeID | None) -> Iterable[Node]:
-        """
-        Yield every file that is reachable from `node_id`.
+        """Yield every file that is reachable from `node_id`.
 
         - If `node_id` is `None`: yield all non deleted files on the file system.
         - If `node_id` points to a file: yield only that file.

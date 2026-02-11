@@ -23,13 +23,11 @@ class ChunkBoundary(NamedTuple):
 
 
 def get_chunks(size: int) -> Generator[ChunkBoundary]:
-    """
-    Yield chunk boundaries for Mega's MAC computation.
+    """Yield chunk boundaries for Mega's MAC computation.
 
     Chunk sizes double from 128 KiB (0x20000) up to 1 MiB (0x100000).
     The last chunk may be smaller
     """
-
     offset = 0
     current_size = init_size = 0x20000
     while offset + current_size < size:
