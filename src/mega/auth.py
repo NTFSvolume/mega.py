@@ -44,7 +44,7 @@ class Credentials(NamedTuple):
 
 
 async def login_anonymous(api: MegaAPI) -> Credentials:
-    logger.info("Creating as an anonymous temporary user...")
+    logger.info("Creating an anonymous temporary user...")
 
     master_key = random_u32int_array(4)
     aes_key = random_u32int_array(4)

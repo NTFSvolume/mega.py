@@ -6,8 +6,6 @@ import sys
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
-import aiohttp
-
 from mega import progress
 from mega.api import APIContextManager
 from mega.core import MegaCore
@@ -15,12 +13,13 @@ from mega.crypto import a32_to_base64, b64_to_a32, b64_url_encode, encrypt_attr,
 from mega.data_structures import AccountStats, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
 from mega.download import DownloadResults
 from mega.errors import MegaNzError, RequestError, ValidationError
-from mega.utils import Site, async_map, setup_logger
+from mega.utils import Site, async_map, format_error, setup_logger
 
 if TYPE_CHECKING:
     from contextlib import _GeneratorContextManager  # pyright: ignore[reportPrivateUsage]
     from os import PathLike
 
+    import aiohttp
     import yarl
 
     from mega.filesystem import FileSystem, UserFileSystem
@@ -221,10 +220,7 @@ class MegaNzClient(APIContextManager):
                 result = await self._core.download_file(file_info, file._crypto, output_path)
 
             except Exception as exc:
-                if isinstance(exc, aiohttp.ClientResponseError):
-                    msg = f"[{exc.status}] {exc.message}"
-                else:
-                    msg = f"({type(exc).__name__})"
+                msg = format_error(exc)
                 logger.error(f'Unable to download {web_url} to "{output_path}" {msg}')
                 result = exc
 

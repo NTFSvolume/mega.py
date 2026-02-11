@@ -11,6 +11,7 @@ from enum import Enum
 from stat import S_ISREG
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
 
+import aiohttp
 import yarl
 
 from mega.errors import ValidationError
@@ -38,6 +39,14 @@ class Site(Enum):
     def check_host(self, url: yarl.URL) -> None:
         if url.host != self.value.host:
             raise ValidationError(f"Not a {self.value.host} URL: {url}")
+
+
+def format_error(exc: Exception) -> str:
+    if isinstance(exc, aiohttp.ClientResponseError):
+        msg = f"[{exc.status}] {exc.message}"
+    else:
+        msg = f"({type(exc).__name__})"
+    return msg[:20]
 
 
 def setup_logger(level: int = logging.INFO) -> None:

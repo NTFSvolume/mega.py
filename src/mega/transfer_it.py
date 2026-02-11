@@ -6,7 +6,6 @@ import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, TypeAlias
 
-import aiohttp
 import yarl
 
 from mega import download, progress
@@ -16,12 +15,14 @@ from mega.data_structures import Attributes, Crypto, Node, NodeID, NodeType
 from mega.download import DownloadResults
 from mega.errors import ValidationError
 from mega.filesystem import FileSystem
-from mega.utils import Site, async_map
+from mega.utils import Site, async_map, format_error
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
     from contextlib import _GeneratorContextManager  # pyright: ignore[reportPrivateUsage]
     from os import PathLike
+
+    import aiohttp
 
     from mega.data_structures import GetNodesResponse, NodeSerialized
 
@@ -123,10 +124,7 @@ class TransferItClient(APIContextManager):
             try:
                 result = await self._download_file(dl_link, output_path)
             except Exception as exc:
-                if isinstance(exc, aiohttp.ClientResponseError):
-                    msg = f"[{exc.status}] {exc.message}"
-                else:
-                    msg = f"({type(exc).__name__})"
+                msg = format_error(exc)
                 logger.error(f'Unable to download {web_url} to "{output_path}" {msg}')
                 result = exc
 
