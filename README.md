@@ -338,6 +338,6 @@ Usage: mega-py [OPTIONS] COMMAND [ARGS]...
 ```
 
 > [!TIP]
-> The CLI app does *not* accept login credentials, but you can still use your account by setting up the `MEGA_EMAIL` and `MEGA_PASSWORD` enviroment variables
+> The CLI app does *not* accept login credentials, but you can still use your account by setting up the `MEGA_EMAIL` and `MEGA_PWD` enviroment variables
 >
 > It will also read them from an `.env` file (if found)
