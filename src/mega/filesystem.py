@@ -344,3 +344,87 @@ class UserFileSystem(FileSystem):
     root: Node
     inbox: Node
     trash_bin: Node
+
+    @classmethod
+    def build_unsafe(cls, nodes: Iterable[Node]) -> Self:
+        """Build a filesystem from a pre-ordered node stream without validation
+
+        Nodes MUST be topologically sorted:
+        - The first three nodes are ROOT, INBOX and TRASH_BIN.
+        - Every parent appears before its descendants.
+        """
+        # Build fs using only 3 loops:
+        # - 1. Create a map to all nodes and resolve their paths
+        # - 2. Freeze children (list -> tuple)
+        # - 3. Freeze inv paths (list -> tuple)
+        root = inbox = trash_bin = None
+        file_count = folder_count = 0
+
+        paths: dict[NodeID, PurePosixPath] = {}
+        inv_paths: dict[PurePosixPath, list[NodeID]] = {}
+        deleted_ids: set[NodeID] = set()
+        nodes_map: dict[NodeID, Node] = {}
+        children: dict[NodeID, list[NodeID]] = {}
+        trash_bin_id = None
+
+        for node in nodes:
+            nodes_map[node.id] = node
+            if node.parent_id:
+                children.setdefault(node.parent_id, []).append(node.id)
+
+            path = None
+            match node.type:
+                case NodeType.FILE:
+                    file_count += 1
+                case NodeType.FOLDER:
+                    folder_count += 1
+                case NodeType.ROOT_FOLDER:
+                    path = _POSIX_ROOT
+                    root = node
+                case NodeType.INBOX:
+                    path = _POSIX_ROOT / node.attributes.name
+                    inbox = node
+                case NodeType.TRASH:
+                    path = _POSIX_ROOT / node.attributes.name
+                    trash_bin_id = node.id
+                    trash_bin = node
+                case _:
+                    raise RuntimeError  # pyright: ignore[reportUnreachable]
+
+            path = path or (paths[node.parent_id] / node.attributes.name)
+            paths[node.id] = path
+            inv_paths.setdefault(path, []).append(node.id)
+            if node.parent_id == trash_bin_id or node.parent_id in deleted_ids:
+                deleted_ids.add(node.id)
+
+        assert root and inbox and trash_bin
+        return cls(
+            root=root,
+            inbox=inbox,
+            trash_bin=trash_bin,
+            file_count=file_count,
+            folder_count=folder_count,
+            _nodes=MappingProxyType(nodes_map),
+            _children=MappingProxyType({node_id: tuple(nodes) for node_id, nodes in children.items()}),
+            _paths=MappingProxyType(paths),
+            _inv_paths=MappingProxyType({path: tuple(nodes) for path, nodes in inv_paths.items()}),
+            _deleted=frozenset(deleted_ids),
+        )
+
+
+if __name__ == "__main__":
+    import json
+    import timeit
+    from pathlib import Path
+
+    path = Path(__file__).parent.parent.parent / "tests" / "fake_fs.json"
+    dump = json.loads(path.read_text())
+
+    nodes = [Node.from_dump(node) for node in dump["nodes"].values()]
+    print(f"Testing filesystem build of {len(nodes):_} nodes")  # noqa: T201
+
+    iterations = 1_000
+    unsafe = timeit.timeit(lambda: UserFileSystem.build_unsafe(nodes), number=iterations)
+    print(f"{iterations} [UNSAFE] calls took {unsafe:.4f}s")  # noqa: T201
+    safe = timeit.timeit(lambda: UserFileSystem.build(nodes), number=iterations)
+    print(f"{iterations} [SAFE] calls took {safe:.4f}s")  # noqa: T201

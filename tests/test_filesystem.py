@@ -116,3 +116,19 @@ def test_iter_dir(fs: UserFileSystem) -> None:
 
     assert get_path(recursive=False) == sorted(children)
     assert get_path(recursive=True) == sorted(recursive_children)
+
+
+def test_unsafe_filesystem() -> None:
+    path = Path(__file__).parent / "fake_fs.json"
+    dump = json.loads(path.read_text())
+    nodes = (Node.from_dump(node) for node in dump["nodes"].values())
+    fs = UserFileSystem.build_unsafe(nodes)
+    assert fs.dump() == dump
+
+
+def test_safe_filesystem() -> None:
+    path = Path(__file__).parent / "fake_fs.json"
+    dump = json.loads(path.read_text())
+    nodes = (Node.from_dump(node) for node in dump["nodes"].values())
+    fs = UserFileSystem.build(nodes)
+    path.write_text(json.dumps(fs.dump(), indent=2, ensure_ascii=False))

@@ -1,4 +1,6 @@
 {
+  "file_count": 14,
+  "folder_count": 3,
   "root": {
     "id": "qCZrYJVK",
     "parent_id": "",
@@ -50,8 +52,6 @@
     "_a": "",
     "_crypto": null
   },
-  "file_count": 14,
-  "folder_count": 3,
   "nodes": {
     "qCZrYJVK": {
       "id": "qCZrYJVK",
@@ -858,6 +858,10 @@
       }
     }
   },
+  "deleted": [
+    "8EwHVJna",
+    "t8HkzBH2"
+  ],
   "paths": {
     "qCZrYJVK": "/",
     "FeWnQouH": "/backup.sql",
@@ -879,5 +883,94 @@
     "2Tae8amE": "/Trash Bin",
     "t8HkzBH2": "/Trash Bin/data",
     "8EwHVJna": "/Trash Bin/data/docker-compose.yml"
+  },
+  "inv_paths": {
+    "/": [
+      "qCZrYJVK"
+    ],
+    "/backup.sql": [
+      "FeWnQouH"
+    ],
+    "/docker-compose.yml": [
+      "coJ3yMOW"
+    ],
+    "/Inbox": [
+      "FzL3QdIj"
+    ],
+    "/index.html": [
+      "2gL2GPaJ"
+    ],
+    "/logo.png": [
+      "msinsVCj"
+    ],
+    "/styles.css": [
+      "MBlNlb2P"
+    ],
+    "/tests": [
+      "7N9QiWZ9"
+    ],
+    "/tests/logo.png": [
+      "RDJJI2lv",
+      "pHWVIQLd"
+    ],
+    "/tests/script.js": [
+      "oImwb6nN"
+    ],
+    "/tests/scripts": [
+      "FIXitv4F"
+    ],
+    "/tests/scripts/notes.txt": [
+      "0fPFklV3"
+    ],
+    "/tests/scripts/script.js": [
+      "l9zkz1GU"
+    ],
+    "/tests/scripts/styles.css": [
+      "E4LqT4EF"
+    ],
+    "/tests/setup.sh": [
+      "i6ry53xV"
+    ],
+    "/tests/utils.py": [
+      "Iri7NRCx"
+    ],
+    "/Trash Bin": [
+      "2Tae8amE"
+    ],
+    "/Trash Bin/data": [
+      "t8HkzBH2"
+    ],
+    "/Trash Bin/data/docker-compose.yml": [
+      "8EwHVJna"
+    ]
+  },
+  "children": {
+    "qCZrYJVK": [
+      "FeWnQouH",
+      "coJ3yMOW",
+      "2gL2GPaJ",
+      "msinsVCj",
+      "MBlNlb2P",
+      "7N9QiWZ9"
+    ],
+    "7N9QiWZ9": [
+      "RDJJI2lv",
+      "pHWVIQLd",
+      "oImwb6nN",
+      "FIXitv4F",
+      "i6ry53xV",
+      "Iri7NRCx"
+    ],
+    "FIXitv4F": [
+      "0fPFklV3",
+      "l9zkz1GU",
+      "E4LqT4EF"
+    ],
+    "2Tae8amE": [
+      "t8HkzBH2"
+    ],
+    "t8HkzBH2": [
+      "8EwHVJna"
+    ]
   }
 }
