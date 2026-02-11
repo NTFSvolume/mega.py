@@ -13,7 +13,7 @@ from mega import env
 from mega.api import MegaAPI
 from mega.client import MegaNzClient
 from mega.data_structures import AccountBalance, AccountStats, Node, NodeType, StorageQuota
-from mega.errors import MultipleNodesFoundError, RequestError, RetryRequestError
+from mega.errors import MultipleNodesFoundError, RequestError, RetryRequestError, ValidationError
 from mega.filesystem import UserFileSystem
 from mega.utils import setup_logger, str_utc_now
 
@@ -50,7 +50,7 @@ async def connect_to_mega(folder_name: str, http_client: aiohttp.ClientSession) 
 
 
 @pytest.fixture
-async def folder(mega: MegaNzClient, folder_name: str) -> AsyncGenerator[Node]:
+async def folder(mega: MegaNzClient, folder_name: str) -> Node:
     node = await mega.find(folder_name)
     assert node
     assert node.type is NodeType.FOLDER
@@ -58,7 +58,7 @@ async def folder(mega: MegaNzClient, folder_name: str) -> AsyncGenerator[Node]:
 
 
 @pytest.fixture
-async def uploaded_file(mega: MegaNzClient, folder_name: str, folder: Node) -> AsyncGenerator[Node]:
+async def uploaded_file(mega: MegaNzClient, folder_name: str, folder: Node) -> Node:
     await mega.upload(TEST_FILE, folder.id)
     path = f"{folder_name}/{TEST_FILE.name}"
     node = await mega.find(path)
@@ -252,7 +252,7 @@ async def test_upload_and_download(mega: MegaNzClient, tmp_path: Path, folder_na
     output_path = await mega.download(node, tmp_path)
     assert output_path.parent == tmp_path
     assert output_path.is_file()
-    assert output_path.read_text() == TEST_FILE.read_text()
+    assert output_path.read_text() == await asyncio.to_thread(TEST_FILE.read_text)
 
 
 async def test_empty_trash(mega: MegaNzClient) -> None:
@@ -271,7 +271,7 @@ async def test_remove_contact(mega: MegaNzClient) -> None:
 
 
 @pytest.mark.parametrize(
-    "url, expected",
+    ("url", "expected"),
     [
         (
             "https://mega.nz/#!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
@@ -294,14 +294,14 @@ def test_parse_url(url: str, expected: tuple[str, str]) -> None:
     ],
 )
 def test_parse_file_url_raise_value_error_for_file_urls(url: str) -> None:
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(ValidationError) as e:
         MegaNzClient.parse_file_url(url)
 
     assert "This is a folder URL" in str(e)
 
 
 @pytest.mark.parametrize(
-    "url, expected",
+    ("url", "expected"),
     [
         (
             "https://mega.nz/#F!Ue5VRSIQ!kC2E4a4JwfWWCWYNJovGFHlbz8FN-ISsBAGPzvTjT6k",
@@ -332,7 +332,7 @@ def test_parse_folder_url(url: str, expected: tuple[str, str]) -> None:
     ],
 )
 def test_parse_folder_url_raise_value_error_for_file_urls(url: str) -> None:
-    with pytest.raises(ValueError) as e:
+    with pytest.raises(ValidationError) as e:
         MegaNzClient.parse_folder_url(url)
 
     assert "This is a file URL" in str(e)
@@ -358,7 +358,7 @@ class TestAPIRequest:
             await MegaAPI._parse_response(self._fake_resp(value))
 
     @pytest.mark.parametrize(
-        "value, expected",
+        ("value", "expected"),
         [
             ({"a": "b"}, {"a": "b"}),
             (["a", "b"], ["a", "b"]),

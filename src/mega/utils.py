@@ -74,12 +74,12 @@ def progress_logger(output_path: Path, file_size: int, *, download: bool) -> Cal
         kind = "downloaded" if download else "uploaded"
         human_total = ByteSize(file_size).human_readable()
         last_log_size = 0
-        _50MB = 1024 * 1024 * 50
+        _50mb = 1024 * 1024 * 50
         while True:
             chunk_size: float = yield
             bytes_uploaded += chunk_size
             ratio: float = (bytes_uploaded / file_size) * 100
-            if ratio >= threshold or (bytes_uploaded - last_log_size) > _50MB:
+            if ratio >= threshold or (bytes_uploaded - last_log_size) > _50mb:
                 human_progress = ByteSize(bytes_uploaded).human_readable()
                 threshold = ((ratio // 10) + 1) * 10
                 last_log_size = bytes_uploaded

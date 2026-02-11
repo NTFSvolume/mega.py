@@ -1,11 +1,12 @@
 import pytest
 
+from mega.errors import ValidationError
 from mega.transfer_it import TransferItClient
 
 
 class TestParseURL:
     @pytest.mark.parametrize(
-        "url, expected",
+        ("url", "expected"),
         [
             (
                 "https://transfer.it/t/M6apuyoXALsz",
@@ -26,7 +27,7 @@ class TestParseURL:
         ],
     )
     def test_url_from_other_sites_should_raise_value_error(self, url: str) -> None:
-        with pytest.raises(ValueError) as e:
+        with pytest.raises(ValidationError) as e:
             TransferItClient.parse_url(url)
 
         assert "Not a transfer.it URL" in str(e.value)
@@ -39,7 +40,7 @@ class TestParseURL:
         ],
     )
     def test_url_without_transfer_id_should_raise_value_error(self, url: str) -> None:
-        with pytest.raises(ValueError) as e:
+        with pytest.raises(ValidationError) as e:
             TransferItClient.parse_url(url)
 
         assert "Unknown URL format" in str(e.value)

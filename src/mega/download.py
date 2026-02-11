@@ -99,7 +99,8 @@ async def stream(stream: aiohttp.StreamReader, output_path: Path, file_size: int
 
 @contextlib.asynccontextmanager
 async def _new_temp_download(output_path: Path) -> AsyncGenerator[IO[bytes]]:
-    # We need NamedTemporaryFile to not delete on file.close() but on context exit, which is not supported until python 3.12
+    # We need the file to not be delete on file.close() but on context exit,
+    # But NamedTemporaryFile does not supports this until python 3.12
     temp_file = await asyncio.to_thread(tempfile.NamedTemporaryFile, prefix="mega_py_", delete=False)
     logger.debug(f'Created temp file "{temp_file.name!s}" for "{output_path!s}"')
     try:

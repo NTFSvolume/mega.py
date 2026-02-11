@@ -6,7 +6,7 @@ from mega import crypto
 
 
 @pytest.mark.parametrize(
-    "attrs, key, expected_output",
+    ("attrs", "key", "expected_output"),
     [
         (
             b'\xb6E[\xe6K\xbd\xf9\t\x95\x1d\xcb\xe9\xa3N\x13 \xbb\xf3\x15\xf9H\xb7\x11\xe8\xec\\\x92"\x1d\xb45ia\xaf\x89v\xa5\xab\xd3\xb1\xa8Y\xbb\xe0\x81g\x8e\x19\x1b\xf5b\xa8\x1f`\x9d\x05b<\x13\x7fM\x07\xe0\xea',
@@ -24,7 +24,7 @@ def test_decrypt_attr(attrs: bytes, key: tuple[int, ...], expected_output: dict[
 
 
 @pytest.mark.parametrize(
-    "blob,expected",
+    ("blob", "expected"),
     [
         (b"\x00\x00\x00", 0),
         (b"\x00\x08\xff", 255),
@@ -36,7 +36,7 @@ def test_mpi(blob: bytes, expected: int) -> None:
 
 
 @pytest.mark.parametrize(
-    "input,expected",
+    ("input", "expected"),
     [
         (
             "1:192:1769956228:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj",

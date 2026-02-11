@@ -4,7 +4,7 @@ from mega.chunker import get_chunks
 
 
 @pytest.mark.parametrize(
-    "file_size, exp_result",
+    ("file_size", "exp_result"),
     [
         (
             0,

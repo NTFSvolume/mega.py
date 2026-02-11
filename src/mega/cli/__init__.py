@@ -46,7 +46,8 @@ app = CLIApp(
     callback=verbose,
     help=(
         "CLI app for the [bold black]Mega.nz[/bold black] and [bold black]Transfer.it[/bold black].\n"
-        f"Set [bold green]{env.EMAIL.name}[/bold green] and [bold green]{env.PASSWORD.name}[/bold green] enviroment variables to use them as credentials for Mega"
+        f"Set [bold green]{env.EMAIL.name}[/bold green] and [bold green]{env.PASSWORD.name}[/bold green]\n"
+        "enviroment variables to use them as credentials for Mega"
     ),
     epilog=f"v{__version__}",
 )
@@ -82,8 +83,9 @@ async def download(url: str, output_dir: Path = CWD) -> None:
     async with connect() as mega:
         parsed_url = mega.parse_url(url)
         if parsed_url.is_folder:
-            return await download_folder(mega, url, output_dir)
-        await download_file(mega, url, output_dir)
+            await download_folder(mega, url, output_dir)
+        else:
+            await download_file(mega, url, output_dir)
 
 
 @app.command()

@@ -38,10 +38,10 @@ def retry(
     exceptions: Sequence[type[Exception]] | type[Exception],
     attempts: int = 10,
     delay: float = 0.5,
-    min_delay: float = 2.0,
     max_delay: float = 30.0,
     backoff: int = 2,
 ) -> Callable[[Callable[_P, Coroutine[None, None, _R]]], Callable[_P, Coroutine[None, None, _R]]]:
+    min_delay: float = 2.0
     if not isinstance(exceptions, Sequence):
         exceptions = [exceptions]
 
@@ -198,7 +198,7 @@ class MegaAPI:
             if resp == -3:
                 msg = "Request failed, retrying"
                 logger.warning(msg)
-                raise RetryRequestError()
+                raise RetryRequestError
             raise RequestError(resp)
 
         return resp

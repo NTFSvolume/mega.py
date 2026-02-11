@@ -3,15 +3,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from contextvars import ContextVar
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator
     from types import TracebackType
 
     from rich.progress import Progress
-
-    _T = TypeVar("_T")
 
     ProgressHook: TypeAlias = Callable[[float], None]
 

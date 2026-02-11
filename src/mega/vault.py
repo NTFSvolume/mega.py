@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 class MegaVault:
     master_key: tuple[int, ...] = ()
 
-    # This is a mapping of owner (user_id) to shared keys. An special owner "EXP" is used for exported (AKA public) file/folders
     shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=dict, repr=False)
+    # An special owner "EXP" is used for exported (AKA public) file/folders
 
     def __getitem__(self, node: Node) -> tuple[tuple[int, ...], tuple[int, ...] | None]:
         return self.get_keys(node)
