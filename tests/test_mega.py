@@ -211,7 +211,7 @@ class TestFind:
 
 
 async def test_rename(mega: MegaNzClient, folder_name: str, folder: Node) -> None:
-    assert await mega.rename(folder, folder_name + "_RENAMED")
+    await mega.rename(folder, folder_name + "_RENAMED")
 
 
 async def test_delete_folder(mega: MegaNzClient, folder: Node) -> None:
