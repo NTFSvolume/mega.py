@@ -46,7 +46,7 @@ app = CLIApp(
     callback=verbose,
     help=(
         "CLI app for the [bold black]Mega.nz[/bold black] and [bold black]Transfer.it[/bold black].\n"
-        f"Set [bold green]{env.NAMES.EMAIL}[/bold green] and [bold green]{env.NAMES.PASSWORD}[/bold green] enviroment variables to use them as credentials for Mega"
+        f"Set [bold green]{env.EMAIL.name}[/bold green] and [bold green]{env.PASSWORD.name}[/bold green] enviroment variables to use them as credentials for Mega"
     ),
     epilog=f"v{__version__}",
 )

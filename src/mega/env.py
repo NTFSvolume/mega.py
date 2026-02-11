@@ -1,4 +1,5 @@
 import os
+from typing import Self
 
 try:
     from dotenv import dotenv_values
@@ -8,20 +9,23 @@ except ImportError:
         return {}
 
 
-class EnvVarNames(dict[str, str]):
-    def __getattr__(self, value: str) -> str:
-        return self[value]
+_DOT_ENV: dict[str, str | None] = dotenv_values()
 
 
-NAMES = EnvVarNames()
-_DOT_ENV = dotenv_values()
-_ENV_NAMES: set[str] = set()
+class EnvVar(str):
+    __slots__ = ("name",)
+
+    def __new__(cls, name: str, value: str) -> Self:
+        obj = super().__new__(cls, value)
+        obj.name = name
+        return obj
+
+    @classmethod
+    def env(cls, name: str) -> Self:
+        name = f"MEGA_{name}"
+        value = os.getenv(name) or _DOT_ENV.get(name) or ""
+        return cls(name, value)
 
 
-def env(name: str) -> str | None:
-    NAMES[name] = env_name = f"MEGA_NZ_{name}"
-    return os.getenv(env_name) or _DOT_ENV.get(env_name)
-
-
-EMAIL = env("EMAIL")
-PASSWORD = env("PASSWORD")
+EMAIL = EnvVar.env("EMAIL")
+PASSWORD = EnvVar.env("PWD")
