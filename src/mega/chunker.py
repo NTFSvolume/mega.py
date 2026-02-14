@@ -84,15 +84,15 @@ def _iter_chunks(
     """AES-128-CCM (CTR + CBC-MAC) implementation"""
     # TODO: pycrypto probably has its own implementation
     key_bytes = a32_to_bytes(key)
-    nonce = ((iv[0] << 32) + iv[1]) << 64
-    aes = AES.new(key_bytes, AES.MODE_CTR, counter=Counter.new(128, initial_value=nonce))
-
     mac_bytes = EMPTY_IV
-    mac_cypher = AES.new(key_bytes, AES.MODE_CBC, mac_bytes)
     iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
-    data_in: bytes | None = yield b""
+    nonce = ((iv[0] << 32) + iv[1]) << 64
 
+    aes = AES.new(key_bytes, AES.MODE_CTR, counter=Counter.new(128, initial_value=nonce))
+    mac_cypher = AES.new(key_bytes, AES.MODE_CBC, EMPTY_IV)
     chunk_cypher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
+
+    data_in: bytes | None = yield b""
 
     while data_in is not None:
         if decrypt:
@@ -102,10 +102,10 @@ def _iter_chunks(
             data_out = aes.encrypt(data_in)
 
         mem_view = memoryview(decrypted_data)
-        last_16b_index = (len(decrypted_data) % AES.block_size) or AES.block_size
-        last_16b = pad_bytes(mem_view[-last_16b_index:])
-        chunk_cypher.encrypt(mem_view[:-last_16b_index])
-        mac_bytes = mac_cypher.encrypt(chunk_cypher.encrypt(last_16b))
+        last_block_index = (len(decrypted_data) % AES.block_size) or AES.block_size
+        last_block = pad_bytes(mem_view[-last_block_index:])
+        chunk_cypher.encrypt(mem_view[:-last_block_index])
+        mac_bytes = mac_cypher.encrypt(chunk_cypher.encrypt(last_block))
         data_in = yield data_out
 
     file_mac = str_to_a32(mac_bytes)

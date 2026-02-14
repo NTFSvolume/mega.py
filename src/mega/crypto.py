@@ -106,12 +106,12 @@ def a32_to_bytes(array: Sequence[int]) -> bytes:
     return struct.pack(f">{len(array):.0f}I", *array)
 
 
-def str_to_a32(bytes_or_str: str | bytes) -> tuple[int, ...]:
-    if isinstance(bytes_or_str, str):
-        bytes_ = bytes_or_str.encode()
+def str_to_a32(data: str | bytes, /) -> tuple[int, ...]:
+    if isinstance(data, str):
+        bytes_ = data.encode()
     else:
-        assert isinstance(bytes_or_str, bytes)
-        bytes_ = bytes_or_str
+        assert isinstance(data, bytes)
+        bytes_ = data
 
     bytes_ = pad_bytes(bytes_, length=4)
     return struct.unpack(f">{len(bytes_) // 4}I", bytes_)
@@ -126,7 +126,6 @@ def mpi_to_int(data: bytes) -> int:
 
 
 def b64_url_decode(data: str) -> bytes:
-    # def d64(data_str: str) -> bytes:
     return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
 
 
