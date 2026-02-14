@@ -22,11 +22,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-CHUNK_BLOCK_LEN = 16  # Hexadecimal
-EMPTY_IV = b"\0" * CHUNK_BLOCK_LEN
+EMPTY_IV = b"\0" * AES.block_size
 
 
-def pad_bytes(data: bytes | memoryview[int], length: int = CHUNK_BLOCK_LEN) -> bytes:
+def pad_bytes(data: bytes | memoryview[int], length: int = AES.block_size) -> bytes:
     if len(data) % length:
         padding = b"\0" * (length - len(data) % length)
         if isinstance(data, memoryview):

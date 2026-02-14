@@ -1,6 +1,9 @@
+import os
+
 import pytest
 
-from mega.chunker import get_chunks
+from mega.chunker import MegaChunker, get_chunks
+from mega.utils import random_u32int_array
 
 
 @pytest.mark.parametrize(
@@ -52,3 +55,37 @@ def test_get_chunks(file_size: int, exp_result: tuple[int, int]) -> None:
     result = tuple(get_chunks(file_size))
 
     assert result == exp_result
+
+
+def test_encrypt_decrypt() -> None:
+    key = (0x01234567, 0x89ABCDEF, 0xFEDCBA98, 0x76543210)
+    iv = (0xDEADBEEF, 0xCAFEBABE)
+    expected_meta_mac = (915100996, 2671779104)
+    data = b"small payload"
+    chunker = MegaChunker(key, iv)
+    ciphertext = chunker.read(data)
+    meta_mac = chunker.compute_meta_mac()
+    assert meta_mac == expected_meta_mac
+
+    assert len(ciphertext) == len(data)
+    chunker = MegaChunker(key, iv, meta_mac)
+    recovered = chunker.read(ciphertext)
+    final_mac = chunker.compute_meta_mac()
+    assert recovered == data
+    assert final_mac == meta_mac
+
+
+def test_encrypt_decrypt_large() -> None:
+    key = random_u32int_array(4)
+    iv = random_u32int_array(2)
+    data = os.urandom(1_000_000)
+
+    chunker = MegaChunker(key, iv)  # pyright: ignore[reportArgumentType]
+    ciphertext = chunker.read(data)
+    meta_mac = chunker.compute_meta_mac()
+
+    chunker = MegaChunker(key, iv, meta_mac)  # pyright: ignore[reportArgumentType]
+    recovered = chunker.read(ciphertext)
+    final_mac = chunker.compute_meta_mac()
+    assert recovered == data
+    assert final_mac == meta_mac

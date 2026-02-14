@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, NamedTuple
 from Crypto.Cipher import AES
 from Crypto.Util import Counter
 
-from mega.crypto import CHUNK_BLOCK_LEN, EMPTY_IV, a32_to_bytes, pad_bytes, str_to_a32
+from mega.crypto import EMPTY_IV, a32_to_bytes, pad_bytes, str_to_a32
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -40,7 +40,7 @@ def get_chunks(size: int) -> Generator[ChunkBoundary]:
 
 @dataclasses.dataclass(slots=True)
 class MegaChunker:
-    """Decrypts/encrypts a flow of chunks using Mega's custom CBC-MAC algorithm"""
+    """Decrypts/encrypts a flow of chunks using AES-128-CCM (CTR + CBC-MAC) algorithm"""
 
     key: tuple[int, int, int, int]
     iv: tuple[int, int]
@@ -81,14 +81,18 @@ def _iter_chunks(
     *,
     decrypt: bool,
 ) -> Generator[bytes, bytes | None, tuple[int, int]]:
+    """AES-128-CCM (CTR + CBC-MAC) implementation"""
+    # TODO: pycrypto probably has its own implementation
     key_bytes = a32_to_bytes(key)
-    counter = Counter.new(128, initial_value=((iv[0] << 32) + iv[1]) << 64)
-    aes = AES.new(key_bytes, AES.MODE_CTR, counter=counter)
+    nonce = ((iv[0] << 32) + iv[1]) << 64
+    aes = AES.new(key_bytes, AES.MODE_CTR, counter=Counter.new(128, initial_value=nonce))
 
     mac_bytes = EMPTY_IV
     mac_cypher = AES.new(key_bytes, AES.MODE_CBC, mac_bytes)
     iv_bytes = a32_to_bytes([iv[0], iv[1], iv[0], iv[1]])
     data_in: bytes | None = yield b""
+
+    chunk_cypher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
 
     while data_in is not None:
         if decrypt:
@@ -97,9 +101,8 @@ def _iter_chunks(
             decrypted_data = data_in
             data_out = aes.encrypt(data_in)
 
-        chunk_cypher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
         mem_view = memoryview(decrypted_data)
-        last_16b_index = (len(decrypted_data) % CHUNK_BLOCK_LEN) or CHUNK_BLOCK_LEN
+        last_16b_index = (len(decrypted_data) % AES.block_size) or AES.block_size
         last_16b = pad_bytes(mem_view[-last_16b_index:])
         chunk_cypher.encrypt(mem_view[:-last_16b_index])
         mac_bytes = mac_cypher.encrypt(chunk_cypher.encrypt(last_16b))
