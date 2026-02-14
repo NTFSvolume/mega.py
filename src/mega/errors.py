@@ -13,6 +13,19 @@ class ValidationError(MegaNzError, ValueError):
     """Error in validation stage"""
 
 
+class InvalidNameError(ValidationError):
+    _invalid_chars: Final = r'"*/:<>?\|'
+
+    def __init__(self, name: str) -> None:
+        msg = f"'{name}' is an invalid node name. The following characters are not allowed: ({self._invalid_chars})"
+        super().__init__(msg)
+
+    @classmethod
+    def check(cls, name: str) -> None:
+        if any(f in name for f in cls._invalid_chars):
+            raise cls(name)
+
+
 class MultipleNodesFoundError(MegaNzError, LookupError):
     def __init__(self, msg: str, nodes: tuple[NodeID, ...]) -> None:
         self.nodes: tuple[NodeID, ...] = nodes

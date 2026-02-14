@@ -34,7 +34,7 @@ from mega.data_structures import (
     NodeType,
     UserResponse,
 )
-from mega.errors import MegaNzError, RequestError, ValidationError
+from mega.errors import InvalidNameError, MegaNzError, RequestError, ValidationError
 from mega.filesystem import FileSystem, UserFileSystem
 from mega.utils import Site, get_file_size, random_u32int_array, transform_v1_url
 from mega.vault import MegaVault
@@ -243,6 +243,7 @@ class MegaCore:
 
     async def upload(self, file_path: str | PathLike[str], dest_node_id: NodeID) -> GetNodesResponse:
         file_path = Path(file_path)
+        InvalidNameError.check(file_path.name)
         file_size = await asyncio.to_thread(get_file_size, file_path)
 
         with progress.new_task(file_path.name, file_size, "UP"):
@@ -336,10 +337,11 @@ class MegaCore:
         nodes = await self.deserialize_nodes(nodes, public_key)
         return await asyncio.to_thread(FileSystem.build, nodes)
 
-    async def mkdir(self, path: str, parent_node_id: str) -> Node:
+    async def mkdir(self, name: str, parent_node_id: str) -> Node:
         # generate random aes key (128) for folder
+        InvalidNameError.check(name)
         new_key = random_u32int_array(4)
-        encrypt_attribs = b64_url_encode(encrypt_attr({"n": path}, new_key))
+        encrypt_attribs = b64_url_encode(encrypt_attr({"n": name}, new_key))
         encrypted_key = a32_to_base64(encrypt_key(new_key, self.vault.master_key))
 
         # This can return multiple folders if subfolders needed to be created
