@@ -10,11 +10,13 @@
 from __future__ import annotations
 
 import dataclasses
+import time
 from enum import IntEnum
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Final, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
     from typing import NotRequired
 
     from typing_extensions import ReadOnly
@@ -50,6 +52,15 @@ class NodeType(IntEnum):
     ROOT_FOLDER = 2
     INBOX = 3
     TRASH = 4
+
+
+class StorageStatus(IntEnum):
+    UNKNOWN = -9
+    GREEN = 0  # there is storage available
+    ORANGE = 1  # almost full
+    RED = 2  #  full
+    # CHANGE = 3,     # obsolete
+    PAYWALL = 4  # storage is full and user didn't remedy despite of warnings
 
 
 class NodeSerialized(TypedDict):
@@ -122,11 +133,11 @@ class _DictParser:
     __dataclass_fields__: ClassVar[dict[str, dataclasses.Field[Any]]]
 
     @classmethod
-    def _filter_dict(cls, data: dict[str, Any]) -> dict[str, Any]:
+    def _filter_dict(cls, data: Mapping[str, Any], /) -> dict[str, Any]:
         return {k: v for k, v in data.items() if k in _fields(cls)}
 
     @classmethod
-    def parse(cls, data: dict[str, Any], /) -> Self:
+    def parse(cls, data: Mapping[str, Any], /) -> Self:
         return cls(**cls._filter_dict(data))
 
 
@@ -317,26 +328,36 @@ class AccountBalance(_DictDumper):
         return cls(float(amount), str(currency))
 
 
-@dataclasses.dataclass(slots=True, frozen=True)
-class AccountStats(_DictParser, _DictDumper):
-    storage: StorageQuota
-    balance: AccountBalance
-    metrics: dict[NodeID, StorageMetrics]
+class AccountStatsSerialized(TypedDict):
+    # The NotRequired attributes are only available on PRO accounts
+
+    mstrg: int  # maximum storage allowance
+    bt: int  # "Base time age",  number of seconds since the start of the current quota buckets
+    tah: list[int]  # The free IP-based quota buckets, 6 entries for 6 hours
+    tar: int  # IP transfer reserved
+    rua: int  # Actor reserved quota
+    ruo: int  # Owner reserved quota
+    cstrg: int  # total account storage usage
+    cstrgn: dict[
+        NodeID, list[int]
+    ]  # NodeId -> [bytes, num_of_files, num_of_folders, versioned_bytes, num_versioned_files]
+
+    balance: list[tuple[float, str]]
+    uslw: (
+        int  # The percentage (x100) indicating the limit at which the user is 'nearly' over. 98% for PRO, 90% for free.
+    )
+    usl: int  # User storage status
     subs: list[str]
     plans: list[str]
     features: list[str]
 
-    @classmethod
-    def parse(cls, data: dict[str, Any]) -> Self:
-        metrics: dict[NodeID, list[int]] = data["cstrgn"]
-
-        clean_data = cls._filter_dict(data) | {
-            "storage": StorageQuota.parse(data),
-            "balance": AccountBalance.parse(data.get("balance")),
-            "metrics": {node_id: StorageMetrics.parse(stats) for node_id, stats in metrics.items()},
-        }
-
-        return cls(**clean_data)
+    caxfer: NotRequired[int]  # PRO transfer quota consumed by the user
+    tuo: int  # Transfer usage by the owner on quota which hasn't yet been committed back to the API DB. Supplements caxfer
+    csxfer: NotRequired[int]  # PRO transfer quota served to others
+    tua: int  # Transfer usage served to other users which hasn't yet been committed back to the API DB. Supplements csxfer
+    mxfer: NotRequired[int]  # maximum transfer allowance
+    srvratio: float  # Ratio of PRO transfer quota that is able to be served to others
+    suntil: NotRequired[TimeStamp]  # Expiration time of the currently active plan
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -354,22 +375,86 @@ class StorageMetrics(_DictDumper):
 @dataclasses.dataclass(slots=True, frozen=True)
 class StorageQuota(_DictDumper):
     used: ByteSize
-    total: ByteSize
+    max: ByteSize
 
     percent: int
-    is_full: bool
-    is_almost_full: bool
+    threshold: int
+
+    @property
+    def ratio(self) -> float:
+        return self.used / self.max
+
+    @property
+    def is_full(self) -> bool:
+        return self.ratio >= 1
+
+    @property
+    def is_almost_full(self) -> bool:
+        return self.ratio >= self.threshold
 
     @classmethod
-    def parse(cls, data: dict[str, Any]) -> Self:
-        total, used, threshold = map(ByteSize, (data["mstrg"], data["cstrg"], data["uslw"]))
-        ratio = used / total
+    def parse(cls, data: Mapping[str, Any]) -> Self:
+        max, used, threshold = map(ByteSize, (data["mstrg"], data["cstrg"], data["uslw"]))
+
         return cls(
             used=used,
-            total=total,
-            is_full=ratio >= 1,
-            percent=int(ratio * 100),
-            is_almost_full=ratio >= (threshold / 10000),
+            max=max,
+            percent=int(used / max * 100),
+            threshold=threshold // 100,
+        )
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class ProTransferQuota:
+    used: ByteSize
+    used_by_others: ByteSize
+    max: ByteSize
+    srv_ratio: float
+
+
+@dataclasses.dataclass(slots=True, frozen=True)
+class AccountStats(_DictParser, _DictDumper):
+    storage: StorageQuota
+    transfer_quota: ProTransferQuota | None
+    balance: AccountBalance
+    metrics: Mapping[NodeID, StorageMetrics]
+    subs: tuple[str, ...]
+    plans: tuple[str, ...]
+    features: tuple[str, ...]
+    storage_status: StorageStatus
+    plan_expires: int | None
+    current_quota_start_time: int
+    _raw: AccountStatsSerialized = dataclasses.field(compare=False)
+
+    def serialize(self) -> AccountStatsSerialized:
+        return self._raw.copy()
+
+    @classmethod
+    def parse(cls, data: AccountStatsSerialized) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
+        transfer = None
+        if max_transfer := data.get("mxfer"):
+            assert "caxfer" in data
+            assert "csxfer" in data
+
+            transfer = ProTransferQuota(
+                used=ByteSize(data["caxfer"]),
+                used_by_others=ByteSize(data["caxfer"]),
+                max=ByteSize(max_transfer),
+                srv_ratio=data["srvratio"],
+            )
+
+        return cls(
+            storage=StorageQuota.parse(data),
+            balance=AccountBalance.parse(data.get("balance")),
+            metrics={node_id: StorageMetrics.parse(stats) for node_id, stats in data["cstrgn"].items()},
+            storage_status=StorageStatus(data["usl"]),
+            plan_expires=data.get("suntil"),
+            subs=tuple(data["subs"]),
+            plans=tuple(data["plans"]),
+            features=tuple(data["features"]),
+            transfer_quota=transfer,
+            current_quota_start_time=int(time.time() - data["bt"]),
+            _raw=data,
         )
 
 

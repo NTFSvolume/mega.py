@@ -4,13 +4,21 @@ import dataclasses
 import logging
 import sys
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from mega import progress
 from mega.api import APIContextManager
 from mega.core import MegaCore
 from mega.crypto import a32_to_base64, b64_to_a32, b64_url_encode, encrypt_attr, encrypt_key
-from mega.data_structures import AccountStats, Crypto, FileInfo, Node, NodeID, NodeType, UserResponse
+from mega.data_structures import (
+    AccountStats,
+    Crypto,
+    FileInfo,
+    Node,
+    NodeID,
+    NodeType,
+    UserResponse,
+)
 from mega.download import DownloadResults
 from mega.errors import MegaNzError, RequestError, ValidationError
 from mega.utils import Site, async_map, format_error, setup_logger
@@ -131,16 +139,7 @@ class MegaNzClient(APIContextManager):
         return f"{_DOMAIN}/{node.type.name.lower()}/{public_handle}#{public_key}"
 
     async def get_account_stats(self) -> AccountStats:
-        resp: dict[str, Any] = await self._core.api.post(
-            {
-                "a": "uq",
-                "xfer": 1,  # transfer quota
-                "strg": 1,  # storage
-                "mstrg": 1,  # max storage
-                "pro": 1,
-                "v": 2,
-            },
-        )
+        resp = await self._core.get_account_stats()
         return AccountStats.parse(resp)
 
     async def export(self, node: Node) -> str:

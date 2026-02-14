@@ -23,6 +23,7 @@ from mega.crypto import (
     encrypt_key,
 )
 from mega.data_structures import (
+    AccountStatsSerialized,
     Attributes,
     Crypto,
     FileInfo,
@@ -433,3 +434,15 @@ class MegaCore:
 
         self.clear_cache()
         return self._deserialize_node(resp["f"][0])
+
+    async def get_account_stats(self) -> AccountStatsSerialized:
+        return await self.api.post(  # pyright: ignore[reportAny]
+            {
+                "a": "uq",
+                "xfer": 1,  # transfer quota
+                "strg": 1,  # storage
+                "mstrg": 1,  # max storage
+                "pro": 1,
+                "v": 2,
+            },
+        )
