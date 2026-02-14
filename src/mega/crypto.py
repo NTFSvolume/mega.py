@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 EMPTY_IV = b"\0" * AES.block_size
 
 
-def pad_bytes(data: bytes | memoryview[int], length: int = AES.block_size) -> bytes:
+def pad_bytes(data: bytes | memoryview[int], *, length: int = AES.block_size) -> bytes:
     if len(data) % length:
         padding = b"\0" * (length - len(data) % length)
         if isinstance(data, memoryview):
@@ -113,9 +113,8 @@ def str_to_a32(bytes_or_str: str | bytes) -> tuple[int, ...]:
         assert isinstance(bytes_or_str, bytes)
         bytes_ = bytes_or_str
 
-    # pad to multiple of 4
     bytes_ = pad_bytes(bytes_, length=4)
-    return struct.unpack(f">{(len(bytes_) / 4):.0f}I", bytes_)
+    return struct.unpack(f">{len(bytes_) // 4}I", bytes_)
 
 
 def mpi_to_int(data: bytes) -> int:
