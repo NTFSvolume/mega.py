@@ -36,8 +36,8 @@ class MegaVault:
             node_id, key = share_key["h"], share_key["k"]
             new_keys[node_id] = decrypt_key(b64_to_a32(key), self.master_key)
 
-        for share_key in nodes_response["s"]:
-            node_id, owner = share_key["h"], share_key["u"]
+        for share_target in nodes_response["s"]:
+            node_id, owner = share_target["h"], share_target["u"]
             if key := new_keys.get(node_id):
                 self.shared_keys.setdefault(owner, {})[node_id] = key
 

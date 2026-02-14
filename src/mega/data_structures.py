@@ -75,24 +75,33 @@ class NodeSerialized(TypedDict):
     su: NotRequired[str]  # Share owner (user ID), only present present in shared (public) files / folder
     sk: NotRequired[str]  # Share key, only present present in shared (public) files / folder
 
+    s: NotRequired[int]  # size (files only)
 
-class ShareKeySerialized(TypedDict):
+
+class OwnerKeys(TypedDict):
     h: NodeID  # ID of node for this key
     k: str  # key
     ha: str  # ???
 
 
-class ShareKeySerialized2(TypedDict):
+class ShareTargets(TypedDict):
     h: NodeID  # ID of node for this key
     u: str  # Owner (user ID)
     r: int
     ts: TimeStamp
 
 
+class PublicHandle(TypedDict):
+    h: NodeID  # ID of node for this key
+    ph: NodeID  # public handle
+    ts: TimeStamp
+
+
 class GetNodesResponse(TypedDict):
     f: list[NodeSerialized]
-    ok: list[ShareKeySerialized]
-    s: list[ShareKeySerialized2]
+    ok: list[OwnerKeys]  # owner keys for outgoing shares - handle
+    s: list[ShareTargets]
+    ph: list[PublicHandle]
 
 
 class AttributesSerialized(TypedDict):
@@ -227,6 +236,7 @@ class Node(_DictDumper):
     attributes: Attributes
     created_at: TimeStamp
     keys: MappingProxyType[UserID, str] = dataclasses.field(compare=False)
+    size: ByteSize | None
     share_owner: UserID | None
     share_key: str | None
 
@@ -262,6 +272,7 @@ class Node(_DictDumper):
             keys=MappingProxyType(keys),
             share_owner=node.get("su"),
             share_key=node.get("sk"),
+            size=ByteSize(node["s"]) if "s" in node else None,
             _a=node["a"],
             attributes=None,  # pyright: ignore[reportArgumentType]
             _crypto=None,  # pyright: ignore[reportArgumentType]
