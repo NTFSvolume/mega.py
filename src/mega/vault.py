@@ -70,4 +70,4 @@ class MegaVault:
         return full_key, share_key
 
     def save_public_key(self, node_id: NodeID, share_key: tuple[int, ...]) -> None:
-        self.shared_keys["EXP"][node_id] = share_key
+        self.shared_keys.setdefault("EXP", {})[node_id] = share_key
