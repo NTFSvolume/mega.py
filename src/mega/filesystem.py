@@ -9,7 +9,7 @@ import dataclasses
 import errno
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, NamedTuple, Self
+from typing import TYPE_CHECKING, Any, Final, NamedTuple, Self
 
 from mega.data_structures import Node, NodeID, NodeType, _DictDumper
 from mega.errors import MultipleNodesFoundError
@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Iterator
     from os import PathLike
 
-_POSIX_ROOT = PurePosixPath("/")
+POSIX_ROOT: Final = PurePosixPath("/")
 
 
 class _NodeLookup(NamedTuple):
@@ -38,7 +38,7 @@ def _resolve_paths(walker: _NodeWalker, *roots: Node) -> Generator[_NodeLookup]:
 
     for root in roots:
         name = root.attributes.name
-        path = _POSIX_ROOT if root.type is NodeType.ROOT_FOLDER else _POSIX_ROOT / name
+        path = POSIX_ROOT if root.type is NodeType.ROOT_FOLDER else POSIX_ROOT / name
 
         yield _NodeLookup(root.id, path, False)
         deleted = root.type is NodeType.TRASH
@@ -256,7 +256,7 @@ class FileSystem(SimpleFileSystem):
 
     def relative_path(self, node_id: NodeID) -> PurePosixPath:
         """Get the path of this node relative to the root folder"""
-        return self.absolute_path(node_id).relative_to(_POSIX_ROOT)
+        return self.absolute_path(node_id).relative_to(POSIX_ROOT)
 
     def absolute_path(self, node_id: NodeID) -> PurePosixPath:
         """Get the absolute path of this node"""
@@ -290,7 +290,7 @@ class FileSystem(SimpleFileSystem):
         Raises `FileNotFoundError` if this path does not exists on the filesystem
 
         """
-        path = _POSIX_ROOT / PurePosixPath(path)
+        path = POSIX_ROOT / PurePosixPath(path)
         try:
             nodes = self._inv_paths[path]
         except LookupError:
@@ -378,13 +378,13 @@ class UserFileSystem(FileSystem):
                 case NodeType.FOLDER:
                     folder_count += 1
                 case NodeType.ROOT_FOLDER:
-                    path = _POSIX_ROOT
+                    path = POSIX_ROOT
                     root = node
                 case NodeType.INBOX:
-                    path = _POSIX_ROOT / node.attributes.name
+                    path = POSIX_ROOT / node.attributes.name
                     inbox = node
                 case NodeType.TRASH:
-                    path = _POSIX_ROOT / node.attributes.name
+                    path = POSIX_ROOT / node.attributes.name
                     trash_bin_id = node.id
                     trash_bin = node
                 case _:

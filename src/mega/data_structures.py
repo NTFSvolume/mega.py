@@ -263,6 +263,7 @@ class Node(_DictDumper):
         else:
             keys: dict[str, str] = {}
 
+        size = node.get("s")
         return Node(
             id=node["h"],
             parent_id=node["p"],
@@ -272,7 +273,7 @@ class Node(_DictDumper):
             keys=MappingProxyType(keys),
             share_owner=node.get("su"),
             share_key=node.get("sk"),
-            size=ByteSize(node["s"]) if "s" in node else None,
+            size=ByteSize(size) if size is not None else None,
             _a=node["a"],
             attributes=None,  # pyright: ignore[reportArgumentType]
             _crypto=None,  # pyright: ignore[reportArgumentType]
@@ -280,11 +281,13 @@ class Node(_DictDumper):
 
     @classmethod
     def from_dump(cls, dump: dict[str, Any], /) -> Self:
+        size = dump.get("size")
         dump = dump | dict(  # noqa: C408
             type=NodeType[str(dump["type"]).upper()],
             attributes=Attributes(**dump["attributes"]) if dump["attributes"] else None,
             keys=MappingProxyType(dump["keys"]),
             _crypto=Crypto.from_dump(dump["_crypto"]) if dump["_crypto"] else None,
+            size=ByteSize(size) if size is not None else None,
         )
 
         return cls(**dump)
