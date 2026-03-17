@@ -195,7 +195,7 @@ class MegaCore:
 
         nodes = nodes_resp["f"]
         logger.info(f"Decrypting and building users's filesystem ({len(nodes)} nodes)...")
-        self.vault.init_shared_keys(nodes_resp)
+        self.vault.update(nodes_resp)
         nodes = await self.deserialize_nodes(nodes)
         return await asyncio.to_thread(UserFileSystem.build, nodes)
 

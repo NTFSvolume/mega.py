@@ -154,7 +154,7 @@ print (result.is_folder)
 
 ```python
 with mega.progress_bar:  
-    success, fails = await mega.download_public_folder(public_handle, public_key, output_dir / "with_bar")
+    results = await mega.download_public_folder(public_handle, public_key, output_dir / "with_bar")
 ```
 
 ## The filesystem object

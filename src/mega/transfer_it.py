@@ -106,12 +106,7 @@ class TransferItClient(APIContextManager):
         output_dir: str | PathLike[str] | None = None,
         root_id: NodeID | None = None,
     ) -> DownloadResults:
-        """Recursively download all files from a transfer, preserving its internal directory structure.
-
-        Returns:
-            A list where each element is either a `Path` (a successful download)
-            or an `Exception` (a failed download).
-        """
+        """Recursively download all files from a transfer, preserving its internal directory structure."""
         fs = await self.get_filesystem(transfer_id)
 
         base_path = Path(output_dir or ".") / f"transfer.it ({transfer_id})"

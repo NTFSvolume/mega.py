@@ -200,12 +200,7 @@ class MegaNzClient(APIContextManager):
         output_dir: str | PathLike[str] | None = None,
         root_id: NodeID | None = None,
     ) -> DownloadResults:
-        """Recursively download all files from a public folder, preserving its internal directory structure.
-
-        Returns:
-            A list where each element is either a `Path` (a successful download)
-            or an `Exception` (a failed download).
-        """
+        """Recursively download all files from a public folder, preserving its internal directory structure."""
         fs = await self.get_public_filesystem(public_handle, public_key)
 
         base_path = Path(output_dir or ".")

@@ -129,7 +129,7 @@ class DownloadResults(Mapping[NodeID, Path | Exception]):
     fails: MappingProxyType[NodeID, Exception]
 
     def __repr__(self) -> str:
-        return f"<{type(self).__name__}>(success={self.success!r}, fails={self.fails!r})"
+        return f"{type(self).__name__}(success={self.success!r}, fails={self.fails!r})"
 
     def __init__(self, success: Mapping[NodeID, Path], fails: Mapping[NodeID, Exception]) -> None:
         if not success.keys().isdisjoint(fails.keys()):
