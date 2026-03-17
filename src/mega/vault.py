@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import dataclasses
-import logging
 from typing import TYPE_CHECKING, Final
 
 from mega.crypto import b64_to_a32, decrypt_key
@@ -9,8 +8,6 @@ from mega.crypto import b64_to_a32, decrypt_key
 if TYPE_CHECKING:
     from mega.data_structures import GetNodesResponse, Node, NodeID, SharedKeys, UserID
 
-
-logger = logging.getLogger(__name__)
 
 _EXPORTED: Final = "EXP"
 # An special owner used for exported (AKA public) file/folders
@@ -20,22 +17,20 @@ _EXPORTED: Final = "EXP"
 class MegaVault:
     master_key: tuple[int, ...] = ()
 
-    _shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=lambda: {_EXPORTED: {}}, repr=False)
+    _shared_keys: dict[UserID, SharedKeys] = dataclasses.field(default_factory=dict)
 
-    def init_shared_keys(self, nodes_response: GetNodesResponse) -> None:
-        """Init shared key not associated with a user.
-        Seems to happen when a folder is shared,
-        some files are exchanged and then the
-        folder is un-shared.
-        Keys are stored in files['s'] and files['ok']
-        """
+    def __post_init__(self) -> None:
+        _ = self._shared_keys.setdefault(_EXPORTED, {})
+
+    def update(self, api_resp: GetNodesResponse) -> None:
+        """Parse and update keys not associated with an user"""
 
         new_keys: SharedKeys = {}
-        for share_key in nodes_response["ok"]:
+        for share_key in api_resp["ok"]:
             node_id, key = share_key["h"], share_key["k"]
             new_keys[node_id] = decrypt_key(b64_to_a32(key), self.master_key)
 
-        for share_target in nodes_response["s"]:
+        for share_target in api_resp["s"]:
             node_id, owner = share_target["h"], share_target["u"]
             if key := new_keys.get(node_id):
                 self._shared_keys.setdefault(owner, {})[node_id] = key
