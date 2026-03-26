@@ -2,7 +2,9 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      - id: check-added-large-files
       - id: check-case-conflict
+      - id: check-illegal-windows-names
       - id: check-merge-conflict
       - id: check-toml
       - id: check-yaml
@@ -20,7 +22,7 @@ repos:
         files: ^(.*\.toml)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.0
+    rev: v0.15.6
     hooks:
       - id: ruff
         args: [ --fix ]
