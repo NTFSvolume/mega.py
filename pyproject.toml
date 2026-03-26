@@ -43,8 +43,8 @@ cli = [
 ]
 
 [project.scripts]
-async-mega-py = "mega.__main__:app"
-mega-py = "mega.__main__:app"
+async-mega-py = "mega.__main__:app.meta"
+mega-py = "mega.__main__:app.meta"
 
 [project.urls]
 Homepage = "https://github.com/NTFSvolume/mega.py"

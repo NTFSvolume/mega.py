@@ -20,22 +20,7 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger("mega")
-
-Verbose = Annotated[
-    int,
-    Parameter(
-        name=["-v", "--verbose"], count=True, help="Increase verbosity (-v shows debug logs,  -vv shows HTTP traffic)"
-    ),
-]
-
-
-def parse_verbose(count: int) -> None:
-    if count > 1:
-        LOG_HTTP_TRAFFIC.set(True)
-
-    level = logging.DEBUG if count else logging.INFO
-    setup_logger(level)
-
+CWD = Path.cwd()
 
 app = App(
     help=(
@@ -45,7 +30,26 @@ app = App(
     ),
     version=__version__,
 )
-CWD = Path.cwd()
+
+
+@app.meta.default
+def verbose(
+    *tokens: Annotated[str, Parameter(show=False, allow_leading_hyphen=True)],
+    verbose: Annotated[
+        int,
+        Parameter(
+            name=["-v", "--verbose"],
+            count=True,
+            help="Increase verbosity (-v shows debug logs,  -vv shows HTTP traffic)",
+        ),
+    ] = 0,
+) -> None:
+    if verbose > 1:
+        LOG_HTTP_TRAFFIC.set(True)
+
+    level = logging.DEBUG if verbose else logging.INFO
+    setup_logger(level)
+    app(tokens)
 
 
 @contextlib.asynccontextmanager
@@ -68,9 +72,9 @@ async def transfer_it(url: str, output_dir: Path) -> None:
 
 
 @app.command()
-async def download(url: str, output_dir: Path = CWD, *, verbose: Verbose = 0) -> None:
+async def download(url: str, output_dir: Path = CWD) -> None:
     """Download a public file or folder by its URL (transfer.it / mega.nz)"""
-    parse_verbose(verbose)
+
     site = Site(yarl.URL(url).origin())
     if site is Site.TRANSFER_IT:
         return await transfer_it(url, output_dir)
@@ -84,9 +88,9 @@ async def download(url: str, output_dir: Path = CWD, *, verbose: Verbose = 0) ->
 
 
 @app.command()
-async def dump(output_dir: Path = CWD, *, verbose: Verbose = 0) -> None:
+async def dump(output_dir: Path = CWD) -> None:
     """Dump a copy of your filesystem to disk"""
-    parse_verbose(verbose)
+
     async with connect() as mega:
         fs = await mega.get_filesystem()
         out = output_dir / "filesystem.json"
@@ -96,9 +100,9 @@ async def dump(output_dir: Path = CWD, *, verbose: Verbose = 0) -> None:
 
 
 @app.command()
-async def stats(*, verbose: Verbose = 0) -> None:
+async def stats() -> None:
     """Show account stats"""
-    parse_verbose(verbose)
+
     async with connect() as mega:
         stats = await mega.get_account_stats()
         logger.info(f"Account stats for {env.EMAIL or 'TEMP ACCOUNT'}:")
@@ -110,9 +114,9 @@ async def stats(*, verbose: Verbose = 0) -> None:
 
 
 @app.command()
-async def upload(file_path: Path, *, verbose: Verbose = 0) -> None:
+async def upload(file_path: Path) -> None:
     """Upload a file to your account"""
-    parse_verbose(verbose)
+
     async with connect() as mega:
         if not env.EMAIL:
             logger.warning("Files uploaded by a temp account can not be exported")
@@ -144,4 +148,4 @@ async def download_folder(mega: MegaNzClient, url: str, output: Path) -> None:
 
 
 if __name__ == "__main_":
-    app()
+    app.meta()
