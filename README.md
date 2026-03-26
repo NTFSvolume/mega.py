@@ -291,7 +291,7 @@ dict(fs.search("/tests/logo.png"))
 ## Transfer.it
 
 > [!NOTE]
-> The `transfer.it` client does not support uploads (yet!)
+> The `transfer.it` client does not support uploads yet (PRs welcome)
 
 ```python
 from mega.transfer_it import TransferItClient

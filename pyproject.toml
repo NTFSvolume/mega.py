@@ -34,21 +34,17 @@ license = "Apache-2.0"
 license-files = ["LICENSE"]
 readme = "README.md"
 requires-python = ">=3.11"
-version = "2.0.3"
+version = "2.1.0"
 
 [project.optional-dependencies]
 cli = [
-    "async-mega-py[default]",
-    "typer-slim>=0.21.1"
-]
-default = [
-    "python-dotenv>=1.2.1",
-    "rich>=14.0.0"
+    "cyclopts>=4.10.1",
+    "python-dotenv>=1.2.1"
 ]
 
 [project.scripts]
-async-mega-py = "mega.cli:main"
-mega-py = "mega.cli:main"
+async-mega-py = "mega.__main__:app.meta"
+mega-py = "mega.__main__:app.meta"
 
 [project.urls]
 Homepage = "https://github.com/NTFSvolume/mega.py"
@@ -123,14 +119,12 @@ module-name = "mega"
 
 [build-system]
 build-backend = "uv_build"
-requires = ["uv_build>=0.8.17,<0.9.0"]
+requires = ["uv_build<=0.10.11"]
 
 [dependency-groups]
 dev = [
     "prek>=0.3.6",
     "pytest-asyncio>=0.25.0",
     "pytest>=8.3.5",
-    "rich>=14.0.0",
-    "ruff>=0.15.0",
-    "typer-slim>=0.21.1"
+    "ruff==0.15.6"
 ]
