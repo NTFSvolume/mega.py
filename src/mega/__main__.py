@@ -148,5 +148,5 @@ async def download_folder(mega: MegaNzClient, url: str, output: Path) -> None:
     logger.info(f"Download of '{url}' finished. Successful = {len(results.success)}, failed = {len(results.fails)}")
 
 
-if __name__ == "__main_":
+if __name__ == "__main__":
     app.meta()
