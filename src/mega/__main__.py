@@ -28,6 +28,7 @@ app = App(
         f"Set [bold green]{env.EMAIL.name}[/bold green] and [bold green]{env.PASSWORD.name}[/bold green]\n"
         "enviroment variables to use them as credentials for Mega"
     ),
+    help_format="rich",
     version=__version__,
 )
 
