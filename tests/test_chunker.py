@@ -72,7 +72,27 @@ def test_encrypt_decrypt() -> None:
     recovered = chunker.read(ciphertext)
     final_mac = chunker.compute_meta_mac()
     assert recovered == data
-    assert final_mac == meta_mac
+    assert final_mac == expected_meta_mac
+
+
+def test_metamac_of_empty_file():
+    key = random_u32int_array(4)
+    iv = random_u32int_array(2)
+
+    chunker = MegaChunker(key, iv)  # pyright: ignore[reportArgumentType]
+    assert (0, 0) == chunker.compute_meta_mac()
+    chunker2 = MegaChunker(key, iv)  # pyright: ignore[reportArgumentType]
+    _ = chunker2.read(b"")
+    assert (0, 0) == chunker2.compute_meta_mac()
+
+
+def test_metamac_of_really_small_file():
+    key = random_u32int_array(4)
+    iv = random_u32int_array(2)
+
+    chunker = MegaChunker(key, iv)  # pyright: ignore[reportArgumentType]
+    chunker.read(b"\x01")
+    _ = chunker.compute_meta_mac()
 
 
 def test_encrypt_decrypt_large() -> None:
@@ -89,3 +109,24 @@ def test_encrypt_decrypt_large() -> None:
     final_mac = chunker.compute_meta_mac()
     assert recovered == data
     assert final_mac == meta_mac
+
+
+def test_decrypt_multi_chunks() -> None:
+
+    key = (0x01234567, 0x89ABCDEF, 0xFEDCBA98, 0x76543210)
+    iv = (0xDEADBEEF, 0xCAFEBABE)
+    n_chunks = 10
+    expected_meta_mac = (4151726610, 1753951526)
+    data = b"small payload"
+
+    chunker = MegaChunker(key, iv)  # pyright: ignore[reportArgumentType]
+
+    step = len(data) // n_chunks
+    ciphertext = b"".join(chunker.read(data[idx : idx + step]) for idx in range(0, len(data), step))
+    assert chunker.compute_meta_mac() == expected_meta_mac
+
+    assert len(ciphertext) == len(data)
+    chunker2 = MegaChunker(key, iv, expected_meta_mac)  # pyright: ignore[reportArgumentType]
+    recovered = b"".join(chunker2.read(ciphertext[idx : idx + step]) for idx in range(0, len(ciphertext), step))
+    assert recovered == data
+    chunker2.check_integrity()
