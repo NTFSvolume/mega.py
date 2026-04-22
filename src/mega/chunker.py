@@ -90,11 +90,13 @@ def _iter_chunks(
 
     aes = AES.new(key_bytes, AES.MODE_CTR, counter=Counter.new(128, initial_value=nonce))
     mac_cypher = AES.new(key_bytes, AES.MODE_CBC, EMPTY_IV)
-    chunk_cypher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
-
     data_in: bytes | None = yield b""
 
     while data_in is not None:
+        if not data_in:
+            data_in = yield b""
+            continue
+
         if decrypt:
             decrypted_data = data_out = aes.decrypt(data_in)
         else:
@@ -104,6 +106,8 @@ def _iter_chunks(
         mem_view = memoryview(decrypted_data)
         last_block_index = (len(decrypted_data) % AES.block_size) or AES.block_size
         last_block = pad_bytes(mem_view[-last_block_index:])
+
+        chunk_cypher = AES.new(key_bytes, AES.MODE_CBC, iv_bytes)
         chunk_cypher.encrypt(mem_view[:-last_block_index])
         mac_bytes = mac_cypher.encrypt(chunk_cypher.encrypt(last_block))
         data_in = yield data_out
