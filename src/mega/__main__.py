@@ -1,3 +1,4 @@
+# ruff: noqa: E402
 from __future__ import annotations
 
 import contextlib
@@ -5,6 +6,10 @@ import json
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Annotated
+
+from rich.traceback import install as install_rich_traceback
+
+_ = install_rich_traceback(width=None, max_frames=2)
 
 import yarl
 from cyclopts import App, Parameter
