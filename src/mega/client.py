@@ -43,8 +43,8 @@ class MegaNzClient(APIContextManager):
 
     __slots__ = ("_core",)
 
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        super().__init__(session)
+    def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
+        super().__init__(session, user_agent)
         self._core: MegaCore = MegaCore(self._api)
         if hasattr(sys, "ps1"):
             setup_logger(logging.DEBUG)

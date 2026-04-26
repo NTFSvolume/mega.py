@@ -7,13 +7,13 @@ import logging
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from functools import wraps
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, ParamSpec, Self, TypeVar
 
 import aiohttp
 import yarl
 from aiolimiter import AsyncLimiter
 
+from mega import __version__, _package_name_
 from mega.crypto import generate_hashcash
 from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
@@ -23,10 +23,6 @@ if TYPE_CHECKING:
 
     _P = ParamSpec("_P")
     _R = TypeVar("_R")
-
-
-_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0"
-_DEFAULT_HEADERS: MappingProxyType[str, str] = MappingProxyType({"User-Agent": _UA})
 
 
 LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=False)
@@ -79,13 +75,14 @@ class MegaAPI:
 
     _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
 
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+    def __init__(self, session: aiohttp.ClientSession | None = None, user_agent: str | None = None) -> None:
         self.session_id = None
         self._request_id = random_u32int()
         self._client_id = random_id(10)
         self.__session = session
         self._auto_close_session = session is None
         self._rate_limiter = AsyncLimiter(100, 60)
+        self.user_agent = user_agent or f"{_package_name_}/{__version__}"
 
     @property
     def entrypoint(self) -> yarl.URL:
@@ -174,7 +171,7 @@ class MegaAPI:
         headers: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
-        kwargs["headers"] = _DEFAULT_HEADERS | (headers or {})
+        kwargs["headers"] = {"User-Agent": self.user_agent} | (headers or {})
         if LOG_HTTP_TRAFFIC.get():
             params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
             logger.debug(f"Making {method} request to {url!s} with {params}")
@@ -207,8 +204,8 @@ class MegaAPI:
 class APIContextManager:
     __slots__ = ("_api",)
 
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self._api: MegaAPI = MegaAPI(session)
+    def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
+        self._api: MegaAPI = MegaAPI(session, user_agent)
 
     async def __aenter__(self) -> Self:
         return self
