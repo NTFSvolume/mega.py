@@ -5,7 +5,7 @@ permissions: {}
 
 jobs:
   ruff:
-    name: Lint and check format (ruff)
+    name: Lint and check format
     permissions:
       contents: read
 
