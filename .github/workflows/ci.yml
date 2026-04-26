@@ -15,12 +15,13 @@ on:
       - ".github/workflows/ci.yml"
   workflow_dispatch:
 
+permissions: {}
+
 jobs:
   test:
-    env:
-      EMAIL: ${{ secrets.MEGA_EMAIL }}
-      PASS: ${{ secrets.MEGA_PASS }}
-
+    name: Run pytest
+    permissions:
+      contents: read
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -28,6 +29,7 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: [3.11, 3.13]
       fail-fast: true
+
     defaults:
       run:
         shell: bash
@@ -35,6 +37,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6

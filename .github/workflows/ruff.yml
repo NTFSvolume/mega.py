@@ -1,11 +1,19 @@
 name: Ruff
-on: [ push, pull_request ]
+on: [push, pull_request]
+
+permissions: {}
+
 jobs:
   ruff:
+    name: Lint and check format (ruff)
+    permissions:
+      contents: read
     runs-on: ubuntu-latest
     steps:
       - name: checkout code
         uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - name: ruff lint
         uses: astral-sh/ruff-action@v3
@@ -16,5 +24,4 @@ jobs:
         uses: astral-sh/ruff-action@v3
         with:
           version: "0.15.6"
-          args:
-            "format --check --diff"
+          args: "format --check --diff"
