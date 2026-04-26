@@ -66,27 +66,23 @@ def retry(
     return wrapper
 
 
-@dataclasses.dataclass(slots=True, weakref_slot=True, init=False)
+@dataclasses.dataclass(slots=True, weakref_slot=True)
 class MegaAPI:
-    session_id: str | None
-    _request_id: int
-    _client_id: str
+    _session: aiohttp.ClientSession | None = None
 
-    __session: aiohttp.ClientSession | None
-    _auto_close_session: bool
-    _rate_limiter: AsyncLimiter
+    user_agent: str = f"{_package_name_}/{__version__}"
 
-    _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
-    user_agent: str
+    session_id: str | None = dataclasses.field(init=False, default=None)
+    _request_id: int = dataclasses.field(init=False, default_factory=random_u32int)
+    _client_id: str = dataclasses.field(init=False, default_factory=lambda: random_id(10))
 
-    def __init__(self, session: aiohttp.ClientSession | None = None, user_agent: str | None = None) -> None:
-        self.session_id = None
-        self._request_id = random_u32int()
-        self._client_id = random_id(10)
-        self.__session = session
-        self._auto_close_session = session is None
-        self._rate_limiter = AsyncLimiter(100, 60)
-        self.user_agent = user_agent or f"{_package_name_}/{__version__}"
+    _auto_close_session: bool = dataclasses.field(init=False)
+    _rate_limiter: AsyncLimiter = dataclasses.field(init=False, default_factory=lambda: AsyncLimiter(100, 60))
+
+    _entrypoint: ClassVar[yarl.URL] = dataclasses.field(init=False, default=yarl.URL("https://g.api.mega.co.nz/cs"))
+
+    def __post_init__(self) -> None:
+        self._auto_close_session = self._session is None
 
     @property
     def entrypoint(self) -> yarl.URL:
@@ -97,21 +93,17 @@ class MegaAPI:
         return self._client_id
 
     @property
-    def request_id(self) -> int:
-        return self._request_id
-
-    @property
-    def _session(self) -> aiohttp.ClientSession:
-        if self.__session is None:
-            self.__session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
-        return self.__session
+    def session(self) -> aiohttp.ClientSession:
+        if self._session is None:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
+        return self._session
 
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self.client_id!r}, auto_close_session={self._auto_close_session!r})"
 
     async def aclose(self) -> None:
-        if self._auto_close_session and self.__session:
-            await self.__session.close()
+        if self._auto_close_session and self._session:
+            await self._session.close()
 
     async def __enter__(self) -> Self:
         return self
@@ -175,7 +167,7 @@ class MegaAPI:
         headers: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
-        kwargs["headers"] = {"User-Agent": self.user_agent} | (headers or {})
+        kwargs["headers"] = {"User-Agent": self.user_agent, **(headers or {})}
         request_id = str(uuid.uuid4())
         if LOG_HTTP_TRAFFIC.get():
             logger.debug(
@@ -188,7 +180,7 @@ class MegaAPI:
 
         resp = None
         try:
-            async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
+            async with self._rate_limiter, self.session.request(method, url, **kwargs) as resp:
                 yield resp
         except RetryRequestError:
             logger.warning("Request [id=%s] failed, retrying", request_id)
@@ -247,14 +239,22 @@ class _LazyResponseLog:
 class APIContextManager:
     __slots__ = ("_api",)
 
-    def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
-        self._api: MegaAPI = MegaAPI(session, user_agent)
+    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+        self._api: MegaAPI = MegaAPI(session)
+
+    @property
+    def user_agent(self) -> str:
+        return self._api.user_agent
+
+    @user_agent.setter
+    def user_agent(self, ua: str) -> None:
+        self._api.user_agent = ua
 
     async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_) -> None:
-        await self.close()
+        await self.aclose()
 
     async def aclose(self) -> None:
         await self._api.close()
