@@ -7,7 +7,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from mega import progress
-from mega.api import APIContextManager
+from mega.api import APIContextManager, MegaAPI
 from mega.core import MegaCore
 from mega.crypto import a32_to_base64, b64_to_a32, b64_url_encode, encrypt_attr, encrypt_key
 from mega.data_structures import (
@@ -38,13 +38,16 @@ logger = logging.getLogger(__name__)
 _DOMAIN = Site.MEGA.value
 
 
-class MegaNzClient(APIContextManager):
+class MegaNzClient(APIContextManager[MegaAPI]):
     """Interface with all the public methods of the API"""
 
     __slots__ = ("_core",)
 
     def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
-        super().__init__(session, user_agent=user_agent)
+        self._api = MegaAPI(session)
+        if user_agent:
+            self._api.user_agent = user_agent
+
         self._core: MegaCore = MegaCore(self._api)
         if hasattr(sys, "ps1"):
             setup_logger(logging.DEBUG)

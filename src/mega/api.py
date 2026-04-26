@@ -9,7 +9,7 @@ import uuid
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, ParamSpec, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, ParamSpec, Self, TypeVar
 
 import aiohttp
 import yarl
@@ -236,19 +236,11 @@ class _LazyResponseLog:
         return str(self.__json__())
 
 
-class APIContextManager:
+_API_T = TypeVar("_API_T", bound=MegaAPI, covariant=True)
+
+
+class APIContextManager(Generic[_API_T]):
     __slots__ = ("_api",)
-
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self._api: MegaAPI = MegaAPI(session)
-
-    @property
-    def user_agent(self) -> str:
-        return self._api.user_agent
-
-    @user_agent.setter
-    def user_agent(self, ua: str) -> None:
-        self._api.user_agent = ua
 
     async def __aenter__(self) -> Self:
         return self
@@ -257,6 +249,6 @@ class APIContextManager:
         await self.aclose()
 
     async def aclose(self) -> None:
-        await self._api.close()
+        await self._api.aclose()
 
     close = aclose
