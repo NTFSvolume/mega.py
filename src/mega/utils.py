@@ -7,7 +7,6 @@ import logging
 import random
 import string
 from collections.abc import Callable
-from contextvars import ContextVar
 from enum import Enum
 from stat import S_ISREG
 from typing import TYPE_CHECKING, Literal, TypeVar, overload
@@ -15,6 +14,7 @@ from typing import TYPE_CHECKING, Literal, TypeVar, overload
 import aiohttp
 import yarl
 
+from mega import LOG_FILE_PROGRESS
 from mega.errors import ValidationError
 
 if TYPE_CHECKING:
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     _T1 = TypeVar("_T1")
     _T2 = TypeVar("_T2")
 
-LOG_PROGRESS: ContextVar[bool] = ContextVar("LOG_PROGRESS", default=True)
+
 logger = logging.getLogger(__name__)
 
 
@@ -64,7 +64,7 @@ def setup_logger(level: int = logging.INFO) -> None:
 
 
 def progress_logger(output_path: Path, file_size: int, *, download: bool) -> Callable[[float], None]:
-    if not (LOG_PROGRESS.get() and logger.isEnabledFor(logging.DEBUG)):
+    if not (LOG_FILE_PROGRESS.get() and logger.isEnabledFor(logging.DEBUG)):
         return lambda _: None
 
     from mega.data_structures import ByteSize

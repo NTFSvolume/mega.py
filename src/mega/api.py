@@ -7,7 +7,6 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
-from contextvars import ContextVar
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, ParamSpec, Self, TypeVar
 
@@ -15,7 +14,7 @@ import aiohttp
 import yarl
 from aiolimiter import AsyncLimiter
 
-from mega import __version__, _package_name_
+from mega import LOG_HTTP_TRAFFIC, __version__, _package_name_
 from mega.crypto import generate_hashcash
 from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
@@ -26,8 +25,6 @@ if TYPE_CHECKING:
     _P = ParamSpec("_P")
     _R = TypeVar("_R")
 
-
-LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=False)
 
 logger = logging.getLogger(__name__)
 
