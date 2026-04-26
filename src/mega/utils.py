@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Literal, TypeVar, overload
 import aiohttp
 import yarl
 
+from mega import LOG_FILE_PROGRESS
 from mega.errors import ValidationError
 
 if TYPE_CHECKING:
@@ -63,7 +64,7 @@ def setup_logger(level: int = logging.INFO) -> None:
 
 
 def progress_logger(output_path: Path, file_size: int, *, download: bool) -> Callable[[float], None]:
-    if not logger.isEnabledFor(10):
+    if not (LOG_FILE_PROGRESS.get() and logger.isEnabledFor(logging.DEBUG)):
         return lambda _: None
 
     from mega.data_structures import ByteSize

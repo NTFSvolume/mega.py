@@ -14,8 +14,7 @@ _ = install_rich_traceback(width=None, max_frames=2)
 import yarl
 from cyclopts import App, Parameter
 
-from mega import __version__, env
-from mega.api import LOG_HTTP_TRAFFIC
+from mega import LOG_HTTP_TRAFFIC, __version__, env
 from mega.client import MegaNzClient
 from mega.transfer_it import TransferItClient
 from mega.utils import Site, setup_logger

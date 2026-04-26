@@ -7,15 +7,14 @@ import json
 import logging
 import uuid
 from collections.abc import Mapping, Sequence
-from contextvars import ContextVar
 from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, Literal, ParamSpec, Self, TypeVar
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, ParamSpec, Self, TypeVar
 
 import aiohttp
 import yarl
 from aiolimiter import AsyncLimiter
 
-from mega import __version__, _package_name_
+from mega import LOG_HTTP_TRAFFIC, __version__, _package_name_
 from mega.crypto import generate_hashcash
 from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
@@ -26,8 +25,6 @@ if TYPE_CHECKING:
     _P = ParamSpec("_P")
     _R = TypeVar("_R")
 
-
-LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=False)
 
 logger = logging.getLogger(__name__)
 
@@ -66,27 +63,23 @@ def retry(
     return wrapper
 
 
-@dataclasses.dataclass(slots=True, weakref_slot=True, init=False)
+@dataclasses.dataclass(slots=True, weakref_slot=True)
 class MegaAPI:
-    session_id: str | None
-    _request_id: int
-    _client_id: str
+    _session: aiohttp.ClientSession | None = None
 
-    __session: aiohttp.ClientSession | None
-    _auto_close_session: bool
-    _rate_limiter: AsyncLimiter
+    user_agent: str = f"{_package_name_}/{__version__}"
 
-    _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
-    user_agent: str
+    session_id: str | None = dataclasses.field(init=False, default=None)
+    _request_id: int = dataclasses.field(init=False, default_factory=random_u32int)
+    _client_id: str = dataclasses.field(init=False, default_factory=lambda: random_id(10))
 
-    def __init__(self, session: aiohttp.ClientSession | None = None, user_agent: str | None = None) -> None:
-        self.session_id = None
-        self._request_id = random_u32int()
-        self._client_id = random_id(10)
-        self.__session = session
-        self._auto_close_session = session is None
-        self._rate_limiter = AsyncLimiter(100, 60)
-        self.user_agent = user_agent or f"{_package_name_}/{__version__}"
+    _auto_close_session: bool = dataclasses.field(init=False)
+    _rate_limiter: AsyncLimiter = dataclasses.field(init=False, default_factory=lambda: AsyncLimiter(100, 60))
+
+    _entrypoint: ClassVar[yarl.URL] = dataclasses.field(init=False, default=yarl.URL("https://g.api.mega.co.nz/cs"))
+
+    def __post_init__(self) -> None:
+        self._auto_close_session = self._session is None
 
     @property
     def entrypoint(self) -> yarl.URL:
@@ -96,22 +89,12 @@ class MegaAPI:
     def client_id(self) -> str:
         return self._client_id
 
-    @property
-    def request_id(self) -> int:
-        return self._request_id
-
-    @property
-    def _session(self) -> aiohttp.ClientSession:
-        if self.__session is None:
-            self.__session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
-        return self.__session
-
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self.client_id!r}, auto_close_session={self._auto_close_session!r})"
 
     async def aclose(self) -> None:
-        if self._auto_close_session and self.__session:
-            await self.__session.close()
+        if self._auto_close_session and self._session:
+            await self._session.close()
 
     async def __enter__(self) -> Self:
         return self
@@ -175,7 +158,7 @@ class MegaAPI:
         headers: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
-        kwargs["headers"] = {"User-Agent": self.user_agent} | (headers or {})
+        kwargs["headers"] = {"User-Agent": self.user_agent, **(headers or {})}
         request_id = str(uuid.uuid4())
         if LOG_HTTP_TRAFFIC.get():
             logger.debug(
@@ -187,6 +170,9 @@ class MegaAPI:
             )
 
         resp = None
+        if self._session is None:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
+
         try:
             async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
                 yield resp
@@ -244,19 +230,19 @@ class _LazyResponseLog:
         return str(self.__json__())
 
 
-class APIContextManager:
-    __slots__ = ("_api",)
+_API_T = TypeVar("_API_T", bound=MegaAPI, covariant=True)
 
-    def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
-        self._api: MegaAPI = MegaAPI(session, user_agent)
+
+class APIContextManager(Generic[_API_T]):
+    __slots__ = ("_api",)
 
     async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, *_) -> None:
-        await self.close()
+        await self.aclose()
 
     async def aclose(self) -> None:
-        await self._api.close()
+        await self._api.aclose()
 
     close = aclose
