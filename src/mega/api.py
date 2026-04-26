@@ -77,6 +77,7 @@ class MegaAPI:
     _rate_limiter: AsyncLimiter
 
     _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
+    user_agent: str
 
     def __init__(self, session: aiohttp.ClientSession | None = None, user_agent: str | None = None) -> None:
         self.session_id = None
