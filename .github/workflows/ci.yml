@@ -3,24 +3,25 @@ name: CI
 on:
   push:
     branches:
-      - master
+      - main
     paths:
-      - '**.py'
-      - '.github/workflows/ci.yml'
+      - "**.py"
+      - ".github/workflows/ci.yml"
   pull_request:
     branches:
-      - master
+      - main
     paths:
-      - '**.py'
-      - '.github/workflows/ci.yml'
+      - "**.py"
+      - ".github/workflows/ci.yml"
   workflow_dispatch:
+
+permissions: {}
 
 jobs:
   test:
-    env:
-      EMAIL: ${{ secrets.MEGA_EMAIL }}
-      PASS: ${{ secrets.MEGA_PASS }}
-
+    name: Run pytest
+    permissions:
+      contents: read
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -28,16 +29,19 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         python-version: [3.11, 3.13]
       fail-fast: true
+
     defaults:
       run:
         shell: bash
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v5
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Install uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@v8.1.0
         with:
           version: "0.10.11"
           python-version: ${{ matrix.python-version }}
