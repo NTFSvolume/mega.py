@@ -134,6 +134,9 @@ class _DictDumper:
         """Get a JSONable dict representation of this object"""
         return dataclasses.asdict(self)
 
+    def __json__(self) -> dict[str, Any]:
+        return self.dump()
+
     def _shallow_dump(self) -> dict[str, Any]:
         return {name: getattr(self, name) for name in _fields(type(self))}
 
