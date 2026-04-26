@@ -92,12 +92,6 @@ class MegaAPI:
     def client_id(self) -> str:
         return self._client_id
 
-    @property
-    def session(self) -> aiohttp.ClientSession:
-        if self._session is None:
-            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
-        return self._session
-
     def __repr__(self) -> str:
         return f"<{type(self).__name__}>(session_id={self.session_id!r}, client_id={self.client_id!r}, auto_close_session={self._auto_close_session!r})"
 
@@ -179,8 +173,11 @@ class MegaAPI:
             )
 
         resp = None
+        if self._session is None:
+            self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(sock_connect=160, sock_read=60))
+
         try:
-            async with self._rate_limiter, self.session.request(method, url, **kwargs) as resp:
+            async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
                 yield resp
         except RetryRequestError:
             logger.warning("Request [id=%s] failed, retrying", request_id)

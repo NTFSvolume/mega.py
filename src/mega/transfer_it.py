@@ -46,6 +46,8 @@ class TransferItAPI(MegaAPI):
 
 
 class TransferItClient(APIContextManager[TransferItAPI]):
+    __slots__ = ()
+
     def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
         self._api = TransferItAPI(session)
         if user_agent:
