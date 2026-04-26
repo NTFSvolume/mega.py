@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import json
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from functools import wraps
@@ -26,6 +28,7 @@ if TYPE_CHECKING:
 
 
 LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=False)
+
 logger = logging.getLogger(__name__)
 
 
@@ -172,18 +175,36 @@ class MegaAPI:
         **kwargs: Any,
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
         kwargs["headers"] = {"User-Agent": self.user_agent} | (headers or {})
+        request_id = str(uuid.uuid4())
         if LOG_HTTP_TRAFFIC.get():
-            params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
-            logger.debug(f"Making {method} request to {url!s} with {params}")
-        async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
-            yield resp
+            logger.debug(
+                "Starting %s request [id=%s] to %s \n%s",
+                method,
+                request_id,
+                url,
+                kwargs,
+            )
+
+        resp = None
+        try:
+            async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
+                yield resp
+        except RetryRequestError:
+            logger.warning("Request [id=%s] failed, retrying", request_id)
+            raise
+        finally:
+            if resp and LOG_HTTP_TRAFFIC.get():
+                logger.debug(
+                    "Finished %s request [id=%s]\n%s",
+                    method,
+                    request_id,
+                    _LazyResponseLog(resp),
+                )
 
     @staticmethod
     async def _parse_response(response: aiohttp.ClientResponse) -> Any:
         json_resp = await response.json()
         resp = json_resp
-        if LOG_HTTP_TRAFFIC.get():
-            logger.debug(f"Got response [{response.status}] json={json_resp!r}")
 
         if isinstance(json_resp, list) and len(json_resp) == 1:
             resp = json_resp[0]
@@ -193,12 +214,33 @@ class MegaAPI:
                 return resp
 
             if resp == -3:
-                msg = "Request failed, retrying"
-                logger.warning(msg)
                 raise RetryRequestError
             raise RequestError(resp)
 
         return resp
+
+
+class _LazyResponseLog:
+    def __init__(self, resp: aiohttp.ClientResponse) -> None:
+        self.resp = resp
+
+    def __json__(self) -> dict[str, Any]:
+        me = {
+            "url": str(self.resp.url),
+            "status_code": self.resp.status,
+            "response_headers": dict(self.resp.headers),
+            "content": None,
+        }
+        if self.resp._body:
+            stripped = self.resp._body.strip()
+            if stripped:
+                content = json.loads(stripped.decode(self.resp.get_encoding()))
+                me.update(content=content)
+
+        return me
+
+    def __str__(self) -> str:
+        return str(self.__json__())
 
 
 class APIContextManager:

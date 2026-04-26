@@ -47,7 +47,7 @@ class TransferItAPI(MegaAPI):
 
 class TransferItClient(APIContextManager):
     def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:  # pyright: ignore[reportMissingSuperCall]
-        self._api = TransferItAPI(session, user_agent)
+        self._api = TransferItAPI(session, user_agent=user_agent)
 
     @property
     def progress_bar(self) -> _GeneratorContextManager[None, None, None]:
