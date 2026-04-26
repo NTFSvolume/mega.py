@@ -3,17 +3,19 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import json
 import logging
+import uuid
 from collections.abc import Mapping, Sequence
 from contextvars import ContextVar
 from functools import wraps
-from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, ParamSpec, Self, TypeVar
 
 import aiohttp
 import yarl
 from aiolimiter import AsyncLimiter
 
+from mega import __version__, _package_name_
 from mega.crypto import generate_hashcash
 from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
@@ -25,11 +27,8 @@ if TYPE_CHECKING:
     _R = TypeVar("_R")
 
 
-_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:137.0) Gecko/20100101 Firefox/137.0"
-_DEFAULT_HEADERS: MappingProxyType[str, str] = MappingProxyType({"User-Agent": _UA})
-
-
 LOG_HTTP_TRAFFIC: ContextVar[bool] = ContextVar("LOG_HTTP_TRAFFIC", default=False)
+
 logger = logging.getLogger(__name__)
 
 
@@ -78,14 +77,16 @@ class MegaAPI:
     _rate_limiter: AsyncLimiter
 
     _entrypoint: ClassVar[yarl.URL] = yarl.URL("https://g.api.mega.co.nz/cs")
+    user_agent: str
 
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
+    def __init__(self, session: aiohttp.ClientSession | None = None, user_agent: str | None = None) -> None:
         self.session_id = None
         self._request_id = random_u32int()
         self._client_id = random_id(10)
         self.__session = session
         self._auto_close_session = session is None
         self._rate_limiter = AsyncLimiter(100, 60)
+        self.user_agent = user_agent or f"{_package_name_}/{__version__}"
 
     @property
     def entrypoint(self) -> yarl.URL:
@@ -174,19 +175,37 @@ class MegaAPI:
         headers: Mapping[str, str] | None = None,
         **kwargs: Any,
     ) -> AsyncGenerator[aiohttp.ClientResponse]:
-        kwargs["headers"] = _DEFAULT_HEADERS | (headers or {})
+        kwargs["headers"] = {"User-Agent": self.user_agent} | (headers or {})
+        request_id = str(uuid.uuid4())
         if LOG_HTTP_TRAFFIC.get():
-            params = ", ".join(f"{name} = {value!r}" for name, value in kwargs.items())
-            logger.debug(f"Making {method} request to {url!s} with {params}")
-        async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
-            yield resp
+            logger.debug(
+                "Starting %s request [id=%s] to %s \n%s",
+                method,
+                request_id,
+                url,
+                kwargs,
+            )
+
+        resp = None
+        try:
+            async with self._rate_limiter, self._session.request(method, url, **kwargs) as resp:
+                yield resp
+        except RetryRequestError:
+            logger.warning("Request [id=%s] failed, retrying", request_id)
+            raise
+        finally:
+            if resp and LOG_HTTP_TRAFFIC.get():
+                logger.debug(
+                    "Finished %s request [id=%s]\n%s",
+                    method,
+                    request_id,
+                    _LazyResponseLog(resp),
+                )
 
     @staticmethod
     async def _parse_response(response: aiohttp.ClientResponse) -> Any:
         json_resp = await response.json()
         resp = json_resp
-        if LOG_HTTP_TRAFFIC.get():
-            logger.debug(f"Got response [{response.status}] json={json_resp!r}")
 
         if isinstance(json_resp, list) and len(json_resp) == 1:
             resp = json_resp[0]
@@ -196,19 +215,40 @@ class MegaAPI:
                 return resp
 
             if resp == -3:
-                msg = "Request failed, retrying"
-                logger.warning(msg)
                 raise RetryRequestError
             raise RequestError(resp)
 
         return resp
 
 
+class _LazyResponseLog:
+    def __init__(self, resp: aiohttp.ClientResponse) -> None:
+        self.resp = resp
+
+    def __json__(self) -> dict[str, Any]:
+        me = {
+            "url": str(self.resp.url),
+            "status_code": self.resp.status,
+            "response_headers": dict(self.resp.headers),
+            "content": None,
+        }
+        if self.resp._body:
+            stripped = self.resp._body.strip()
+            if stripped:
+                content = json.loads(stripped.decode(self.resp.get_encoding()))
+                me.update(content=content)
+
+        return me
+
+    def __str__(self) -> str:
+        return str(self.__json__())
+
+
 class APIContextManager:
     __slots__ = ("_api",)
 
-    def __init__(self, session: aiohttp.ClientSession | None = None) -> None:
-        self._api: MegaAPI = MegaAPI(session)
+    def __init__(self, session: aiohttp.ClientSession | None = None, *, user_agent: str | None = None) -> None:
+        self._api: MegaAPI = MegaAPI(session, user_agent)
 
     async def __aenter__(self) -> Self:
         return self
