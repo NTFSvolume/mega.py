@@ -128,9 +128,9 @@ def test_crypto_compose_folder() -> None:
     meta_mac = (7, 8)
     crypto = Crypto.compose(key, iv, meta_mac, NodeType.FOLDER)
     assert crypto.key == key
-    assert crypto.iv == iv
-    assert crypto.meta_mac == meta_mac
-    assert crypto.full_key == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert crypto.iv == ()
+    assert crypto.meta_mac == ()
+    assert crypto.full_key == key
     assert crypto.share_key is None
 
 

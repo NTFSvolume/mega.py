@@ -183,18 +183,18 @@ class Crypto(_DictDumper):
     meta_mac: tuple[int, int]
 
     full_key: ComposedFileKey | ComposedFolderKey
-    share_key: tuple[int, ...] | None
+    share_key: NodeKey | None
 
     @classmethod
     def compose(
         cls,
-        key: tuple[int, int, int, int],
+        key: NodeKey,
         iv: tuple[int, int],
         meta_mac: tuple[int, int],
         node_type: NodeType = NodeType.FILE,
     ) -> Crypto:
         if node_type is NodeType.FILE:
-            full_key = (
+            composed_key = (
                 key[0] ^ iv[0],
                 key[1] ^ iv[1],
                 key[2] ^ meta_mac[0],
@@ -202,17 +202,25 @@ class Crypto(_DictDumper):
                 *iv,
                 *meta_mac,
             )
-        else:
-            full_key = *key, *iv, *meta_mac
+            if len(composed_key) != 8:
+                raise RuntimeError(f"Invalid key, expected key len for files is 8, got {len(composed_key) = }")
 
-        return Crypto(key, iv, meta_mac, full_key, None)  # pyright: ignore[reportArgumentType]
+        else:
+            if len(key) != 4:
+                raise RuntimeError(f"Invalid key, expected key len for folders is 4, got {len(key) = }")
+
+            iv = ()
+            meta_mac = ()
+            composed_key = key
+
+        return Crypto(key, iv, meta_mac, composed_key, None)  # pyright: ignore[reportArgumentType]
 
     @classmethod
     def decompose(
         cls,
         composed_key: ComposedFileKey | ComposedFolderKey,
         node_type: NodeType = NodeType.FILE,
-        share_key: tuple[int, ...] | None = None,
+        share_key: NodeKey | None = None,
     ) -> Crypto:
 
         key = composed_key[:4]
