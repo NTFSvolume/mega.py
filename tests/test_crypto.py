@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 
 from mega.crypto import b64_url_decode, decrypt_attr, generate_hashcash, mpi_to_int, str_to_a32
+from mega.data_structures import Crypto, NodeType
 
 
 @pytest.mark.parametrize(
@@ -53,23 +54,6 @@ def test_mpi(blob: bytes, expected: int) -> None:
     assert mpi_to_int(blob) == expected
 
 
-@pytest.mark.parametrize(
-    ("input", "expected"),
-    [
-        (
-            "1:192:1769956228:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj",
-            "1:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj:jgEAAA",
-        ),
-        (
-            "1:192:1769956324:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77",
-            "1:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77:1wAAAA",
-        ),
-    ],
-)
-def test_hashcash(input: str, expected: str) -> None:
-    assert generate_hashcash(input) == expected
-
-
 class TestStrToA32:
     def test_basic_string(self) -> None:
         result = str_to_a32("AAAA")
@@ -112,3 +96,56 @@ class TestStrToA32:
     def test_parameterized_cases(self, input_val: str | bytes, expected: tuple[int, ...]) -> None:
 
         assert str_to_a32(input_val) == expected
+
+
+def test_crypto_decompose() -> None:
+    full_key = (1194345153, 1144465475, 2482274722, 3745551294, 1, 2, 3, 4)
+    crypto = Crypto.decompose(full_key)
+    assert crypto.key == (1194345152, 1144465473, 2482274721, 3745551290)
+    assert crypto.full_key == full_key
+    assert crypto.iv == (1, 2)
+    assert crypto.meta_mac == (3, 4)
+
+    with pytest.raises(RuntimeError):
+        _ = Crypto.decompose((1, 2, 3, 4))  # pyright: ignore[reportArgumentType]
+
+
+def test_crypto_compose_file() -> None:
+    key = (1, 2, 3, 4)
+    iv = (5, 6)
+    meta_mac = (7, 8)
+    crypto = Crypto.compose(key, iv, meta_mac, NodeType.FILE)
+    assert crypto.key == key
+    assert crypto.iv == iv
+    assert crypto.meta_mac == meta_mac
+    assert crypto.full_key == (4, 4, 4, 12, 5, 6, 7, 8)
+    assert crypto.share_key is None
+
+
+def test_crypto_compose_folder() -> None:
+    key = (1, 2, 3, 4)
+    iv = (5, 6)
+    meta_mac = (7, 8)
+    crypto = Crypto.compose(key, iv, meta_mac, NodeType.FOLDER)
+    assert crypto.key == key
+    assert crypto.iv == ()
+    assert crypto.meta_mac == ()
+    assert crypto.full_key == key
+    assert crypto.share_key is None
+
+
+@pytest.mark.parametrize(
+    ("input", "expected"),
+    [
+        (
+            "1:192:1769956228:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj",
+            "1:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj:jgEAAA",
+        ),
+        (
+            "1:192:1769956324:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77",
+            "1:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77:1wAAAA",
+        ),
+    ],
+)
+def test_hashcash(input: str, expected: str) -> None:
+    assert generate_hashcash(input) == expected

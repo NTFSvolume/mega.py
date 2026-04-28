@@ -27,6 +27,10 @@ TimeStamp: TypeAlias = int
 
 SharedKeys: TypeAlias = dict[NodeID, tuple[int, ...]]
 
+NodeKey = tuple[int, int, int, int]
+ComposedFileKey = tuple[int, int, int, int, int, int, int, int]
+ComposedFolderKey = tuple[int, int, int, int]
+
 
 class ByteSize(int):
     def human_readable(self) -> str:
@@ -67,7 +71,7 @@ class NodeSerialized(TypedDict):
     h: NodeID  # ID
     p: NodeID  # Parent ID
     u: NotRequired[UserID]  # Owner (user ID), not present in transfer.it nodes
-    t: ReadOnly[Literal[0, 1, 2, 3, 4, 5]]  # Node type
+    t: ReadOnly[Literal[0, 1, 2, 3, 4]]  # Node type
     a: str  # Serialized attributes
     ts: TimeStamp  # creation date
 
@@ -174,23 +178,23 @@ class FileInfo(_DictDumper):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Crypto(_DictDumper):
-    key: tuple[int, int, int, int]
+    key: NodeKey
     iv: tuple[int, int]
     meta_mac: tuple[int, int]
 
-    full_key: tuple[int, int, int, int, int, int, int, int]
-    share_key: tuple[int, ...] | None
+    full_key: ComposedFileKey | ComposedFolderKey
+    share_key: NodeKey | None
 
     @classmethod
     def compose(
         cls,
-        key: tuple[int, ...],
-        iv: tuple[int, ...],
-        meta_mac: tuple[int, ...],
+        key: NodeKey,
+        iv: tuple[int, int],
+        meta_mac: tuple[int, int],
         node_type: NodeType = NodeType.FILE,
     ) -> Crypto:
         if node_type is NodeType.FILE:
-            full_key = (
+            composed_key = (
                 key[0] ^ iv[0],
                 key[1] ^ iv[1],
                 key[2] ^ meta_mac[0],
@@ -198,30 +202,47 @@ class Crypto(_DictDumper):
                 *iv,
                 *meta_mac,
             )
-        else:
-            full_key = *key, *iv, *meta_mac
+            if len(composed_key) != 8:
+                raise RuntimeError(f"Invalid key, expected key len for files is 8, got {len(composed_key) = }")
 
-        return Crypto(key, iv, meta_mac, full_key, None)  # pyright: ignore[reportArgumentType]
+        else:
+            if len(key) != 4:
+                raise RuntimeError(f"Invalid key, expected key len for folders is 4, got {len(key) = }")
+
+            iv = ()
+            meta_mac = ()
+            composed_key = key
+
+        return Crypto(key, iv, meta_mac, composed_key, None)  # pyright: ignore[reportArgumentType]
 
     @classmethod
     def decompose(
         cls,
-        full_key: tuple[int, ...],
+        composed_key: ComposedFileKey | ComposedFolderKey,
         node_type: NodeType = NodeType.FILE,
-        share_key: tuple[int, ...] | None = None,
+        share_key: NodeKey | None = None,
     ) -> Crypto:
-        iv = full_key[4:6]
-        meta_mac = full_key[6:8]
-        key = full_key
+
+        key = composed_key[:4]
+        iv = composed_key[4:6]
+        meta_mac = composed_key[6:8]
         if node_type is NodeType.FILE:
+            if len(composed_key) != 8:
+                raise RuntimeError(f"Invalid key, expected key len for files is 8, got {len(composed_key) = }")
+
             key = (
                 key[0] ^ iv[0],
                 key[1] ^ iv[1],
                 key[2] ^ meta_mac[0],
                 key[3] ^ meta_mac[1],
             )
+            assert iv
+            assert meta_mac
+        else:
+            if len(composed_key) != 4:
+                raise RuntimeError(f"Invalid key, expected key len for folders is 4, got {len(composed_key) = }")
 
-        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
+        return Crypto(key, iv, meta_mac, composed_key, share_key)  # pyright: ignore[reportArgumentType]
 
     @classmethod
     def from_dump(cls, dump: dict[str, Any]) -> Self:
@@ -318,6 +339,8 @@ class Attributes(_DictDumper):
 
     @classmethod
     def parse(cls, attrs: AttributesSerialized) -> Self:
+        if not attrs:
+            return _EMPTY_ATTRS
         return cls(
             name=attrs.get("n", ""),
             label=_LABELS[attrs.get("lbl", 0)],
@@ -334,6 +357,9 @@ class Attributes(_DictDumper):
             ]
             if value
         }
+
+
+_EMPTY_ATTRS = Attributes("")
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -377,6 +403,7 @@ class AccountStatsSerialized(TypedDict):
     mxfer: NotRequired[int]  # maximum transfer allowance
     srvratio: float  # Ratio of PRO transfer quota that is able to be served to others
     suntil: NotRequired[TimeStamp]  # Expiration time of the currently active plan
+    rtt: NotRequired[int]  # ???
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -395,9 +422,12 @@ class StorageMetrics(_DictDumper):
 class StorageQuota(_DictDumper):
     used: ByteSize
     max: ByteSize
-
-    percent: int
     threshold: int
+
+    percent: int = dataclasses.field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "percent", round(self.ratio * 100))
 
     @property
     def ratio(self) -> float:
@@ -418,7 +448,6 @@ class StorageQuota(_DictDumper):
         return cls(
             used=used,
             max=max,
-            percent=int(used / max * 100),
             threshold=threshold // 100,
         )
 
@@ -451,6 +480,7 @@ class AccountStats(_DictParser, _DictDumper):
     @classmethod
     def parse(cls, data: AccountStatsSerialized) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
         transfer = None
+
         if max_transfer := data.get("mxfer"):
             assert "caxfer" in data
             assert "csxfer" in data

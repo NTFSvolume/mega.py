@@ -192,7 +192,7 @@ class MegaNzClient(APIContextManager[MegaAPI]):
         full_key = b64_to_a32(public_key)
         crypto = Crypto.decompose(full_key)
         file_info = await self._core.request_file_info(public_handle, is_public=True)
-        output_name = self._core.decrypt_attrs(file_info._at, crypto.key).name
+        output_name = self._core.decrypt_attrs(file_info._at, crypto.key, public_handle).name
         output_path = Path(output_dir or ".") / output_name
         return await self._core.download_file(file_info, crypto, output_path)
 
@@ -277,7 +277,7 @@ class MegaNzClient(APIContextManager[MegaAPI]):
         full_key = b64_to_a32(public_key)
         key = Crypto.decompose(full_key).key
         file_info = await self._core.request_file_info(public_handle, is_public=True)
-        name = self._core.decrypt_attrs(file_info._at, key).name
+        name = self._core.decrypt_attrs(file_info._at, key, public_handle).name
         return dataclasses.replace(file_info, name=name)
 
     async def import_public_file(
