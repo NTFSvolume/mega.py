@@ -91,7 +91,9 @@ def test_attributes_serialization(attrs: AttributesSerialized, extras: tuple[str
 
 def test_storage_metrics() -> None:
     metrics = StorageMetrics.parse([35342640609, 2088, 33, 0, 0])
-    assert metrics
+    assert metrics.bytes_used == 35342640609
+    assert metrics.files == 2088
+    assert metrics.folders == 33
 
 
 def test_storage_quota() -> None:
