@@ -6,7 +6,7 @@ import logging
 import random
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, final
 
 import yarl
 from Crypto.Cipher import AES
@@ -23,6 +23,7 @@ from mega.crypto import (
     encrypt_key,
 )
 from mega.data_structures import (
+    _EMPTY_ATTRS,
     AccountStatsSerialized,
     Attributes,
     Crypto,
@@ -62,6 +63,7 @@ class PublicURLInfo(NamedTuple):
         return self.selected_folder or self.selected_file
 
 
+@final
 @dataclasses.dataclass(slots=True)
 class MegaCore:
     api: MegaAPI
@@ -226,7 +228,7 @@ class MegaCore:
         if node.type in (NodeType.FILE, NodeType.FOLDER):
             full_key, share_key = self.vault[node]
             crypto = Crypto.decompose(full_key, node.type, share_key)
-            attributes = self.decrypt_attrs(node._a, crypto.key)
+            attributes = self.decrypt_attrs(node._a, crypto.key, node.id)
 
         else:
             name = {
@@ -402,8 +404,15 @@ class MegaCore:
         self.clear_cache()
 
     @staticmethod
-    def decrypt_attrs(attrs: str, key: tuple[int, ...]) -> Attributes:
+    def _decrypt_attrs(attrs: str, key: tuple[int, ...]) -> Attributes:
         return Attributes.parse(decrypt_attr(b64_url_decode(attrs), key))
+
+    @classmethod
+    def decrypt_attrs(cls, attrs: str, key: tuple[int, ...], node_id: NodeID) -> Attributes:
+        attributes = cls._decrypt_attrs(attrs, key)
+        if attributes is _EMPTY_ATTRS:
+            logger.warning("Unable to decrypt attributes of node %s", node_id)
+        return attributes
 
     async def import_file(
         self,
@@ -415,7 +424,7 @@ class MegaCore:
         full_key = b64_to_a32(public_key)
         key = Crypto.decompose(full_key).key
         file_info = await self.request_file_info(public_handle, is_public=True)
-        name = self.decrypt_attrs(file_info._at, key).name
+        name = self.decrypt_attrs(file_info._at, key, public_handle).name
         encrypted_key = a32_to_base64(encrypt_key(full_key, self.vault.master_key))
         attributes = b64_url_encode(encrypt_attr({"n": name}, key))
 

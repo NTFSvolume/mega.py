@@ -318,6 +318,8 @@ class Attributes(_DictDumper):
 
     @classmethod
     def parse(cls, attrs: AttributesSerialized) -> Self:
+        if not attrs:
+            return _EMPTY_ATTRS
         return cls(
             name=attrs.get("n", ""),
             label=_LABELS[attrs.get("lbl", 0)],
@@ -334,6 +336,9 @@ class Attributes(_DictDumper):
             ]
             if value
         }
+
+
+_EMPTY_ATTRS = Attributes("")
 
 
 @dataclasses.dataclass(slots=True, frozen=True)

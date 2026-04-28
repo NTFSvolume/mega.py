@@ -3,6 +3,7 @@ from typing import Any
 import pytest
 
 from mega.crypto import b64_url_decode, decrypt_attr, generate_hashcash, mpi_to_int, str_to_a32
+from mega.data_structures import Crypto, NodeType
 
 
 @pytest.mark.parametrize(
@@ -112,3 +113,36 @@ class TestStrToA32:
     def test_parameterized_cases(self, input_val: str | bytes, expected: tuple[int, ...]) -> None:
 
         assert str_to_a32(input_val) == expected
+
+
+def test_crypto_decompose() -> None:
+    full_key = (1194345153, 1144465475, 2482274722, 3745551294)
+    crypto = Crypto.decompose(full_key)
+    assert crypto.key == (1194345153, 1144465475, 2482274722, 3745551294)
+    assert crypto.full_key == full_key
+    assert crypto.iv == ()
+    assert crypto.meta_mac == ()
+
+
+def test_crypto_compose_file() -> None:
+    key = (1, 2, 3, 4)
+    iv = (5, 6)
+    meta_mac = (7, 8)
+    crypto = Crypto.compose(key, iv, meta_mac, NodeType.FILE)
+    assert crypto.key == key
+    assert crypto.iv == iv
+    assert crypto.meta_mac == meta_mac
+    assert crypto.full_key == (4, 4, 4, 12, 5, 6, 7, 8)
+    assert crypto.share_key is None
+
+
+def test_crypto_compose_folder() -> None:
+    key = (1, 2, 3, 4)
+    iv = (5, 6)
+    meta_mac = (7, 8)
+    crypto = Crypto.compose(key, iv, meta_mac, NodeType.FOLDER)
+    assert crypto.key == key
+    assert crypto.iv == iv
+    assert crypto.meta_mac == meta_mac
+    assert crypto.full_key == (1, 2, 3, 4, 5, 6, 7, 8)
+    assert crypto.share_key is None
