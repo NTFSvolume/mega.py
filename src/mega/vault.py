@@ -8,7 +8,6 @@ from mega.crypto import b64_to_a32, decrypt_key
 if TYPE_CHECKING:
     from mega.data_structures import (
         ComposedFileKey,
-        ComposedFolderKey,
         GetNodesResponse,
         Node,
         NodeID,
@@ -23,7 +22,7 @@ _EXPORTED: Final = "EXP"
 
 
 class KeyLookup(NamedTuple):
-    composed_key: ComposedFileKey | ComposedFolderKey
+    full_key: ComposedFileKey | NodeKey
     share_key: NodeKey | None
 
 
@@ -80,7 +79,7 @@ class MegaVault:
         if len(full_key) not in (4, 8):
             raise RuntimeError(f"Invalid key len found for node {node.id} ({len(full_key)})")
 
-        return KeyLookup(cast("ComposedFileKey | ComposedFolderKey", full_key), share_key)
+        return KeyLookup(cast("ComposedFileKey | NodeKey", full_key), share_key)
 
     def save_public_key(self, node_id: NodeID, share_key: tuple[int, ...]) -> None:
         self._shared_keys[_EXPORTED][node_id] = share_key
