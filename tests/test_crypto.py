@@ -54,23 +54,6 @@ def test_mpi(blob: bytes, expected: int) -> None:
     assert mpi_to_int(blob) == expected
 
 
-@pytest.mark.parametrize(
-    ("input", "expected"),
-    [
-        (
-            "1:192:1769956228:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj",
-            "1:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj:jgEAAA",
-        ),
-        (
-            "1:192:1769956324:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77",
-            "1:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77:1wAAAA",
-        ),
-    ],
-)
-def test_hashcash(input: str, expected: str) -> None:
-    assert generate_hashcash(input) == expected
-
-
 class TestStrToA32:
     def test_basic_string(self) -> None:
         result = str_to_a32("AAAA")
@@ -116,12 +99,15 @@ class TestStrToA32:
 
 
 def test_crypto_decompose() -> None:
-    full_key = (1194345153, 1144465475, 2482274722, 3745551294)
+    full_key = (1194345153, 1144465475, 2482274722, 3745551294, 1, 2, 3, 4)
     crypto = Crypto.decompose(full_key)
-    assert crypto.key == (1194345153, 1144465475, 2482274722, 3745551294)
+    assert crypto.key == (1194345152, 1144465473, 2482274721, 3745551290)
     assert crypto.full_key == full_key
-    assert crypto.iv == ()
-    assert crypto.meta_mac == ()
+    assert crypto.iv == (1, 2)
+    assert crypto.meta_mac == (3, 4)
+
+    with pytest.raises(RuntimeError):
+        _ = Crypto.decompose((1, 2, 3, 4))
 
 
 def test_crypto_compose_file() -> None:
@@ -146,3 +132,20 @@ def test_crypto_compose_folder() -> None:
     assert crypto.meta_mac == meta_mac
     assert crypto.full_key == (1, 2, 3, 4, 5, 6, 7, 8)
     assert crypto.share_key is None
+
+
+@pytest.mark.parametrize(
+    ("input", "expected"),
+    [
+        (
+            "1:192:1769956228:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj",
+            "1:atNinVpwMnq2sgu6r3UXgd6TSZFJyi2GwOO_OC7hcUJTpKfMMJmKKPrAgxp8F5xj:jgEAAA",
+        ),
+        (
+            "1:192:1769956324:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77",
+            "1:n8r22ANvCSdYEqJAw09pFWl2L8dWA8J_VKtFsSlL3532DVsHfX_HgtvXvXuUvv77:1wAAAA",
+        ),
+    ],
+)
+def test_hashcash(input: str, expected: str) -> None:
+    assert generate_hashcash(input) == expected

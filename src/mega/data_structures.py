@@ -184,9 +184,9 @@ class Crypto(_DictDumper):
     @classmethod
     def compose(
         cls,
-        key: tuple[int, ...],
-        iv: tuple[int, ...],
-        meta_mac: tuple[int, ...],
+        key: tuple[int, int, int, int],
+        iv: tuple[int, int],
+        meta_mac: tuple[int, int],
         node_type: NodeType = NodeType.FILE,
     ) -> Crypto:
         if node_type is NodeType.FILE:
@@ -206,10 +206,13 @@ class Crypto(_DictDumper):
     @classmethod
     def decompose(
         cls,
-        full_key: tuple[int, ...],
+        full_key: tuple[int, int, int, int, int, int, int, int],
         node_type: NodeType = NodeType.FILE,
         share_key: tuple[int, ...] | None = None,
     ) -> Crypto:
+        if len(full_key) != 8:
+            raise RuntimeError(f"Invalid key, expected key of len 8, got {len(full_key)}")
+
         iv = full_key[4:6]
         meta_mac = full_key[6:8]
         key = full_key
