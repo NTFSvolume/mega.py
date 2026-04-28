@@ -27,6 +27,10 @@ TimeStamp: TypeAlias = int
 
 SharedKeys: TypeAlias = dict[NodeID, tuple[int, ...]]
 
+NodeKey = tuple[int, int, int, int]
+ComposedFileKey = tuple[int, int, int, int, int, int, int, int]
+ComposedFolderKey = tuple[int, int, int, int]
+
 
 class ByteSize(int):
     def human_readable(self) -> str:
@@ -67,7 +71,7 @@ class NodeSerialized(TypedDict):
     h: NodeID  # ID
     p: NodeID  # Parent ID
     u: NotRequired[UserID]  # Owner (user ID), not present in transfer.it nodes
-    t: ReadOnly[Literal[0, 1, 2, 3, 4, 5]]  # Node type
+    t: ReadOnly[Literal[0, 1, 2, 3, 4]]  # Node type
     a: str  # Serialized attributes
     ts: TimeStamp  # creation date
 
@@ -174,11 +178,11 @@ class FileInfo(_DictDumper):
 
 @dataclasses.dataclass(slots=True, frozen=True)
 class Crypto(_DictDumper):
-    key: tuple[int, int, int, int]
+    key: NodeKey
     iv: tuple[int, int]
     meta_mac: tuple[int, int]
 
-    full_key: tuple[int, int, int, int, int, int, int, int]
+    full_key: ComposedFileKey | ComposedFolderKey
     share_key: tuple[int, ...] | None
 
     @classmethod
@@ -206,25 +210,31 @@ class Crypto(_DictDumper):
     @classmethod
     def decompose(
         cls,
-        full_key: tuple[int, int, int, int, int, int, int, int],
+        composed_key: ComposedFileKey | ComposedFolderKey,
         node_type: NodeType = NodeType.FILE,
         share_key: tuple[int, ...] | None = None,
     ) -> Crypto:
-        if len(full_key) != 8:
-            raise RuntimeError(f"Invalid key, expected key of len 8, got {len(full_key)}")
 
-        iv = full_key[4:6]
-        meta_mac = full_key[6:8]
-        key = full_key
+        key = composed_key[:4]
+        iv = composed_key[4:6]
+        meta_mac = composed_key[6:8]
         if node_type is NodeType.FILE:
+            if len(composed_key) != 8:
+                raise RuntimeError(f"Invalid key, expected key len for files is 8, got {len(composed_key) = }")
+
             key = (
                 key[0] ^ iv[0],
                 key[1] ^ iv[1],
                 key[2] ^ meta_mac[0],
                 key[3] ^ meta_mac[1],
             )
+            assert iv
+            assert meta_mac
+        else:
+            if len(composed_key) != 4:
+                raise RuntimeError(f"Invalid key, expected key len for folders is 4, got {len(composed_key) = }")
 
-        return Crypto(key, iv, meta_mac, full_key, share_key)  # pyright: ignore[reportArgumentType]
+        return Crypto(key, iv, meta_mac, composed_key, share_key)  # pyright: ignore[reportArgumentType]
 
     @classmethod
     def from_dump(cls, dump: dict[str, Any]) -> Self:

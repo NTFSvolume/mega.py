@@ -100,8 +100,8 @@ async def dump(output_dir: Path = CWD) -> None:
         fs = await mega.get_filesystem()
         out = output_dir / "filesystem.json"
         out.parent.mkdir(exist_ok=True)
-        logger.info(f"Creating filesystem dump at '{out!s}'")
         out.write_text(json.dumps(fs.dump(), indent=2, ensure_ascii=False))
+        logger.info(f"Created filesystem dump at '{out!s}'")
 
 
 @app.command()

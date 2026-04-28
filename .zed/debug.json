@@ -7,8 +7,14 @@
     "justMyCode": false,
     "purpose": ["debug-test"],
     "args": ["download", "<URL>"],
-    "env": {
-      "PYTHONASYNCIODEBUG": "1",
-    },
+  },
+  {
+    "label": "Dump filesystem (mega.py)",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "program": "src/mega/__main__.py",
+    "justMyCode": false,
+    "purpose": ["debug-test"],
+    "args": ["dump", "-vv"],
   },
 ]
