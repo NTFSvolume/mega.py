@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Final, cast
+from typing import TYPE_CHECKING, Final, NamedTuple, cast
 
 from mega.crypto import b64_to_a32, decrypt_key
 
@@ -12,6 +12,7 @@ if TYPE_CHECKING:
         GetNodesResponse,
         Node,
         NodeID,
+        NodeKey,
         SharedKeys,
         UserID,
     )
@@ -19,6 +20,11 @@ if TYPE_CHECKING:
 
 _EXPORTED: Final = "EXP"
 # An special owner used for exported (AKA public) file/folders
+
+
+class KeyLookup(NamedTuple):
+    composed_key: ComposedFileKey | ComposedFolderKey
+    share_key: NodeKey | None
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
@@ -43,7 +49,7 @@ class MegaVault:
             if key := new_keys.get(node_id):
                 self._shared_keys.setdefault(owner, {})[node_id] = key
 
-    def __getitem__(self, node: Node) -> tuple[ComposedFileKey | ComposedFolderKey, tuple[int, ...] | None]:
+    def __getitem__(self, node: Node) -> KeyLookup:
         share_key: tuple[int, ...] | None = None
 
         # my files/folders
@@ -74,7 +80,7 @@ class MegaVault:
         if len(full_key) not in (4, 8):
             raise RuntimeError(f"Invalid key len found for node {node.id} ({len(full_key)})")
 
-        return cast("ComposedFileKey | ComposedFolderKey", full_key), share_key
+        return KeyLookup(cast("ComposedFileKey | ComposedFolderKey", full_key), share_key)
 
     def save_public_key(self, node_id: NodeID, share_key: tuple[int, ...]) -> None:
         self._shared_keys[_EXPORTED][node_id] = share_key
