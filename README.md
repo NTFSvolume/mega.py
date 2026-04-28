@@ -46,7 +46,7 @@ Please check [`src/mega/data_structures.py`](src/mega/data_structures.py) for de
 > [!TIP]
 > You can run the commands bellow in an interactive python (the asyncio REPL). Try them in real time as is, using `async/await` keywords!
 >
-> ```uv run -p3.12 --with async-mega-py python -m asyncio```
+> `uv run -p3.12 --with async-mega-py python -m asyncio`
 
 ```python
 from mega.client import MegaNzClient
@@ -66,7 +66,7 @@ from mega.client import MegaNzClient
 # Also works without using it as a context manager, but you have the responsability to close the session at the end
 mega = MegaNzClient()
 await mega.login() # login using a temporary anonymous account
-# await mega.close()  
+# await mega.close()
 
 ```
 
@@ -130,7 +130,7 @@ await mega.download(uploaded_file, output_dir)
 
 # Download a public file
 file_url = "https://mega.nz/file/vJ9EBJBC#vA1XpbngXcnN7lqXEWGQFPDc5ZlG6yltCHwGN-0O2LQ"
-public_handle, public_key = mega.parse_file_url(file_url)  
+public_handle, public_key = mega.parse_file_url(file_url)
 await mega.download_public_file(public_handle, public_key, output_dir)
 
 # Download a public folder
@@ -153,7 +153,7 @@ print (result.is_folder)
 > You can show a progress bar on the terminal for each download/upload by calling them within the `progress_bar` context manager (needs optional dependency `rich` to be installed):
 
 ```python
-with mega.progress_bar:  
+with mega.progress_bar:
     results = await mega.download_public_folder(public_handle, public_key, output_dir / "with_bar")
 ```
 
@@ -231,15 +231,13 @@ The output will be:
 
 ```json
 {
-    "oImwb6nN": "/tests/script.js",
-    "FIXitv4F": "/tests/scripts",
-    "0fPFklV3": "/tests/scripts/notes.txt",
-    "l9zkz1GU": "/tests/scripts/script.js",
-    "E4LqT4EF": "/tests/scripts/styles.css",
+  "oImwb6nN": "/tests/script.js",
+  "FIXitv4F": "/tests/scripts",
+  "0fPFklV3": "/tests/scripts/notes.txt",
+  "l9zkz1GU": "/tests/scripts/script.js",
+  "E4LqT4EF": "/tests/scripts/styles.css"
 }
 ```
-
-
 
 ```python
 # Get the path to a node
@@ -261,24 +259,25 @@ for node in fs.iterdir(folder.id, recursive=True):
     print(fs.absolute_path(node.id))
 
 ```
+
 Output will be:
 
 ```json
 [
-    "/tests/logo.png",
-    "/tests/logo.png",
-    "/tests/script.js",
-    "/tests/scripts",
-    "/tests/scripts/notes.txt",
-    "/tests/scripts/script.js",
-    "/tests/scripts/styles.css",
-    "/tests/setup.sh",
-    "/tests/utils.py",
+  "/tests/logo.png",
+  "/tests/logo.png",
+  "/tests/script.js",
+  "/tests/scripts",
+  "/tests/scripts/notes.txt",
+  "/tests/scripts/script.js",
+  "/tests/scripts/styles.css",
+  "/tests/setup.sh",
+  "/tests/utils.py"
 ]
 ```
 
 > [!IMPORTANT]  
-> Mega's filesystem is *not* POSIX-compliant: multiple nodes may have the same path.
+> Mega's filesystem is _not_ POSIX-compliant: multiple nodes may have the same path.
 >
 > If 2 nodes have the same path, `find` will throw an error.
 
@@ -319,10 +318,10 @@ mega-py --help
 ```
 
 ```powershell
-Usage: mega-py [OPTIONS] COMMAND [ARGS]...  
+Usage: mega-py [OPTIONS] COMMAND [ARGS]...
 
- CLI app for the Mega.nz and Transfer.it. Set MEGA_NZ_EMAIL and MEGA_NZ_PASSWORD  
- enviroment variables to use them as credentials for Mega  
+ CLI app for the Mega.nz and Transfer.it. Set MEGA_EMAIL and MEGA_PWD
+ enviroment variables to use them as credentials for Mega
 
 ╭─ Options ──────────────────────────────────────────────────────────────────────╮
 │ --verbose  -v               Increase verbosity (-v shows debug logs,  -vv      │
@@ -338,6 +337,6 @@ Usage: mega-py [OPTIONS] COMMAND [ARGS]...
 ```
 
 > [!TIP]
-> The CLI app does *not* accept login credentials, but you can still use your account by setting up the `MEGA_EMAIL` and `MEGA_PWD` enviroment variables
+> The CLI app does _not_ accept login credentials, but you can still use your account by setting up the `MEGA_EMAIL` and `MEGA_PWD` enviroment variables
 >
 > It will also read them from an `.env` file (if found)

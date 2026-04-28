@@ -50,12 +50,14 @@ class MegaVault:
 
         # files shared with me
         elif node.owner in self._shared_keys:
-            real_node_id, share_key = next(p for p in self._shared_keys[node.owner].items() if p[0] in node.keys)
+            real_node_id = next(node_id for node_id in node.keys if node_id in self._shared_keys[node.owner])
+            share_key = self._shared_keys[node.owner][real_node_id]
             full_key = decrypt_key(b64_to_a32(node.keys[real_node_id]), share_key)
 
         # public files/folders
         elif share_key := self._shared_keys[_EXPORTED].get(node.id):
-            encrypted_key = b64_to_a32(next(iter(node.keys.values())))
+            real_node_id = next(node_id for node_id in node.keys if node_id in self._shared_keys[_EXPORTED])
+            encrypted_key = b64_to_a32(node.keys[real_node_id])
             full_key = decrypt_key(encrypted_key, share_key)
 
         else:

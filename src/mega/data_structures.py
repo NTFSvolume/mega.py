@@ -13,7 +13,7 @@ import dataclasses
 import time
 from enum import IntEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Self, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -67,7 +67,7 @@ class NodeSerialized(TypedDict):
     h: NodeID  # ID
     p: NodeID  # Parent ID
     u: NotRequired[UserID]  # Owner (user ID), not present in transfer.it nodes
-    t: ReadOnly[NodeType]
+    t: ReadOnly[Literal[0, 1, 2, 3, 4, 5]]  # Node type
     a: str  # Serialized attributes
     ts: TimeStamp  # creation date
 
@@ -76,6 +76,7 @@ class NodeSerialized(TypedDict):
     sk: NotRequired[str]  # Share key, only present present in shared (public) files / folder
 
     s: NotRequired[int]  # size (files only)
+    fa: NotRequired[str]  # additional file attributes for multimedia files (ex: thumbail)
 
 
 class OwnerKeys(TypedDict):
@@ -267,6 +268,7 @@ class Node(_DictDumper):
             keys: dict[str, str] = {}
 
         size = node.get("s")
+
         return Node(
             id=node["h"],
             parent_id=node["p"],

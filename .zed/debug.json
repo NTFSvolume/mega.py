@@ -1,0 +1,14 @@
+[
+  {
+    "label": "Download URL (mega.py)",
+    "adapter": "Debugpy",
+    "request": "launch",
+    "program": "src/mega/__main__.py",
+    "justMyCode": false,
+    "purpose": ["debug-test"],
+    "args": ["download", "<URL>"],
+    "env": {
+      "PYTHONASYNCIODEBUG": "1",
+    },
+  },
+]
