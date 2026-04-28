@@ -107,7 +107,7 @@ def test_crypto_decompose() -> None:
     assert crypto.meta_mac == (3, 4)
 
     with pytest.raises(RuntimeError):
-        _ = Crypto.decompose((1, 2, 3, 4))
+        _ = Crypto.decompose((1, 2, 3, 4))  # pyright: ignore[reportArgumentType]
 
 
 def test_crypto_compose_file() -> None:

@@ -385,6 +385,7 @@ class AccountStatsSerialized(TypedDict):
     mxfer: NotRequired[int]  # maximum transfer allowance
     srvratio: float  # Ratio of PRO transfer quota that is able to be served to others
     suntil: NotRequired[TimeStamp]  # Expiration time of the currently active plan
+    rtt: NotRequired[int]  # ???
 
 
 @dataclasses.dataclass(slots=True, frozen=True)
