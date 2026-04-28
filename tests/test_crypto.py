@@ -2,7 +2,7 @@ from typing import Any
 
 import pytest
 
-from mega.crypto import decrypt_attr, generate_hashcash, mpi_to_int, str_to_a32
+from mega.crypto import b64_url_decode, decrypt_attr, generate_hashcash, mpi_to_int, str_to_a32
 
 
 @pytest.mark.parametrize(
@@ -20,6 +20,24 @@ from mega.crypto import decrypt_attr, generate_hashcash, mpi_to_int, str_to_a32
 )
 def test_decrypt_attr(attrs: bytes, key: tuple[int, ...], expected_output: dict[str, Any]) -> None:
     output = decrypt_attr(attrs, key)
+    assert output == expected_output
+
+
+@pytest.mark.parametrize(
+    ("attrs", "key", "expected_output"),
+    [
+        (
+            "eexhyj90ZGTIIJB9sNzxbtoXtWxSZF-Wx4y-9tCKHetrwkzkU8lRTJbJyWvriph4FkX_A3G-GEUOObx6PBdOuQ",
+            (1236629439, 3286055264, 785908661, 3074713241),
+            {
+                "c": "isL4enBZjOSl7BzytQws8ARrxYxp",
+                "n": "OnlyFans (2).mp4",
+            },
+        ),
+    ],
+)
+def test_decrypt_attr_str(attrs: str, key: tuple[int, ...], expected_output: dict[str, Any]) -> None:
+    output = decrypt_attr(b64_url_decode(attrs), key)
     assert output == expected_output
 
 
