@@ -1,6 +1,16 @@
 import pytest
 
-from mega.data_structures import _EMPTY_ATTRS, Attributes, AttributesSerialized, Node
+from mega.data_structures import (
+    _EMPTY_ATTRS,
+    AccountBalance,
+    AccountStats,
+    Attributes,
+    AttributesSerialized,
+    Node,
+    StorageMetrics,
+    StorageQuota,
+    StorageStatus,
+)
 
 
 def test_node_deserialization() -> None:
@@ -77,3 +87,77 @@ def test_attributes_deserialization() -> None:
 def test_attributes_serialization(attrs: AttributesSerialized, extras: tuple[str, ...]) -> None:
     filtered = {k: v for k, v in attrs.items() if k not in extras}
     assert Attributes.parse(attrs).serialize() == filtered
+
+
+def test_storage_metrics() -> None:
+    metrics = StorageMetrics.parse([35342640609, 2088, 33, 0, 0])
+    assert metrics
+
+
+def test_storage_quota() -> None:
+    storage = StorageQuota.parse(
+        {
+            "mstrg": 53687091200,
+            "usl": 0,
+            "cstrg": 35342640609,
+            "uslw": 9000,
+        }
+    )
+    assert storage.used == 35342640609
+    assert storage.max == 53687091200
+    assert storage.threshold == 90
+    assert storage.ratio == pytest.approx(0.6583, abs=0.0001)
+    assert storage.percent == 66
+    assert storage.is_full is False
+    assert storage.is_almost_full is False
+
+
+def test_account_balance() -> None:
+    for value in ([], None):
+        balance = AccountBalance.parse(value)
+        assert balance.amount == 0.0
+        assert balance.currency == "EUR"
+
+    balance = AccountBalance.parse([(28, "USD")])
+    assert type(balance.amount) is float
+    assert balance.amount == 28.0
+    assert balance.currency == "USD"
+
+
+def test_account_stats() -> None:
+    stats = AccountStats.parse(
+        {
+            "mstrg": 53687091200,
+            "usl": 0,
+            "cstrgn": {
+                "5NJU0QYC": [35342640609, 2088, 33, 0, 0],
+                "sF4BSZQC": [0, 0, 0, 0, 0],
+                "UQY1SapC": [0, 0, 3, 0, 0],
+            },
+            "cstrg": 35342640609,
+            "uslw": 9000,
+            "srvratio": 25.000381475547417,
+            "balance": [],
+            "subs": [],
+            "plans": [],
+            "features": [],
+            "bt": 18012,
+            "tah": [0, 0, 0, 0, 0, 0],
+            "tar": 0,
+            "tuo": 0,
+            "tua": 0,
+            "ruo": 0,
+            "rua": 0,
+            "rtt": 1,
+        }
+    )
+    assert stats.storage.used == 35342640609
+    assert stats.storage.max == 53687091200
+    assert stats.storage.threshold == 90
+    assert stats.transfer_quota is None
+    assert stats.features == ()
+    assert stats.plan_expires is None
+    assert stats.plans == ()
+    assert stats.storage_status is StorageStatus.GREEN
+    assert stats.balance.amount == 0.0
+    assert stats.balance.currency == "EUR"

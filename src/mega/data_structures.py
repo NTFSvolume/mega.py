@@ -400,9 +400,12 @@ class StorageMetrics(_DictDumper):
 class StorageQuota(_DictDumper):
     used: ByteSize
     max: ByteSize
-
-    percent: int
     threshold: int
+
+    percent: int = dataclasses.field(init=False)
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "percent", round(self.ratio * 100))
 
     @property
     def ratio(self) -> float:
@@ -423,7 +426,6 @@ class StorageQuota(_DictDumper):
         return cls(
             used=used,
             max=max,
-            percent=int(used / max * 100),
             threshold=threshold // 100,
         )
 
@@ -456,6 +458,7 @@ class AccountStats(_DictParser, _DictDumper):
     @classmethod
     def parse(cls, data: AccountStatsSerialized) -> Self:  # pyright: ignore[reportIncompatibleMethodOverride]
         transfer = None
+
         if max_transfer := data.get("mxfer"):
             assert "caxfer" in data
             assert "csxfer" in data
