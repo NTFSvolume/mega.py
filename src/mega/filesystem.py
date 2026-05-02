@@ -92,7 +92,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
             yield "files", self.file_count
             yield "folders", self.file_count
 
-        all_fields = "".join(f"{name}={value!r}" for name, value in fields())
+        all_fields = ", ".join(f"{name}={value!r}" for name, value in fields())
         return f"<{type(self).__name__}({all_fields})>"
 
     def __len__(self) -> int:
@@ -123,8 +123,8 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
         children: dict[NodeID, list[NodeID]] = {}
 
         def sanity_check(current: Node | None, found: Node) -> None:
-            if root is not None:
-                ids = root.id, found.id
+            if current is not None:
+                ids = current.id, found.id
                 raise ValidationError(f"Multiple nodes of type {found.type.name} found: {ids}")
 
         for node in nodes:
