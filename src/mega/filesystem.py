@@ -71,7 +71,7 @@ class _NodeWalker:
         return list(self.iterdir(node_id))
 
 
-@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True, repr=False)
 class SimpleFileSystem(_NodeWalker, _DictDumper):
     """A simple representation of Mega.nz's file system.
 
@@ -90,7 +90,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
             for name, node in [("root", self.root), ("inbox", self.inbox), ("trash_bin", self.trash_bin)]:
                 yield name, node.id if node is not None else None
             yield "files", self.file_count
-            yield "folders", self.file_count
+            yield "folders", self.folder_count
 
         all_fields = ", ".join(f"{name}={value!r}" for name, value in fields())
         return f"<{type(self).__name__}({all_fields})>"
@@ -174,7 +174,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
         return cls.build(Node.from_dump(node) for node in dump["nodes"].values())
 
 
-@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True, repr=False)
 class FileSystem(SimpleFileSystem):
     """Mega.nz's file system.
 
@@ -184,13 +184,13 @@ class FileSystem(SimpleFileSystem):
     NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
     """
 
-    paths: MappingProxyType[NodeID, PurePosixPath] = dataclasses.field(repr=False)
+    paths: MappingProxyType[NodeID, PurePosixPath]
     """A mapping of every node to its absolute path within the filesystem"""
 
-    inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]] = dataclasses.field(repr=False)
+    inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]]
     """A mapping of paths to every node located at that path"""
 
-    _deleted: frozenset[NodeID] = dataclasses.field(repr=False)
+    _deleted: frozenset[NodeID]
 
     @classmethod
     def build(cls, nodes: Iterable[Node]) -> Self:
@@ -340,7 +340,7 @@ class FileSystem(SimpleFileSystem):
         )
 
 
-@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
+@dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True, repr=False)
 class UserFileSystem(FileSystem):
     root: Node
     inbox: Node
