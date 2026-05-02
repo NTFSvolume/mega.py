@@ -82,6 +82,16 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
     file_count: int
     folder_count: int
 
+    def __repr__(self) -> str:
+        def fields():
+            for name, node in [("root", self.root), ("inbox", self.inbox), ("trash_bin", self.trash_bin)]:
+                yield name, node.id if node is not None else None
+            yield "files", self.file_count
+            yield "folders", self.file_count
+
+        all_fields = "".join(f"{name}={value!r}" for name, value in fields())
+        return f"<{type(self).__name__}({all_fields})>"
+
     def __len__(self) -> int:
         return len(self.nodes)
 
