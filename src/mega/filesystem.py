@@ -48,12 +48,15 @@ def _resolve_paths(walker: _NodeWalker, *roots: Node) -> Generator[_NodeLookup]:
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True)
 class _NodeWalker:
-    _nodes: MappingProxyType[NodeID, Node] = dataclasses.field(repr=False)
-    _children: MappingProxyType[NodeID, tuple[NodeID, ...]] = dataclasses.field(repr=False)
+    nodes: MappingProxyType[NodeID, Node] = dataclasses.field(repr=False)
+    "A mapping of every node"
+
+    children: MappingProxyType[NodeID, tuple[NodeID, ...]] = dataclasses.field(repr=False)
+    "A mapping of nodes to their inmediate children"
 
     def _ls(self, node_id: NodeID, *, recursive: bool) -> Iterable[NodeID]:
         """Get ID of every child of this node"""
-        for child_id in self._children.get(node_id, ()):
+        for child_id in self.children.get(node_id, ()):
             yield child_id
             if recursive:
                 yield from self._ls(child_id, recursive=recursive)
@@ -61,7 +64,7 @@ class _NodeWalker:
     def iterdir(self, node_id: NodeID, *, recursive: bool = False) -> Iterable[Node]:
         """Iterate over the children in this node"""
         for child_id in self._ls(node_id, recursive=recursive):
-            yield self._nodes[child_id]
+            yield self.nodes[child_id]
 
     def listdir(self, node_id: NodeID) -> list[Node]:
         """Get a list of children of this node (non recursive)"""
@@ -106,16 +109,6 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
         return self.nodes[node_id]
 
     @property
-    def nodes(self) -> MappingProxyType[NodeID, Node]:
-        """A mapping of every node"""
-        return self._nodes
-
-    @property
-    def children(self) -> MappingProxyType[NodeID, tuple[NodeID, ...]]:
-        """A mapping of nodes to their inmediate children"""
-        return self._children
-
-    @property
     def deleted(self) -> Iterable[Node]:
         """Files or folders currently on the trash bin (Non recursive)"""
         if self.trash_bin:
@@ -153,8 +146,8 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
             trash_bin=trash_bin,
             file_count=file_count,
             folder_count=folder_count,
-            _nodes=MappingProxyType(nodes_map),
-            _children=MappingProxyType({node_id: tuple(nodes) for node_id, nodes in children.items()}),
+            nodes=MappingProxyType(nodes_map),
+            children=MappingProxyType({node_id: tuple(nodes) for node_id, nodes in children.items()}),
         )
 
     def dump(self) -> dict[str, Any]:
@@ -183,8 +176,12 @@ class FileSystem(SimpleFileSystem):
     NOTE: Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
     """
 
-    _paths: MappingProxyType[NodeID, PurePosixPath] = dataclasses.field(repr=False)
-    _inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]] = dataclasses.field(repr=False)
+    paths: MappingProxyType[NodeID, PurePosixPath] = dataclasses.field(repr=False)
+    """A mapping of every node to its absolute path within the filesystem"""
+
+    inv_paths: MappingProxyType[PurePosixPath, tuple[NodeID, ...]] = dataclasses.field(repr=False)
+    """A mapping of paths to every node located at that path"""
+
     _deleted: frozenset[NodeID] = dataclasses.field(repr=False)
 
     @classmethod
@@ -219,25 +216,12 @@ class FileSystem(SimpleFileSystem):
             trash_bin=self.trash_bin,
             file_count=self.file_count,
             folder_count=self.folder_count,
-            _nodes=self.nodes,
-            _children=self.children,
-            _paths=MappingProxyType(paths),
-            _inv_paths=MappingProxyType({path: tuple(nodes) for path, nodes in inv_paths.items()}),
+            nodes=self.nodes,
+            children=self.children,
+            paths=MappingProxyType(paths),
+            inv_paths=MappingProxyType({path: tuple(nodes) for path, nodes in inv_paths.items()}),
             _deleted=frozenset(deleted_ids),
         )
-
-    @property
-    def paths(self) -> MappingProxyType[NodeID, PurePosixPath]:
-        """A mapping of every node to its absolute path within the filesystem"""
-        return self._paths
-
-    @property
-    def inv_paths(self) -> MappingProxyType[PurePosixPath, tuple[NodeID, ...]]:
-        """A mapping of paths to every node located at that path
-
-        Mega's filesystem is **not POSIX-compliant**: multiple nodes may have the same path
-        """
-        return self._inv_paths
 
     @property
     def files(self) -> Iterable[Node]:
@@ -270,7 +254,7 @@ class FileSystem(SimpleFileSystem):
 
     def absolute_path(self, node_id: NodeID) -> PurePosixPath:
         """Get the absolute path of this node"""
-        return self._paths[node_id]
+        return self.paths[node_id]
 
     def search(
         self,
@@ -281,7 +265,7 @@ class FileSystem(SimpleFileSystem):
         """Returns nodes that have "query" as a substring on their path"""
         query = PurePosixPath(query).as_posix()
 
-        for node_id, path in self._paths.items():
+        for node_id, path in self.paths.items():
             if query not in path.as_posix():
                 continue
 
@@ -302,7 +286,7 @@ class FileSystem(SimpleFileSystem):
         """
         path = POSIX_ROOT / PurePosixPath(path)
         try:
-            nodes = self._inv_paths[path]
+            nodes = self.inv_paths[path]
         except LookupError:
             msg = f'A node with path "{path!s}" does not exists'
             raise FileNotFoundError(errno.ENOENT, msg) from None
@@ -342,8 +326,8 @@ class FileSystem(SimpleFileSystem):
 
         return dump | dict(  # noqa: C408
             deleted=sorted(self._deleted),
-            paths={node_id: str(path) for node_id, path in self._paths.items()},
-            inv_paths={str(path): node_id for path, node_id in self._inv_paths.items()},
+            paths={node_id: str(path) for node_id, path in self.paths.items()},
+            inv_paths={str(path): node_id for path, node_id in self.inv_paths.items()},
             children=dict(self.children),
         )
 
