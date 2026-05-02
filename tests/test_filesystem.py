@@ -119,13 +119,7 @@ def test_iter_dir(fs: UserFileSystem) -> None:
     assert get_path(recursive=True) == sorted(recursive_children)
 
 
-def test_unsafe_filesystem_build() -> None:
-    dump = json.loads(TEST_FS.read_text())
-    nodes = (Node.from_dump(node) for node in dump["nodes"].values())
-    UserFileSystem.build_unsafe(nodes)
-
-
-def test_safe_filesystem_build() -> None:
+def test_filesystem_build() -> None:
     dump = json.loads(TEST_FS.read_text())
     nodes = (Node.from_dump(node) for node in dump["nodes"].values())
     fs = UserFileSystem.build(nodes)
