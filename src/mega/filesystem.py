@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Self
 
 from mega.data_structures import Node, NodeID, NodeType, _DictDumper
-from mega.errors import MultipleNodesFoundError
+from mega.errors import MultipleNodesFoundError, ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Iterator
@@ -122,6 +122,11 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
         nodes_map: dict[NodeID, Node] = {}
         children: dict[NodeID, list[NodeID]] = {}
 
+        def sanity_check(current: Node | None, found: Node) -> None:
+            if root is not None:
+                ids = root.id, found.id
+                raise ValidationError(f"Multiple nodes of type {found.type.name} found: {ids}")
+
         for node in nodes:
             nodes_map[node.id] = node
             if node.parent_id:
@@ -132,10 +137,13 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
                 case NodeType.FOLDER:
                     folder_count += 1
                 case NodeType.ROOT_FOLDER:
+                    sanity_check(root, node)
                     root = node
                 case NodeType.INBOX:
+                    sanity_check(inbox, node)
                     inbox = node
                 case NodeType.TRASH:
+                    sanity_check(trash_bin, node)
                     trash_bin = node
                 case _:
                     raise RuntimeError  # pyright: ignore[reportUnreachable]
