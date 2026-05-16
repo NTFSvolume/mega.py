@@ -106,18 +106,27 @@ class MegaCore:
         return result.public_handle, result.public_key, result.selected_node
 
     @staticmethod
-    def parse_url(url: str | yarl.URL) -> PublicURLInfo:
-        """Parse a public URL"""
+    def ensure_v2_url(url: str | yarl.URL) -> yarl.URL:
+        """Transform an URL in V1 format to v2"""
         url = yarl.URL(url)
         Site.MEGA.check_host(url)
         new_url = transform_v1_url(url)
         if new_url != url:
             logger.info(f"Transformed v1 URL from {url} to {new_url}")
+        return new_url
 
-        url = new_url
-        if not url.fragment:
+    @staticmethod
+    def parse_url(url: str | yarl.URL, *, check_key: bool = True) -> PublicURLInfo:
+        """Parse a public URL"""
+        url = MegaCore.ensure_v2_url(url)
+        info = MegaCore._parse_public_v2_url(url)
+        if check_key and not info.public_key:
             raise ValidationError(f"Public key missing from {url}")
+        return info
 
+    @staticmethod
+    def _parse_public_v2_url(url: yarl.URL, /) -> PublicURLInfo:
+        """Parse a public URL"""
         match url.parts[1:]:
             case ["file", public_handle]:
                 return PublicURLInfo(False, public_handle, url.fragment)
@@ -422,7 +431,7 @@ class MegaCore:
     ) -> Node:
         """Import the public file into user account"""
         full_key = b64_to_a32(public_key)
-        key = Crypto.decompose(full_key).key
+        key = Crypto.decompose(full_key).key  # pyright: ignore[reportArgumentType]
         file_info = await self.request_file_info(public_handle, is_public=True)
         name = self.decrypt_attrs(file_info._at, key, public_handle).name
         encrypted_key = a32_to_base64(encrypt_key(full_key, self.vault.master_key))
