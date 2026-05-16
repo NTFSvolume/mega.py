@@ -123,7 +123,7 @@ requires = ["uv_build<=0.10.11"]
 
 [dependency-groups]
 dev = [
-    "prek>=0.3.6",
+    "prek>=0.4.0",
     "pytest-asyncio>=0.25.0",
     "pytest>=8.3.5",
     "ruff==0.15.6"
