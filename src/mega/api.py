@@ -14,7 +14,7 @@ import aiohttp
 import yarl
 from aiolimiter import AsyncLimiter
 
-from mega import LOG_HTTP_TRAFFIC, __version__, _package_name_
+from mega import LOG_HTTP_TRAFFIC, LOG_HTTP_TRAFFIC_LEVEL, __version__, _package_name_
 from mega.crypto import generate_hashcash
 from mega.errors import RequestError, RetryRequestError
 from mega.utils import random_id, random_u32int
@@ -161,7 +161,8 @@ class MegaAPI:
         kwargs["headers"] = {"User-Agent": self.user_agent, **(headers or {})}
         request_id = str(uuid.uuid4())
         if LOG_HTTP_TRAFFIC.get():
-            logger.debug(
+            logger.log(
+                LOG_HTTP_TRAFFIC_LEVEL.get(),
                 "Starting %s request [id=%s] to %s \n%s",
                 method,
                 request_id,
@@ -181,7 +182,8 @@ class MegaAPI:
             raise
         finally:
             if resp and LOG_HTTP_TRAFFIC.get():
-                logger.debug(
+                logger.log(
+                    LOG_HTTP_TRAFFIC_LEVEL.get(),
                     "Finished %s request [id=%s]\n%s",
                     method,
                     request_id,
