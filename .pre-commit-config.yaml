@@ -16,13 +16,13 @@ repos:
         args: [--markdown-linebreak-ext=md]
 
   - repo: https://github.com/pappasam/toml-sort
-    rev: v0.25.0
+    rev: v0.24.4 # do not update to v0.25.0 (unknown third-party TOML backend): https://github.com/dimbleby/tomlrt
     hooks:
       - id: toml-sort-fix
         files: ^(.*\.toml)$
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.10
+    rev: v0.17.3
     hooks:
       - id: ruff
         args: [--fix]
