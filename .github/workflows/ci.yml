@@ -47,7 +47,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          uv sync --no-build --all-extras
+          uv sync --locked --no-build --all-extras
 
       - name: Run pytest
         run: |
