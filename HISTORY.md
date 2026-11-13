@@ -1,5 +1,9 @@
 # Release History
 
+## 3.0.0 (2026-11-12)
+
+- Parse filesystems in strict mode by default. An error decrypt any node will not be ignored
+
 ## 2.0.0 (2026-02-10)
 
 - Refactor entire codebase to use an async design
@@ -26,7 +30,7 @@
 ## 1.0.8 (2020-06-25)
 
 - Fixes find method returning the wrong file when more than one file
-    exists with that name.
+  exists with that name.
 - Handle new shared file URLS.
 
 ## 1.0.7 (2020-03-25)
@@ -50,18 +54,18 @@
 
 - Fixes broken `download` method.
 - Changes `download` and `download_url` methods to return the path to
-    the downloaded file, previously returned `None`.
+  the downloaded file, previously returned `None`.
 - Added LICENSE.
 
 ## 1.0.2 (2019-11-07)
 
 - Reverts, "Replace pycrypto dependency with pycryptodome" as breaks
-    login process.
+  login process.
 
 ## 1.0.1 (2019-11-06)
 
 - When a request fails due to EAGAIN response, retry with exp backoff
-    up to 20 seconds.
+  up to 20 seconds.
 - Adds logging, removes print statements.
 - Replace pycrypto dependency with pycryptodome.
 - Removes Python 2 specific code.
@@ -71,14 +75,14 @@
 - Removes broken method `get_contacts()`.
 - Adds support for login with a v2 Mega user account.
 - Adds `export()` method to share a file or folder, returning public
-    share URL with key.
+  share URL with key.
 - Adds code, message attrs to RequestError exception, makes message in
-    raised exceptions include more details.
+  raised exceptions include more details.
 - Alters `create_folder()` to accept a path including multiple sub
-    directories, adds support to create them all (similar to 'mkdir -p'
-    on unix systems).
+  directories, adds support to create them all (similar to 'mkdir -p'
+  on unix systems).
 - Adds `exclude_deleted=True` optional arg to `find()` method, to
-    exclude deleted nodes from results.
+  exclude deleted nodes from results.
 
 ## 0.9.20 (2019-10-17)
 
