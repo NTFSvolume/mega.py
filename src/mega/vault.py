@@ -74,24 +74,25 @@ class MegaVault:
 
         # files shared with me
         if node.owner in self._shared_keys:
-            valid_nodes = self._shared_keys[node.owner].keys()
-            for node_id in node.keys:
-                if node_id not in valid_nodes:
+            shared_keys = self._shared_keys[node.owner]
+            for node_id, encrypted_key in node.keys.items():
+                try:
+                    share_key = shared_keys[node_id]
+                except KeyError:
                     continue
-                share_key = self._shared_keys[node.owner][node_id]
-                full_key = decrypt_key(b64_to_a32(node.keys[node_id]), share_key)
+
+                full_key = decrypt_key(b64_to_a32(encrypted_key), share_key)
                 yield cast_key(full_key, share_key)
             return
 
         # public files/folders
         if share_key := self._shared_keys[_EXPORTED].get(node.id):
-            valid_nodes = self._shared_keys[_EXPORTED].keys()
-            for node_id in node.keys:
-                if node_id not in valid_nodes:
+            exported_nodes = self._shared_keys[_EXPORTED].keys()
+            for node_id, encrypted_key in node.keys.items():
+                if node_id not in exported_nodes:
                     continue
 
-                encrypted_key = b64_to_a32(node.keys[node_id])
-                full_key = decrypt_key(encrypted_key, share_key)
+                full_key = decrypt_key(b64_to_a32(encrypted_key), share_key)
                 yield cast_key(full_key, share_key)
 
     def get_keys(self, node: Node) -> list[Crypto]:
