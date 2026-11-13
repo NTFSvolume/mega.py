@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from os import PathLike
 
 POSIX_ROOT: Final = PurePosixPath("/")
+DEFAULT_STRICT: Final = True
 
 
 class _NodeLookup(NamedTuple):
@@ -115,7 +116,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
             yield from self.iterdir(self.trash_bin.id)
 
     @classmethod
-    def build(cls, nodes: Iterable[Node], *, strict: bool = False) -> Self:
+    def build(cls, nodes: Iterable[Node], *, strict: bool = DEFAULT_STRICT) -> Self:
         root = inbox = trash_bin = None
         file_count = folder_count = 0
 
@@ -178,7 +179,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
         )
 
     @classmethod
-    def from_dump(cls, dump: dict[str, Any], /, *, strict: bool = False) -> Self:
+    def from_dump(cls, dump: dict[str, Any], /, *, strict: bool = DEFAULT_STRICT) -> Self:
         return cls.build((Node.from_dump(node) for node in dump["nodes"].values()), strict=strict)
 
 
@@ -201,7 +202,7 @@ class FileSystem(SimpleFileSystem):
     _deleted: frozenset[NodeID]
 
     @classmethod
-    def build(cls, nodes: Iterable[Node], *, strict: bool = False) -> Self:
+    def build(cls, nodes: Iterable[Node], *, strict: bool = DEFAULT_STRICT) -> Self:
         # This is really expensive
         # We do 5 loops over all nodes:
         # SimpleFileSystem:
@@ -213,27 +214,32 @@ class FileSystem(SimpleFileSystem):
         # - 4. Sort their paths
         # - 5. Freeze inv paths (list -> tuple)
 
-        self = SimpleFileSystem.build(nodes, strict=strict)
+        return cls.from_simple_fs(SimpleFileSystem.build(nodes, strict=strict))
 
-        roots = list(filter(None, (self.root, self.inbox, self.trash_bin))) or [next(iter(self.nodes.values()))]
+    @classmethod
+    def from_simple_fs(cls, fs: SimpleFileSystem) -> Self:
+        if type(fs) is cls:
+            return fs
+
+        roots = list(filter(None, (fs.root, fs.inbox, fs.trash_bin))) or [next(iter(fs.nodes.values()))]
         paths: dict[NodeID, PurePosixPath] = {}
         inv_paths: dict[PurePosixPath, list[NodeID]] = {}
         deleted_ids: set[NodeID] = set()
 
-        for node_id, path, was_deleted in sorted(_resolve_paths(self, *roots), key=lambda x: str(x.path).casefold()):
+        for node_id, path, was_deleted in sorted(_resolve_paths(fs, *roots), key=lambda x: str(x.path).casefold()):
             paths[node_id] = path
             inv_paths.setdefault(path, []).append(node_id)
             if was_deleted:
                 deleted_ids.add(node_id)
 
         return cls(
-            root=self.root,
-            inbox=self.inbox,
-            trash_bin=self.trash_bin,
-            file_count=self.file_count,
-            folder_count=self.folder_count,
-            nodes=self.nodes,
-            children=self.children,
+            root=fs.root,
+            inbox=fs.inbox,
+            trash_bin=fs.trash_bin,
+            file_count=fs.file_count,
+            folder_count=fs.folder_count,
+            nodes=fs.nodes,
+            children=fs.children,
             paths=MappingProxyType(paths),
             inv_paths=MappingProxyType({path: tuple(nodes) for path, nodes in inv_paths.items()}),
             _deleted=frozenset(deleted_ids),
