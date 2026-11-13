@@ -5,7 +5,6 @@ import logging
 from typing import TYPE_CHECKING, Final, NamedTuple
 
 from mega.crypto import b64_to_a32, decrypt_key
-from src.mega.data_structures import Crypto
 
 if TYPE_CHECKING:
     from collections.abc import Generator
@@ -48,15 +47,14 @@ class MegaVault:
         keys = self.get_keys(node)
         if len(keys) > 1:
             logger.warning("Found multiple keys for node %s, using latest one", node.id)
-        crypto = keys[-1]
-        return KeyLookup(crypto.full_key, crypto.share_key)
+        return keys[-1]
 
-    def _get_keys(self, node: Node) -> Generator[Crypto]:
+    def _get_keys(self, node: Node) -> Generator[KeyLookup]:
         def cast_key(full_key: tuple[int, ...], share_key: tuple[int, ...] | None):
             if len(full_key) not in (4, 8):
                 raise RuntimeError(f"Invalid key len found for node {node.id} ({len(full_key)})")
 
-            return Crypto.decompose(full_key, node.type, share_key)  # pyright: ignore[reportArgumentType]
+            return KeyLookup(full_key, share_key)  # pyright: ignore[reportArgumentType]
 
         # my files/folders
         if node.owner in node.keys:
@@ -95,7 +93,7 @@ class MegaVault:
                 full_key = decrypt_key(b64_to_a32(encrypted_key), share_key)
                 yield cast_key(full_key, share_key)
 
-    def get_keys(self, node: Node) -> list[Crypto]:
+    def get_keys(self, node: Node) -> list[KeyLookup]:
         keys = list(self._get_keys(node))
         if len(keys) == 0:
             raise RuntimeError(f"We do not have keys for {node = }")

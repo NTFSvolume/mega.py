@@ -240,7 +240,8 @@ class MegaCore:
                     "Found multiple keys for node %s (%s keys), trying all of them", node.id, len(possible_keys)
                 )
 
-            for crypto in possible_keys:
+            for key in possible_keys:
+                crypto = Crypto.decompose(key.full_key, node.type, key.share_key)
                 attributes = self._decrypt_attrs(node._a, crypto.key)
                 if not attributes.is_error():
                     break
