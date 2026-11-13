@@ -1,6 +1,6 @@
 [project]
 name = "async-mega.py"
-version = "2.5.1"
+version = "2.5.2"
 authors = [{name = "NTFSvolume", email = "NTFSvolume@proton.me"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",

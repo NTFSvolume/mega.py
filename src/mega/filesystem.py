@@ -212,7 +212,7 @@ class FileSystem(SimpleFileSystem):
         inv_paths: dict[PurePosixPath, list[NodeID]] = {}
         deleted_ids: set[NodeID] = set()
 
-        for node_id, path, was_deleted in sorted(_resolve_paths(self, *roots), key=lambda x: str(x[1]).casefold()):
+        for node_id, path, was_deleted in sorted(_resolve_paths(self, *roots), key=lambda x: str(x.path).casefold()):
             paths[node_id] = path
             inv_paths.setdefault(path, []).append(node_id)
             if was_deleted:

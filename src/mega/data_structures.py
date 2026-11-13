@@ -13,7 +13,7 @@ import dataclasses
 import time
 from enum import IntEnum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Literal, Self, TypeAlias, TypedDict, final
 
 if TYPE_CHECKING:
     from collections.abc import Mapping
@@ -236,9 +236,6 @@ class Crypto(_DictDumper):
             )
             assert iv
             assert meta_mac
-        else:
-            if len(composed_key) != 4:
-                raise RuntimeError(f"Invalid key, expected key len for folders is 4, got {len(composed_key) = }")
 
         return Crypto(key, iv, meta_mac, composed_key, share_key)  # pyright: ignore[reportArgumentType]
 
@@ -329,17 +326,22 @@ class Node(_DictDumper):
 _LABELS: Final = "", "red", "orange", "yellow", "green", "blue", "purple", "grey"
 
 
+@final
 @dataclasses.dataclass(slots=True, frozen=True)
 class Attributes(_DictDumper):
     name: str
     label: str = ""
     favorited: bool = False
 
-    @classmethod
-    def parse(cls, attrs: AttributesSerialized) -> Self:
+    def is_error(self) -> bool:
+        return self is _EMPTY_ATTRS
+
+    @staticmethod
+    def parse(attrs: AttributesSerialized) -> Attributes:
         if not attrs:
             return _EMPTY_ATTRS
-        return cls(
+
+        return Attributes(
             name=attrs.get("n", ""),
             label=_LABELS[attrs.get("lbl", 0)],
             favorited=bool(attrs.get("fav")),

@@ -195,7 +195,7 @@ wheels = [
 
 [[package]]
 name = "async-mega-py"
-version = "2.5.1"
+version = "2.5.2"
 source = { editable = "." }
 default-groups = "all"
 dependencies = [
