@@ -12,7 +12,7 @@ from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Final, NamedTuple, Self
 
 from mega.data_structures import Node, NodeID, NodeType, _DictDumper
-from mega.errors import MultipleNodesFoundError, ValidationError
+from mega.errors import FileSystemError, MultipleNodesFoundError, ValidationError
 
 if TYPE_CHECKING:
     from collections.abc import Generator, Iterable, Iterator
@@ -115,7 +115,7 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
             yield from self.iterdir(self.trash_bin.id)
 
     @classmethod
-    def build(cls, nodes: Iterable[Node]) -> Self:
+    def build(cls, nodes: Iterable[Node], *, strict: bool = False) -> Self:
         root = inbox = trash_bin = None
         file_count = folder_count = 0
 
@@ -127,7 +127,12 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
                 ids = current.id, found.id
                 raise ValidationError(f"Multiple nodes of type {found.type.name} found: {ids}")
 
+        decrypt_errors: list[Node] = []
         for node in nodes:
+            if node.attributes.is_error() and strict:
+                decrypt_errors.append(node)
+                continue
+
             nodes_map[node.id] = node
             if node.parent_id:
                 children.setdefault(node.parent_id, []).append(node.id)
@@ -147,6 +152,9 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
                     trash_bin = node
                 case _:
                     raise RuntimeError  # pyright: ignore[reportUnreachable]
+
+        if decrypt_errors:
+            raise FileSystemError(nodes=tuple(decrypt_errors))
 
         return cls(
             root=root,
@@ -170,8 +178,8 @@ class SimpleFileSystem(_NodeWalker, _DictDumper):
         )
 
     @classmethod
-    def from_dump(cls, dump: dict[str, Any], /) -> Self:
-        return cls.build(Node.from_dump(node) for node in dump["nodes"].values())
+    def from_dump(cls, dump: dict[str, Any], /, *, strict: bool = False) -> Self:
+        return cls.build((Node.from_dump(node) for node in dump["nodes"].values()), strict=strict)
 
 
 @dataclasses.dataclass(slots=True, frozen=True, kw_only=True, weakref_slot=True, repr=False)
@@ -193,7 +201,7 @@ class FileSystem(SimpleFileSystem):
     _deleted: frozenset[NodeID]
 
     @classmethod
-    def build(cls, nodes: Iterable[Node]) -> Self:
+    def build(cls, nodes: Iterable[Node], *, strict: bool = False) -> Self:
         # This is really expensive
         # We do 5 loops over all nodes:
         # SimpleFileSystem:
@@ -205,7 +213,7 @@ class FileSystem(SimpleFileSystem):
         # - 4. Sort their paths
         # - 5. Freeze inv paths (list -> tuple)
 
-        self = SimpleFileSystem.build(nodes)
+        self = SimpleFileSystem.build(nodes, strict=strict)
 
         roots = list(filter(None, (self.root, self.inbox, self.trash_bin))) or [next(iter(self.nodes.values()))]
         paths: dict[NodeID, PurePosixPath] = {}

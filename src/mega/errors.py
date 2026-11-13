@@ -3,10 +3,16 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
-    from mega.data_structures import NodeID
+    from mega.data_structures import Node, NodeID
 
 
 class MegaNzError(Exception): ...
+
+
+class FileSystemError(MegaNzError, RuntimeError):
+    def __init__(self, nodes: tuple[Node, ...]) -> None:
+        super().__init__("Unable to decript attribute of some nodes in the file system")
+        self.nodes = nodes
 
 
 class ValidationError(MegaNzError, ValueError):
