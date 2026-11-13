@@ -2,7 +2,7 @@
 
 ## 3.0.0 (2026-11-12)
 
-- Parse filesystems in strict mode by default. An error decrypt any node will not be ignored
+- Parse filesystems in strict mode by default. An error decrypting any node will not be ignored
 
 ## 2.0.0 (2026-02-10)
 
