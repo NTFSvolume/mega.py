@@ -23,7 +23,6 @@ from mega.crypto import (
     encrypt_key,
 )
 from mega.data_structures import (
-    _EMPTY_ATTRS,
     AccountStatsSerialized,
     Attributes,
     Crypto,
@@ -235,9 +234,18 @@ class MegaCore:
     def decrypt(self, node: Node) -> Node:
         crypto = attributes = None
         if node.type in (NodeType.FILE, NodeType.FOLDER):
-            full_key, share_key = self.vault[node]
-            crypto = Crypto.decompose(full_key, node.type, share_key)
-            attributes = self.decrypt_attrs(node._a, crypto.key, node.id)
+            possible_keys = self.vault.get_keys(node)
+            if len(possible_keys) > 1:
+                logger.warning(
+                    "Found multiple keys for node %s (%s keys), trying all of them", node.id, len(possible_keys)
+                )
+
+            for crypto in possible_keys:
+                attributes = self._decrypt_attrs(node._a, crypto.key)
+                if not attributes.is_error():
+                    break
+            else:
+                logger.warning("Unable to decrypt attributes of node %s", node.id)
 
         else:
             name = {
@@ -419,7 +427,7 @@ class MegaCore:
     @classmethod
     def decrypt_attrs(cls, attrs: str, key: tuple[int, ...], node_id: NodeID) -> Attributes:
         attributes = cls._decrypt_attrs(attrs, key)
-        if attributes is _EMPTY_ATTRS:
+        if attributes.is_error():
             logger.warning("Unable to decrypt attributes of node %s", node_id)
         return attributes
 
