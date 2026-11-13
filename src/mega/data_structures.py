@@ -236,9 +236,6 @@ class Crypto(_DictDumper):
             )
             assert iv
             assert meta_mac
-        else:
-            if len(composed_key) != 4:
-                raise RuntimeError(f"Invalid key, expected key len for folders is 4, got {len(composed_key) = }")
 
         return Crypto(key, iv, meta_mac, composed_key, share_key)  # pyright: ignore[reportArgumentType]
 
